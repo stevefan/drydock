@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env*
+!.env.devcontainer.example
+.DS_Store
+*.pem
+*.tsbuildinfo
+*.crt
+*.key
+.vscode/
