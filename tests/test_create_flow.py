@@ -185,6 +185,41 @@ def test_preflight_passes_when_devcontainer_json_exists(MockCLI, tmp_path, monke
     assert last_json["state"] == "running"
 
 
+@patch("drydock.cli.create.DevcontainerCLI")
+def test_create_with_lifecycle_warning_still_running(MockCLI, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+
+    mock_devc = MockCLI.return_value
+    mock_devc.up.return_value = {
+        "container_id": "ctr-warn",
+        "containerId": "ctr-warn",
+        "exit_code": 1,
+        "warning": "lifecycle command failed (exit 1): postAttachCommand failed",
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["--json", "create", "proj", "ws-warn", "--repo-path", str(repo)]
+    )
+    assert result.exit_code == 0, result.output
+
+    lines = [l for l in result.output.strip().split("\n") if l.strip()]
+    last_json = json.loads("\n".join(_find_last_json_block(lines)))
+
+    assert last_json["state"] == "running"
+    assert last_json["container_id"] == "ctr-warn"
+    assert "lifecycle_warning" in last_json.get("config", {})
+
+    from drydock.core.registry import Registry
+    reg = Registry(db_path=tmp_path / ".drydock" / "registry.db")
+    ws = reg.get_workspace("ws-warn")
+    assert ws.state == "running"
+    assert "postAttachCommand failed" in ws.config.get("lifecycle_warning", "")
+    reg.close()
+
+
 def _find_last_json_block(lines):
     """Find the last JSON object in output (may have multiple JSON outputs)."""
     brace_depth = 0

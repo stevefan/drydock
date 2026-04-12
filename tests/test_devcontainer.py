@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from drydock.core.devcontainer import DevcontainerCLI
+from drydock.core.devcontainer import DevcontainerCLI, _parse_devcontainer_output
 from drydock.core.errors import WsError
 
 
@@ -53,6 +53,8 @@ def test_up_extracts_container_id(mock_run):
 
     assert result["container_id"] == "deadbeef"
     assert result["containerId"] == "deadbeef"
+    assert result["exit_code"] == 0
+    assert "warning" not in result
 
 
 @patch("drydock.core.devcontainer.subprocess.run")
@@ -71,7 +73,7 @@ def test_up_returns_full_dict_when_no_container_id(mock_run):
 
 
 @patch("drydock.core.devcontainer.subprocess.run")
-def test_up_error_raises_wserror(mock_run):
+def test_up_error_no_container_id_raises_wserror(mock_run):
     mock_run.return_value = subprocess.CompletedProcess(
         args=[], returncode=1,
         stdout="",
@@ -80,6 +82,49 @@ def test_up_error_raises_wserror(mock_run):
     cli = DevcontainerCLI()
     with pytest.raises(WsError, match="devcontainer up failed"):
         cli.up(workspace_folder="/tmp/ws")
+
+
+@patch("drydock.core.devcontainer.subprocess.run")
+def test_up_nonzero_with_container_id_returns_warning(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=1,
+        stdout=json.dumps({"containerId": "ctr-ok", "outcome": "success"}),
+        stderr="postAttachCommand failed",
+    )
+    cli = DevcontainerCLI()
+    result = cli.up(workspace_folder="/tmp/ws")
+
+    assert result["container_id"] == "ctr-ok"
+    assert result["exit_code"] == 1
+    assert "warning" in result
+    assert "postAttachCommand failed" in result["warning"]
+
+
+@patch("drydock.core.devcontainer.subprocess.run")
+def test_up_nonzero_no_container_id_raises(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=1,
+        stdout=json.dumps({"outcome": "error"}),
+        stderr="total failure",
+    )
+    cli = DevcontainerCLI()
+    with pytest.raises(WsError, match="devcontainer up failed"):
+        cli.up(workspace_folder="/tmp/ws")
+
+
+@patch("drydock.core.devcontainer.subprocess.run")
+def test_up_zero_exit_with_container_id_no_warning(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout=json.dumps({"containerId": "ctr-clean", "outcome": "success"}),
+        stderr="",
+    )
+    cli = DevcontainerCLI()
+    result = cli.up(workspace_folder="/tmp/ws")
+
+    assert result["container_id"] == "ctr-clean"
+    assert result["exit_code"] == 0
+    assert "warning" not in result
 
 
 def test_up_dry_run_returns_command():
@@ -102,4 +147,45 @@ def test_up_non_json_stdout(mock_run):
     result = cli.up(workspace_folder="/tmp/ws")
 
     assert result["stdout"] == "not json at all"
-    assert result["returncode"] == 0
+    assert result["exit_code"] == 0
+
+
+def test_parse_ndjson_extracts_last_object():
+    lines = [
+        json.dumps({"type": "log", "text": "building..."}),
+        json.dumps({"type": "log", "text": "starting..."}),
+        json.dumps({"containerId": "abc123", "outcome": "success"}),
+    ]
+    stdout = "\n".join(lines)
+    parsed = _parse_devcontainer_output(stdout)
+    assert parsed["containerId"] == "abc123"
+
+
+@patch("drydock.core.devcontainer.subprocess.run")
+def test_up_ndjson_stdout_extracts_container_id(mock_run):
+    lines = [
+        json.dumps({"type": "log", "text": "building..."}),
+        json.dumps({"containerId": "ndjson-ctr", "outcome": "success"}),
+    ]
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout="\n".join(lines),
+        stderr="",
+    )
+    cli = DevcontainerCLI()
+    result = cli.up(workspace_folder="/tmp/ws")
+
+    assert result["container_id"] == "ndjson-ctr"
+
+
+@patch("drydock.core.devcontainer.subprocess.run")
+def test_up_container_id_in_nested_outcome(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout=json.dumps({"outcome": {"containerId": "nested-ctr"}}),
+        stderr="",
+    )
+    cli = DevcontainerCLI()
+    result = cli.up(workspace_folder="/tmp/ws")
+
+    assert result["container_id"] == "nested-ctr"

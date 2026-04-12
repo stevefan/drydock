@@ -131,24 +131,29 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
             override_config=str(overlay_path),
         )
         container_id = up_result.get("container_id", "")
-        ws = registry.update_workspace(
-            ws.name, container_id=container_id, state="running",
-        )
+        lifecycle_warning = up_result.get("warning")
+
+        update_kwargs = dict(container_id=container_id, state="running")
+        if lifecycle_warning:
+            merged_config = {**ws.config, "lifecycle_warning": lifecycle_warning}
+            update_kwargs["config"] = merged_config
+        ws = registry.update_workspace(ws.name, **update_kwargs)
     except WsError as e:
         registry.update_state(ws.name, "error")
         raise
 
-    out.success(
-        ws.to_dict(),
-        human_lines=[
-            f"workspace '{ws.name}' created",
-            f"  id:           {ws.id}",
-            f"  project:      {ws.project}",
-            f"  branch:       {ws.branch}",
-            f"  state:        {ws.state}",
-            f"  container_id: {ws.container_id}",
-        ],
-    )
+    human_lines = [
+        f"workspace '{ws.name}' created",
+        f"  id:           {ws.id}",
+        f"  project:      {ws.project}",
+        f"  branch:       {ws.branch}",
+        f"  state:        {ws.state}",
+        f"  container_id: {ws.container_id}",
+    ]
+    if lifecycle_warning:
+        human_lines.append(f"  WARNING: {lifecycle_warning}")
+
+    out.success(ws.to_dict(), human_lines=human_lines)
 
 
 def _overlay_from_project(proj_cfg) -> OverlayConfig:
