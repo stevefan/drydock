@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 
+from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.errors import WsError
 from drydock.core.overlay import remove_overlay
 from drydock.core.worktree import remove_worktree
@@ -56,7 +57,11 @@ def destroy(ctx, name, force):
         )
         return
 
-    # TODO: stop container if running
+    if ws.state in ("running", "idle", "ready") and ws.worktree_path and Path(ws.worktree_path).exists():
+        try:
+            DevcontainerCLI().stop(workspace_folder=ws.worktree_path)
+        except Exception as exc:
+            logger.warning("Failed to stop container for %s: %s", name, exc)
 
     if ws.worktree_path and Path(ws.worktree_path).exists():
         try:

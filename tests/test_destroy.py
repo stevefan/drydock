@@ -2,11 +2,13 @@
 
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from drydock.cli.destroy import destroy
+from drydock.core.errors import WsError
 from drydock.core.registry import Registry
 from drydock.core.workspace import Workspace
 from drydock.output.formatter import Output
@@ -109,3 +111,30 @@ class TestDestroyWorktree:
         result = _invoke_destroy(env)
         assert result.exit_code == 0
         assert env["registry"].get_workspace("test-ws") is None
+
+
+class TestDestroyContainerStop:
+    @patch("drydock.cli.destroy.DevcontainerCLI")
+    def test_calls_stop_when_running(self, MockCLI, env):
+        env["registry"].update_state("test-ws", "running")
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        MockCLI.return_value.stop.assert_called_once_with(
+            workspace_folder=str(env["wt_path"])
+        )
+
+    @patch("drydock.cli.destroy.DevcontainerCLI")
+    def test_skips_stop_when_defined(self, MockCLI, env):
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        MockCLI.return_value.stop.assert_not_called()
+
+    @patch("drydock.cli.destroy.DevcontainerCLI")
+    def test_continues_cleanup_when_stop_raises(self, MockCLI, env):
+        env["registry"].update_state("test-ws", "running")
+        MockCLI.return_value.stop.side_effect = WsError("down failed")
+
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        assert env["registry"].get_workspace("test-ws") is None
+        assert not env["wt_path"].exists()

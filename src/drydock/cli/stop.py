@@ -2,6 +2,7 @@
 
 import click
 
+from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.errors import WsError
 
 
@@ -41,7 +42,9 @@ def stop(ctx, name, force):
         )
         return
 
-    # TODO: devcontainer down / docker stop
+    devc = DevcontainerCLI(dry_run=dry_run)
+    devc.stop(workspace_folder=ws.worktree_path)
+
     ws = registry.update_state(name, "suspended")
 
     out.success(
