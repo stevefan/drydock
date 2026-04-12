@@ -51,6 +51,7 @@ def env(tmp_path):
         repo_path=str(repo),
         worktree_path=str(wt_path),
         branch="ws/test",
+        container_id="cid_abc",
         config={"overlay_path": str(overlay_file)},
     )
     registry.create_workspace(ws)
@@ -119,9 +120,7 @@ class TestDestroyContainerStop:
         env["registry"].update_state("test-ws", "running")
         result = _invoke_destroy(env)
         assert result.exit_code == 0
-        MockCLI.return_value.stop.assert_called_once_with(
-            workspace_folder=str(env["wt_path"])
-        )
+        MockCLI.return_value.stop.assert_called_once_with(container_id="cid_abc")
 
     @patch("drydock.cli.destroy.DevcontainerCLI")
     def test_skips_stop_when_defined(self, MockCLI, env):

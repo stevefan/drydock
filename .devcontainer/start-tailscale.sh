@@ -15,8 +15,10 @@ sleep 2
 
 # Bring Tailscale up — use auth key if available, otherwise fall back to interactive auth URL
 echo "Bringing Tailscale up..." | tee -a "$LOG_FILE"
-# Source auth key from .env.local if not already set
-# Search for auth key in any project .env.local or .env.devcontainer
+# Source auth key. Prefer the mounted secret; fall back to env files.
+if [ -z "${TAILSCALE_AUTHKEY:-}" ] && [ -r /run/secrets/tailscale_authkey ]; then
+    TAILSCALE_AUTHKEY=$(cat /run/secrets/tailscale_authkey)
+fi
 if [ -z "${TAILSCALE_AUTHKEY:-}" ]; then
     for envfile in /workspace/.env.local /workspace/*/.env.local /workspace/*/.env.devcontainer; do
         if [ -f "$envfile" ]; then

@@ -57,9 +57,9 @@ def destroy(ctx, name, force):
         )
         return
 
-    if ws.state in ("running", "idle", "ready") and ws.worktree_path and Path(ws.worktree_path).exists():
+    if ws.state in ("running", "idle", "ready") and ws.container_id:
         try:
-            DevcontainerCLI().stop(workspace_folder=ws.worktree_path)
+            DevcontainerCLI().stop(container_id=ws.container_id)
         except Exception as exc:
             logger.warning("Failed to stop container for %s: %s", name, exc)
 

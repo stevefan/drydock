@@ -19,6 +19,7 @@ def _make_ws(state="running"):
         worktree_path="/tmp/wt",
         branch="ws/test",
         state=state,
+        container_id="abc123",
     )
 
 
@@ -43,7 +44,7 @@ def test_stop_calls_devcontainer_stop(MockCLI):
 
     assert result.exit_code == 0
     mock_devc = MockCLI.return_value
-    mock_devc.stop.assert_called_once_with(workspace_folder="/tmp/wt")
+    mock_devc.stop.assert_called_once_with(container_id="abc123")
     registry.update_state.assert_called_once_with("test-ws", "suspended")
 
 

@@ -96,15 +96,19 @@ class DevcontainerCLI:
             out["warning"] = f"lifecycle command failed (exit {result.returncode}): {stderr}" if stderr else f"lifecycle command failed (exit {result.returncode})"
         return out
 
-    def stop(self, workspace_folder: str) -> None:
-        cmd = ["devcontainer", "down", "--workspace-folder", workspace_folder]
+    def stop(self, container_id: str) -> None:
+        # devcontainer CLI has no 'down' subcommand; stop the runtime container directly.
+        if not container_id:
+            return
         if self.dry_run:
             return
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
+        result = subprocess.run(
+            ["docker", "stop", container_id], capture_output=True, text=True
+        )
+        if result.returncode != 0 and "No such container" not in result.stderr:
             raise WsError(
-                f"devcontainer down failed: {result.stderr.strip()}",
-                fix=f"Try stopping manually: docker stop <container_id>",
+                f"docker stop failed: {result.stderr.strip()}",
+                fix=f"Stop manually: docker stop {container_id}",
             )
 
     def exec_command(

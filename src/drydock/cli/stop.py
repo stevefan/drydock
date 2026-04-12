@@ -43,7 +43,7 @@ def stop(ctx, name, force):
         return
 
     devc = DevcontainerCLI(dry_run=dry_run)
-    devc.stop(workspace_folder=ws.worktree_path)
+    devc.stop(container_id=ws.container_id)
 
     ws = registry.update_state(name, "suspended")
 
