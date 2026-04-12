@@ -43,6 +43,17 @@ def create_worktree(ws: Workspace, base_dir: Path | None = None) -> Path:
     return worktree_path
 
 
+def remove_worktree(repo_path: str, worktree_path: str) -> None:
+    """Remove a git worktree. Raises on failure."""
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", worktree_path],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
 def _branch_exists(repo: Path, branch: str) -> bool:
     result = subprocess.run(
         ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],

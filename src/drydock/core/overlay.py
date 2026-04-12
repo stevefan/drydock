@@ -57,6 +57,11 @@ def write_overlay(ws: Workspace, output_dir: Path, config: OverlayConfig | None 
     return path
 
 
+def remove_overlay(overlay_path: str) -> None:
+    """Remove an overlay file. Raises on failure."""
+    Path(overlay_path).unlink()
+
+
 def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]:
     env: dict[str, str] = {}
 

@@ -1,8 +1,15 @@
 """ws destroy — remove a workspace."""
 
+import logging
+from pathlib import Path
+
 import click
 
 from drydock.core.errors import WsError
+from drydock.core.overlay import remove_overlay
+from drydock.core.worktree import remove_worktree
+
+logger = logging.getLogger(__name__)
 
 
 @click.command()
@@ -50,8 +57,20 @@ def destroy(ctx, name, force):
         return
 
     # TODO: stop container if running
-    # TODO: remove git worktree
-    # TODO: remove state directory
+
+    if ws.worktree_path and Path(ws.worktree_path).exists():
+        try:
+            remove_worktree(ws.repo_path, ws.worktree_path)
+        except Exception as exc:
+            logger.warning("Failed to remove worktree %s: %s", ws.worktree_path, exc)
+
+    overlay_path = ws.config.get("overlay_path")
+    if overlay_path and Path(overlay_path).exists():
+        try:
+            remove_overlay(overlay_path)
+        except Exception as exc:
+            logger.warning("Failed to remove overlay %s: %s", overlay_path, exc)
+
     registry.delete_workspace(name)
 
     out.success(
