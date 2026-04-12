@@ -4,6 +4,7 @@ from pathlib import Path
 
 import click
 
+from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.errors import WsError
 from drydock.core.overlay import OverlayConfig, generate_overlay, write_overlay
 from drydock.core.project_config import load_project_config
@@ -92,17 +93,41 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
         ws.name, config={"overlay_path": str(overlay_path)}
     )
 
-    # TODO: devcontainer up (using overlay_path as --override-config)
-    # TODO: update state to 'running' with container_id
+    # Launch devcontainer
+    devc = DevcontainerCLI(dry_run=dry_run)
+    try:
+        devc.check_available()
+    except WsError as e:
+        out.error(e)
+
+    ws = registry.update_state(ws.name, "provisioning")
+    out.success(
+        {},
+        human_lines=[f"launching container for '{ws.name}'..."],
+    )
+
+    try:
+        up_result = devc.up(
+            workspace_folder=ws.worktree_path,
+            override_config=str(overlay_path),
+        )
+        container_id = up_result.get("container_id", "")
+        ws = registry.update_workspace(
+            ws.name, container_id=container_id, state="running",
+        )
+    except WsError as e:
+        registry.update_state(ws.name, "error")
+        raise
 
     out.success(
         ws.to_dict(),
         human_lines=[
             f"workspace '{ws.name}' created",
-            f"  id:       {ws.id}",
-            f"  project:  {ws.project}",
-            f"  branch:   {ws.branch}",
-            f"  state:    {ws.state}",
+            f"  id:           {ws.id}",
+            f"  project:      {ws.project}",
+            f"  branch:       {ws.branch}",
+            f"  state:        {ws.state}",
+            f"  container_id: {ws.container_id}",
         ],
     )
 

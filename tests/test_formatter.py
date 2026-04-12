@@ -1,5 +1,6 @@
 import json
 import subprocess
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
@@ -23,10 +24,15 @@ def test_list_json_output():
     assert result.exit_code == 0
 
 
-def test_create_and_list_roundtrip(tmp_path, monkeypatch):
+@patch("drydock.cli.create.DevcontainerCLI")
+def test_create_and_list_roundtrip(MockCLI, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     repo = tmp_path / "repo"
     _init_repo(repo)
+
+    mock_devc = MockCLI.return_value
+    mock_devc.up.return_value = {"container_id": "ctr-test", "containerId": "ctr-test"}
+
     runner = CliRunner()
 
     result = runner.invoke(cli, ["create", "testproj", "my-ws", "--repo-path", str(repo)])
@@ -48,10 +54,15 @@ def test_create_dry_run():
     assert data["dry_run"] is True
 
 
-def test_destroy_requires_force(tmp_path, monkeypatch):
+@patch("drydock.cli.create.DevcontainerCLI")
+def test_destroy_requires_force(MockCLI, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     repo = tmp_path / "repo"
     _init_repo(repo)
+
+    mock_devc = MockCLI.return_value
+    mock_devc.up.return_value = {"container_id": "ctr-test", "containerId": "ctr-test"}
+
     runner = CliRunner()
     runner.invoke(cli, ["create", "proj", "ws1", "--repo-path", str(repo)])
     result = runner.invoke(cli, ["destroy", "ws1"])

@@ -28,7 +28,11 @@ class DevcontainerCLI:
         workspace_folder: str,
         override_config: str | None = None,
     ) -> dict:
-        cmd = ["devcontainer", "up", "--workspace-folder", workspace_folder]
+        cmd = [
+            "devcontainer", "up",
+            "--workspace-folder", workspace_folder,
+            "--log-format", "json",
+        ]
         if override_config:
             cmd.extend(["--override-config", override_config])
 
@@ -42,9 +46,14 @@ class DevcontainerCLI:
                 fix="Check the project's devcontainer.json and Dockerfile for errors",
             )
         try:
-            return json.loads(result.stdout)
+            parsed = json.loads(result.stdout)
         except json.JSONDecodeError:
             return {"stdout": result.stdout, "returncode": result.returncode}
+
+        container_id = parsed.get("containerId")
+        if container_id:
+            return {"container_id": container_id, **parsed}
+        return parsed
 
     def stop(self, workspace_folder: str) -> None:
         cmd = ["devcontainer", "down", "--workspace-folder", workspace_folder]
