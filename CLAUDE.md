@@ -1,15 +1,18 @@
 # Drydock — Agent Workspace Orchestration
 
-Reusable devcontainer template for sandboxed Claude Code development with network firewall and Tailscale access. Designed to spawn and manage isolated agent workspaces across projects.
+`ws` CLI that provisions sandboxed Claude Code workspaces (devcontainers with firewall, Tailscale, remote control). The CLI runs on the host; containers are workspaces, not orchestrators.
 
 ## Repo structure
 
 ```
-.devcontainer/          # Container infra (Dockerfile, firewall, Tailscale, remote control)
+.devcontainer/          # Workspace template (Dockerfile, firewall, Tailscale, remote control)
+src/drydock/            # ws CLI source (Python)
+  cli/                  # Click commands (create, list, inspect, stop, destroy)
+  core/                 # Registry (SQLite), workspace model, devcontainer wrapper, errors
+  output/               # JSON/human output formatting
+tests/                  # pytest tests
 docs/                   # Specs and design docs
-<project>/              # Each project gets its own top-level folder
-<project>/app/          # Project source code
-<project>/.env.devcontainer  # Project-specific container env vars
+.claude/skills/ws.md    # Claude Code skill for /ws
 ```
 
 ## Container features
@@ -19,16 +22,28 @@ docs/                   # Specs and design docs
 - **Claude Code remote control** for headless agent access
 - Base whitelist: GitHub, npm, Anthropic API, VS Code marketplace, Tailscale infra
 
-## Adding a new project
+## Using the ws CLI
 
-1. Create `<project>/` at repo root
-2. Add `<project>/.env.devcontainer` with project-specific overrides:
-   - `TAILSCALE_HOSTNAME` — Tailscale machine name (default: `claude-dev`)
-   - `TAILSCALE_SERVE_PORT` — port to expose via Tailscale (default: `3000`)
-   - `REMOTE_CONTROL_NAME` — name shown in Claude remote control
-   - `FIREWALL_EXTRA_DOMAINS` — space-separated domains to whitelist
-   - `FIREWALL_IPV6_HOSTS` — space-separated `host:port` pairs for IPv6 access
-3. Rebuild the container
+Install on the host (not inside a container):
+```bash
+pip install -e .
+```
+
+Commands:
+```
+ws create <project> [name]    Provision a workspace container
+ws list                       List workspaces
+ws inspect <name>             Show workspace details
+ws stop <name>                Stop a workspace
+ws destroy <name> --force     Remove a workspace
+```
+
+Global flags: `--json` (force JSON output), `--dry-run` (preview without executing).
+Output is JSON automatically when piped or called by an agent.
+
+## Workspace template
+
+The `.devcontainer/` directory is the base workspace template. Projects can have their own devcontainer; if they don't, this one is used. `ws create` layers an override JSON on top for per-workspace identity, secrets, and networking.
 
 ## Environment variables
 

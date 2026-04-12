@@ -1,5 +1,5 @@
 {
-  "name": "Claude Code Sandbox",
+  "name": "Drydock",
   "build": {
     "dockerfile": "Dockerfile",
     "args": {
@@ -20,7 +20,9 @@
         "anthropic.claude-code",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "eamodio.gitlens"
+        "eamodio.gitlens",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
       ],
       "settings": {
         "editor.formatOnSave": true,
@@ -45,7 +47,8 @@
   "mounts": [
     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
     "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
-    "source=tailscale-state-${devcontainerId},target=/tmp/tailscale,type=volume"
+    "source=tailscale-state-${devcontainerId},target=/tmp/tailscale,type=volume",
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
   ],
   "containerEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
@@ -67,6 +70,7 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
+  "postCreateCommand": "SOCK_GID=$(stat -c '%g' /var/run/docker.sock) && sudo groupmod -g $SOCK_GID docker 2>/dev/null; pip install -e '.[dev]' 2>/dev/null || true",
   "postStartCommand": "test -f /workspace/.env.devcontainer && set -a && . /workspace/.env.devcontainer && set +a; for f in /workspace/*/.env.devcontainer; do test -f \"$f\" && set -a && . \"$f\" && set +a; done; sudo /usr/local/bin/init-firewall.sh && /usr/local/bin/start-tailscale.sh && nohup /usr/local/bin/start-remote-control.sh &",
   "postAttachCommand": "claude --dangerously-skip-permissions",
   "waitFor": "postStartCommand"

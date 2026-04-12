@@ -8,3 +8,11 @@ node_modules/
 *.crt
 *.key
 .vscode/
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+
+# Agent state (private; skills/ stays tracked)
+.claude/projects/
