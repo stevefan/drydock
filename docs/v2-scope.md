@@ -1,12 +1,33 @@
-# Drydock v2 — `ws` daemon for nested orchestration
+# Drydock V2 — daemon + agent-desks
 
-## The problem
+## The frame: agent-desks as first-class entities
 
-V1's control plane is a host-side CLI. That works when you're at the keyboard, and it's enough for microfoundry, substrate, and patchwork to each run as host-spawned workspaces. It fails the moment a Claude agent *inside* a workspace wants to spawn a sibling — for example, a microfoundry-root agent that wants to launch `auction-crawl` as a narrower child workspace to handle Playwright work without that authority bleeding back up.
+An **agent-desk** is a durable, addressable place where an agent works. It has a name, an occupant (usually Claude), a policy scope, accumulated state (worktree, session, shell history, tools), and a stable identity that outlives its current container. You create a desk once; you never re-create it.
 
-The wrong answer is mounting the Docker socket into the parent container. That collapses the blast radius to the whole fleet: a compromised workspace owns every container on the host, regardless of policy. It also contradicts Drydock's default-deny network posture with a default-allow capability.
+V1 treats workspaces as container-plus-worktree: useful, but the *container* is where identity effectively lives. When the container goes, so does the in-flight work, the session, the shell state. V2 inverts this — the *desk* is the first-class thing, owned by the daemon; containers are its current embodiment.
 
-The right answer is a host-side `ws` daemon (`wsd`) that workspaces talk to over an authenticated channel. The daemon is the explicit orchestration surface; workspaces ask permission, the daemon enforces policy.
+Nested spawning (microfoundry's forcing function) is one consequence of this inversion: if desks are daemon entities, then an occupying agent can ask the daemon for a sibling desk without Drydock violating its own layering principles. Migration (V3) is another: if state belongs to the desk rather than to the container, the desk can move.
+
+This document scopes **V2: single-host daemon, desk-as-first-class, policy + nested spawn + audit**. Migration itself is V3 — but V2's interfaces must not preclude it.
+
+## What V2 delivers
+
+- **`wsd` daemon** as sole control plane for every lifecycle operation. The `ws` CLI becomes one client; Claude Code in a desk is another.
+- **Desks are daemon entities.** State lives in registry and well-known host paths owned by the daemon, not in container-private layers.
+- **Policy graph with enforced narrowness.** Children are strictly narrower than parents — firewall, secrets, capabilities.
+- **Nested spawn via the daemon.** A desk-occupant asks the daemon to spawn a child; the daemon validates policy and dispatches.
+- **Audit log.** Every daemon action recorded with principal + operation + policy check result.
+- **Bearer-token auth over Tailscale.** Desks receive a token at creation; they present it when talking to the daemon.
+
+## What V2 explicitly does *not* do (belongs in V3)
+
+- **Migration.** `ws migrate microfoundry laptop→cloud` is V3.
+- **Suspend/resume.** The foundation for migration. On a single host, Docker Desktop's VM suspension already covers laptop close/open. Building Drydock-level suspend/resume before there's a reason (migration) is ceremony.
+- **Fleet-aware daemon.** Multi-host coordination, placement decisions, lead election.
+- **`drydock-base` image.** Publishing a base image so project devcontainers can `FROM ghcr.io/.../drydock-base`. Only becomes load-bearing when desks migrate between hosts with potentially different base-template versions.
+- **Cross-host identity continuity** (same Tailscale hostname across hosts, audit principal that follows the desk).
+
+All of these are V3, and the V3 design starts from whatever V2 ships. The architectural commitment V2 makes, to unblock V3 later: **desk state must be serializable.** What lives in the daemon's ownership (registry, overlay, secrets broker leases) has portable representations; what lives in the container is either derived from that state (rebuildable from devcontainer + worktree) or volume-mounted to host-owned paths (session files, bash history, tool caches). V2 gets this discipline right from day one, even without implementing migration itself.
 
 ## Forcing function: microfoundry
 
@@ -21,16 +42,19 @@ Microfoundry is the first monorepo with heterogeneous sub-projects whose isolati
 | `auction-crawl` | Python + Playwright | **High** — browser automation hitting arbitrary auction sites, pulls untrusted HTML |
 | `confocal-microscope` | Config files (Zeiss) | N/A — data only |
 
-The requirement: a top-level Claude in the microfoundry workspace that can edit across all sub-projects, spawn narrower child workspaces per high-isolation sub-project, and confine the risky ones (`auction-crawl`) so a compromised listing can't reach anything but the whitelisted auction hosts.
+The requirement: a top-level Claude in the microfoundry desk that can edit across all sub-projects, spawn narrower child desks per high-isolation sub-project, and confine the risky ones (`auction-crawl`) so a compromised listing can't reach anything but whitelisted auction hosts.
 
-Substrate and patchwork are more homogeneous and don't exercise this axis. If Drydock handles microfoundry well, the design generalizes; if not, microfoundry is where it breaks first.
+The wrong mechanism is mounting the Docker socket into the parent container — that collapses the blast radius to the whole fleet and contradicts Drydock's default-deny posture. The right mechanism is the daemon: parent asks permission, daemon validates policy, daemon dispatches spawn.
+
+Substrate and Patchwork are more homogeneous and don't exercise this axis. If Drydock handles microfoundry well, the design generalizes; if not, microfoundry is where it breaks first.
 
 ## Principles
 
-- **Layering.** Tools that manage infrastructure live outside the thing they manage. Workspaces stay ignorant of Docker; the daemon mediates.
-- **Narrowness.** A parent workspace cannot grant a child any capability the parent does not already hold. Children are strictly narrower than parents. Compromise of any single workspace cannot laterally expand authority.
-- **Explicit capability grants.** No workspace is "permissionless." Each gets enumerated capabilities; spawning is one of them.
-- **Host mode still works.** The `ws` CLI invoked on the host continues to work as it does today. The daemon is additional plumbing for the nested case, not a replacement for local use.
+- **Layering.** Tools that manage infrastructure live outside the thing they manage. Desks stay ignorant of Docker; the daemon mediates every operation.
+- **Narrowness.** A desk cannot grant a child any capability it does not hold. Compromise of any single desk cannot laterally expand authority.
+- **Explicit capability grants.** No desk is "permissionless." Each gets enumerated capabilities; spawning is one of them. Most desks don't have it.
+- **Host mode still works.** The `ws` CLI invoked on the host continues as today. The daemon is plumbing for the desk-occupant case, not a replacement for local use.
+- **Serializable state, even before migration.** The daemon owns desk state in ways that can later transfer between hosts, even though V2 doesn't transfer anything.
 
 ## Architecture
 
@@ -38,15 +62,16 @@ Substrate and patchwork are more homogeneous and don't exercise this axis. If Dr
 Host
 ├── ws CLI (host mode)                          direct → registry + devcontainer CLI
 ├── wsd daemon                                  HTTP/Unix socket, authenticated
-├── registry.db (+ parent-child columns)
+├── registry.db (+ parent-child columns, + desk state)
+├── secrets broker (leases, not static mounts)
 └── Docker
        │
        │  ws create microfoundry   (from host)
        ▼
   ┌──────────────────────────────────────┐
-  │ Workspace "microfoundry"              │
+  │ Desk "microfoundry"                   │
   │                                       │
-  │   ws CLI (workspace mode)             │
+  │   ws CLI (desk mode)                  │
   │     │ detects DRYDOCK_WORKSPACE_ID    │
   │     │ routes to wsd via Tailscale     │
   │     ▼                                 │
@@ -59,24 +84,37 @@ Host
 
 | Component | Role |
 |---|---|
-| `ws` CLI — host mode | Unchanged from v1. Writes registry directly, calls devcontainer CLI directly. |
-| `ws` CLI — workspace mode | Detects `$DRYDOCK_WORKSPACE_ID` env, routes commands to daemon over HTTP. |
+| `ws` CLI — host mode | Unchanged from V1. Writes registry directly, calls devcontainer CLI directly. |
+| `ws` CLI — desk mode | Detects `$DRYDOCK_WORKSPACE_ID` env, routes commands to daemon over HTTP. |
 | `wsd` daemon | Enforces policy, writes to registry, invokes devcontainer CLI on behalf of authorized callers. |
-| Parent-child registry | New columns: `parent_workspace_id`, `delegatable_firewall_domains`, `delegatable_secrets`, `capabilities`. |
+| Desk state (registry columns) | `parent_workspace_id`, `delegatable_firewall_domains`, `delegatable_secrets`, `capabilities`, plus everything V1 already tracks. |
 | Policy validator | Pure function; given a parent's declared policy and a child's requested policy, returns `allow` or `reject with reason`. Extensively tested; this is the trust boundary. |
+| Secrets broker | Issues time-bounded credential leases to desks. Replaces V1's static `/run/secrets` directory with daemon-mediated provisioning. Migration-ready: re-leasing on a new host is cleaner than copying files. |
+| Audit log | `~/.drydock/audit.log`. Every daemon operation with timestamp, principal, policy check result. |
 
 ## Protocol sketch
 
-Workspace → daemon, authenticated:
+Desk → daemon, authenticated:
 
 ```
-POST   /v2/workspaces                — ws create (child)
-GET    /v2/workspaces?parent=<id>    — ws list (children of parent)
-POST   /v2/workspaces/<name>/stop
-DELETE /v2/workspaces/<name>
+POST   /v2/desks                 — ws create (child)
+GET    /v2/desks?parent=<id>     — ws list (children of parent)
+POST   /v2/desks/<name>/stop
+DELETE /v2/desks/<name>
+GET    /v2/desks/<name>/secrets  — request scoped secret leases
 ```
 
-Each request carries the caller's workspace id and an auth token. The daemon looks up the caller's capabilities in the registry before dispatching.
+Each request carries the caller's desk id and an auth token. The daemon looks up the caller's capabilities before dispatching.
+
+## Auth — bearer tokens on Tailscale
+
+Bearer token per desk, issued at `ws create`, mounted at `/run/secrets/drydock-token`. Daemon maps token → desk id, looks up capabilities, dispatches.
+
+Rejected alternatives:
+- mTLS via Tailscale device identity — stronger, but couples V2 to Tailscale beyond the transport layer.
+- Unix socket peer credentials — only works single-host, which V3 wants to move beyond.
+
+Revisit if the token model stresses.
 
 ## Policy validation
 
@@ -87,16 +125,6 @@ Before spawning a child, the daemon verifies:
 3. **Capability narrowness.** `child.capabilities ⊆ parent.capabilities`. A parent that cannot spawn grandchildren cannot grant that authority either.
 4. **Resource limits.** Parent has a budget (child count, total CPU/memory); spawning debits it.
 
-## Auth — bearer tokens on Tailscale
-
-Bearer token per workspace, issued at `ws create`, mounted into the workspace at `/run/secrets/drydock-token`. The daemon maps token → workspace id, looks up capabilities, dispatches.
-
-Rejected alternatives:
-- mTLS via Tailscale device identity — stronger, but couples v2 to Tailscale beyond the transport layer.
-- Unix socket peer credentials — only works single-host, which we want to keep open.
-
-Revisit if the bearer-token model stresses.
-
 ## Registry schema additions
 
 New columns on `workspaces`:
@@ -104,8 +132,8 @@ New columns on `workspaces`:
 | Column | Type | Purpose |
 |---|---|---|
 | `parent_workspace_id` | TEXT NULL | null for host-created; set for daemon-spawned children |
-| `delegatable_firewall_domains` | TEXT (JSON list) | domains this workspace may grant to children |
-| `delegatable_secrets` | TEXT (JSON list) | secret keys this workspace may delegate |
+| `delegatable_firewall_domains` | TEXT (JSON list) | domains this desk may grant to children |
+| `delegatable_secrets` | TEXT (JSON list) | secret keys this desk may delegate |
 | `capabilities` | TEXT (JSON list) | explicit capability grants (`spawn_children`, etc.) |
 
 `destroy` cascades: destroying a parent destroys its children first.
@@ -114,47 +142,40 @@ New columns on `workspaces`:
 
 ```python
 if os.environ.get("DRYDOCK_WORKSPACE_ID"):
-    daemon_client.dispatch(sys.argv)   # workspace mode — ask wsd
+    daemon_client.dispatch(sys.argv)   # desk mode — ask wsd
 else:
     main_cli()                         # host mode — direct as today
 ```
 
-`DRYDOCK_WORKSPACE_ID` is already in the overlay (v1 work). `--parent` flag on `ws create` becomes the nesting affordance.
-
-## In scope
-
-- `wsd` daemon (HTTP/Unix socket + bearer auth over Tailscale)
-- CLI routing for in-workspace invocation
-- Policy validator module with strong test coverage
-- Registry schema additions
-- `--parent` flag on `ws create`
-- `destroy` cascade semantics
-- Audit log of daemon actions at `~/.drydock/audit.log`
-
-## Out of scope for v2
-
-- **Cross-host orchestration.** Still single-host. Workspaces on separate machines is a later milestone.
-- **Capability UI / audit tooling.** CLI and log-based only.
-- **Automatic policy derivation.** Parents declare their `delegatable_*` stanzas explicitly; the daemon does not infer.
-- **Web dashboard.** Not now.
-- **Agent-to-agent messaging** beyond spawn/destroy. Siblings still don't talk over the tailnet by default.
+`DRYDOCK_WORKSPACE_ID` is already in the overlay (V1 work). `--parent` flag on `ws create` becomes the nesting affordance.
 
 ## Open questions
 
 1. Where does the daemon live — launchd service, tmux pane, something else? How does it survive reboot?
-2. How does the daemon handle devcontainer CLI errors — retry, propagate, mark workspace as error?
-3. Does `ws attach` (host → workspace) route through the daemon too, or stay direct?
-4. How does workspace-local state (in-progress tasks) survive a daemon restart?
-5. Capability revocation: if a parent's policy changes, do running children get re-evaluated?
+2. How does the daemon handle devcontainer CLI errors — retry, propagate, mark desk as error?
+3. Does `ws attach` (host → desk) route through the daemon, or stay direct?
+4. Capability revocation: if a parent's policy changes, do running children get re-evaluated?
+5. How does the secrets broker integrate with external sources (1Password, vault, cloud secret managers)? Plugin interface? Hardcoded adapters?
 
-## Migration from v1
+## Migration from V1
 
-- V1 workspaces (no `parent_workspace_id`) keep working unchanged — they're host-spawned and the daemon ignores them.
+- V1 desks (no `parent_workspace_id`) keep working unchanged — host-spawned, daemon ignores them.
 - New `ws` version ships with CLI routing logic but defaults to host mode unless the daemon is configured.
-- The daemon is opt-in; if `wsd` never starts, v1 behavior is preserved.
+- The daemon is opt-in; if `wsd` never starts, V1 behavior is preserved.
+- Existing V1 registry is upgraded in place (new columns default to null / empty).
 
-## When to build
+## When to build V2
 
-When microfoundry's nested case becomes painful enough that spawning children from the host feels wrong. That's the signal — not "the design is ready." V2 is infrastructure, and infrastructure should follow demonstrated need.
+When microfoundry's nested case becomes painful enough that spawning children from the host feels wrong. Microfoundry can run today in V1 mode (each desk host-spawned); pain surfaces when a top-level agent wants to spawn narrower children and can't.
 
-What microfoundry can do today without the daemon: host-spawn each workspace individually (`ws create microfoundry`, `ws create auction-crawl`, etc.). You lose the "agent spawns children" story but keep isolation, firewall separation, and per-project config. That's enough to dogfood the isolation model and surface real requirements before v2 code is written.
+## What V3 adds (preview)
+
+V3 takes the agent-desk further: desks become **mobile**. The architectural bet of V2 — desks are serializable daemon entities — pays off in V3 as actual portability.
+
+- **Migration primitive.** `ws migrate microfoundry laptop→cloud`. Suspend on source, serialize state, transfer, deserialize, resume on destination.
+- **Fleet-aware daemon.** Multiple hosts running `wsd`, coordinated. Placement decisions driven by policy (prefer cloud for heavy compute, prefer interactive host for desks you're currently attached to).
+- **Identity continuity across hosts.** Same Tailscale hostname, same audit principal, same `DRYDOCK_WORKSPACE_ID` across host changes.
+- **`drydock-base` image.** Published base image so project devcontainers `FROM` it. Migration between hosts requires base-template consistency; duplication across project-owned devcontainers is tolerable in V2, unacceptable in V3.
+- **Suspend/resume as a first-class primitive** (because it's the same operation as migration, just without the transfer step).
+
+The user-facing outcome V3 targets: *seamless remote development*. You work on a desk from your laptop; you close the lid, walk to the lab; overnight, heavy work keeps going on a cloud VM; next morning, the desk has migrated back to your laptop and in-flight work is exactly where you left it. The desk is the stable thing; the host is implementation detail.

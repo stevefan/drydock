@@ -2,7 +2,9 @@
 
 ## What it is
 
-Drydock is a **personal agent fabric**. It provisions, connects, and governs the sandboxed workspaces where your Claude agents live and do work.
+Drydock is a **personal agent fabric**. It provisions, connects, and governs the **agent-desks** where your Claude agents live and do work.
+
+An agent-desk is a durable addressable place — a workspace with an occupant. It has a name, a policy scope, a git worktree, accumulated session state, and a stable identity that outlives its current container. "Workspace" is the technical artifact (daemon entity, registry row, container); "desk" is the conceptual framing — persistent place where an agent works.
 
 It is not a container launcher. Launching containers is mechanical plumbing; `devcontainer`, Docker, and `git worktree` already do that. What Drydock provides — the thing that can't be replaced by shell scripts and conventions — is the *fabric*: a policy graph, a daemon-enforced trust boundary, audit, identity, secrets brokering, and cross-host placement.
 
