@@ -10,6 +10,7 @@ from drydock.core.overlay import (
     generate_overlay,
     write_overlay,
 )
+from drydock.core.project_config import load_project_config
 from drydock.core.workspace import Workspace
 
 
@@ -153,3 +154,37 @@ class TestWriteOverlay:
         path = write_overlay(ws, tmp_path, config)
         data = json.loads(path.read_text())
         assert data["containerEnv"]["TAILSCALE_HOSTNAME"] == "custom"
+
+
+class TestProjectYamlToOverlay:
+    """Integration: project YAML on disk -> OverlayConfig -> overlay output."""
+
+    def test_project_yaml_produces_expected_overlay(self, ws, tmp_path):
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        (projects_dir / "app.yaml").write_text(
+            "tailscale_hostname: app-ts\n"
+            "tailscale_serve_port: 9090\n"
+            "remote_control_name: App RC\n"
+            "firewall_extra_domains:\n"
+            "  - api.stripe.com\n"
+            "firewall_ipv6_hosts:\n"
+            "  - '[::1]:4000'\n"
+        )
+        proj_cfg = load_project_config("app", base_dir=projects_dir)
+        assert proj_cfg is not None
+
+        overlay_config = OverlayConfig(
+            tailscale_hostname=proj_cfg.tailscale_hostname or "",
+            tailscale_serve_port=proj_cfg.tailscale_serve_port or 3000,
+            remote_control_name=proj_cfg.remote_control_name or "",
+            firewall_extra_domains=proj_cfg.firewall_extra_domains,
+            firewall_ipv6_hosts=proj_cfg.firewall_ipv6_hosts,
+        )
+        overlay = generate_overlay(ws, overlay_config)
+        env = overlay["containerEnv"]
+        assert env["TAILSCALE_HOSTNAME"] == "app-ts"
+        assert env["TAILSCALE_SERVE_PORT"] == "9090"
+        assert env["REMOTE_CONTROL_NAME"] == "App RC"
+        assert env["FIREWALL_EXTRA_DOMAINS"] == "api.stripe.com"
+        assert env["FIREWALL_IPV6_HOSTS"] == "[::1]:4000"

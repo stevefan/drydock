@@ -6,6 +6,7 @@ import click
 
 from drydock.core.errors import WsError
 from drydock.core.overlay import OverlayConfig, generate_overlay, write_overlay
+from drydock.core.project_config import load_project_config
 from drydock.core.worktree import create_worktree
 from drydock.core.workspace import Workspace
 
@@ -35,9 +36,17 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
     if branch is None:
         branch = f"ws/{name}"
 
+    try:
+        proj_cfg = load_project_config(project)
+    except WsError as e:
+        out.error(e)
+        return
+
     if repo_path is None:
-        # TODO: look up from project config in drydock/projects/{project}.yaml
-        repo_path = f"/srv/code/{project}"
+        repo_path = (proj_cfg.repo_path if proj_cfg and proj_cfg.repo_path else f"/srv/code/{project}")
+
+    if image is None:
+        image = (proj_cfg.image if proj_cfg and proj_cfg.image else "")
 
     ws = Workspace(
         name=name,
@@ -45,7 +54,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
         repo_path=repo_path,
         branch=branch,
         base_ref=base_ref,
-        image=image or "",
+        image=image,
         owner=owner or "",
     )
 
@@ -77,7 +86,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
 
     # Generate devcontainer override
     overlay_dir = Path.home() / ".drydock" / "overlays"
-    overlay_config = OverlayConfig()
+    overlay_config = _overlay_from_project(proj_cfg)
     overlay_path = write_overlay(ws, overlay_dir, overlay_config)
     ws = registry.update_workspace(
         ws.name, config={"overlay_path": str(overlay_path)}
@@ -96,3 +105,20 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
             f"  state:    {ws.state}",
         ],
     )
+
+
+def _overlay_from_project(proj_cfg) -> OverlayConfig:
+    if proj_cfg is None:
+        return OverlayConfig()
+    kwargs: dict = {}
+    if proj_cfg.tailscale_hostname is not None:
+        kwargs["tailscale_hostname"] = proj_cfg.tailscale_hostname
+    if proj_cfg.tailscale_serve_port is not None:
+        kwargs["tailscale_serve_port"] = proj_cfg.tailscale_serve_port
+    if proj_cfg.remote_control_name is not None:
+        kwargs["remote_control_name"] = proj_cfg.remote_control_name
+    if proj_cfg.firewall_extra_domains:
+        kwargs["firewall_extra_domains"] = proj_cfg.firewall_extra_domains
+    if proj_cfg.firewall_ipv6_hosts:
+        kwargs["firewall_ipv6_hosts"] = proj_cfg.firewall_ipv6_hosts
+    return OverlayConfig(**kwargs)
