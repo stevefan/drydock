@@ -1,0 +1,10 @@
+.env*
+.git
+.gitignore
+.claude
+docs
+src
+tests
+pyproject.toml
+CLAUDE.md
+README.md
