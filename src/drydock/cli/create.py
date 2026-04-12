@@ -165,4 +165,6 @@ def _overlay_from_project(proj_cfg) -> OverlayConfig:
         kwargs["firewall_extra_domains"] = proj_cfg.firewall_extra_domains
     if proj_cfg.firewall_ipv6_hosts:
         kwargs["firewall_ipv6_hosts"] = proj_cfg.firewall_ipv6_hosts
+    if proj_cfg.forward_ports:
+        kwargs["forward_ports"] = proj_cfg.forward_ports
     return OverlayConfig(**kwargs)

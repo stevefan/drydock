@@ -33,6 +33,7 @@ class OverlayConfig:
     extra_env: dict[str, str] = field(default_factory=dict)
     extra_mounts: list[str] = field(default_factory=list)
     extra_labels: dict[str, str] = field(default_factory=dict)
+    forward_ports: list[int] = field(default_factory=list)
 
 
 def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict:
@@ -54,6 +55,9 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
     mounts = _build_mounts(ws, config)
     if mounts:
         overlay["mounts"] = mounts
+
+    if config.forward_ports:
+        overlay["forwardPorts"] = config.forward_ports
 
     return overlay
 

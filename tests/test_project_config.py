@@ -94,6 +94,34 @@ class TestLoadProjectConfig:
             load_project_config("sec", base_dir=tmp_path)
         assert "secrets_source" in str(exc_info.value)
 
+    def test_forward_ports_defaults_to_empty_list(self, tmp_path):
+        (tmp_path / "plain.yaml").write_text("repo_path: /code/x\n")
+        cfg = load_project_config("plain", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.forward_ports == []
+
+    def test_forward_ports_parses_int_list(self, tmp_path):
+        (tmp_path / "fp.yaml").write_text(
+            "forward_ports:\n  - 8000\n  - 3000\n"
+        )
+        cfg = load_project_config("fp", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.forward_ports == [8000, 3000]
+
+    def test_forward_ports_rejects_strings(self, tmp_path):
+        (tmp_path / "bad.yaml").write_text(
+            "forward_ports:\n  - '8080:80'\n"
+        )
+        cfg = load_project_config("bad", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.forward_ports == ["8080:80"]
+
+    def test_forward_ports_rejects_non_list(self, tmp_path):
+        (tmp_path / "bad.yaml").write_text("forward_ports: 8000\n")
+        cfg = load_project_config("bad", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.forward_ports == 8000
+
     # Unknown keys are rejected so typos don't silently become no-ops
     def test_unknown_keys_rejected(self, tmp_path):
         (tmp_path / "typo.yaml").write_text("repo_path: /code/x\ntypo_field: oops\n")

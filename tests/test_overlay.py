@@ -150,6 +150,15 @@ class TestGenerateOverlay:
         overlay = generate_overlay(ws, config)
         assert "source=/data,target=/data,type=bind" in overlay["mounts"]
 
+    def test_forward_ports_included_when_set(self, ws):
+        config = OverlayConfig(forward_ports=[8000])
+        overlay = generate_overlay(ws, config)
+        assert overlay["forwardPorts"] == [8000]
+
+    def test_forward_ports_omitted_when_empty(self, ws):
+        overlay = generate_overlay(ws)
+        assert "forwardPorts" not in overlay
+
     def test_overlay_is_valid_json_serializable(self, ws):
         config = OverlayConfig(
             firewall_extra_domains=["a.com"],
@@ -215,3 +224,16 @@ class TestProjectYamlToOverlay:
         assert env["REMOTE_CONTROL_NAME"] == "App RC"
         assert env["FIREWALL_EXTRA_DOMAINS"] == "api.stripe.com"
         assert env["FIREWALL_IPV6_HOSTS"] == "[::1]:4000"
+
+    def test_project_yaml_forward_ports_in_overlay(self, ws, tmp_path):
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        (projects_dir / "app.yaml").write_text(
+            "forward_ports:\n  - 8000\n  - 3000\n"
+        )
+        proj_cfg = load_project_config("app", base_dir=projects_dir)
+        assert proj_cfg is not None
+
+        overlay_config = OverlayConfig(forward_ports=proj_cfg.forward_ports)
+        overlay = generate_overlay(ws, overlay_config)
+        assert overlay["forwardPorts"] == [8000, 3000]
