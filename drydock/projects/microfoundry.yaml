@@ -1,10 +1,24 @@
-# Drydock project config for microfoundry top-level orchestrator workspace.
-# Consumed by `ws create microfoundry`.
+# Drydock project config: top-level microfoundry workspace.
+#
+# Consumed by `ws create microfoundry` (host-side).
+#
+# Role: general monorepo-dev workspace. Hosts edit authority across all
+# sub-projects. Does NOT run the high-risk sub-project workloads itself —
+# those get their own workspaces (auction-crawl, 3duf) with narrower policy.
+#
+# Firewall posture: broad. Includes common dev surfaces (Python, Rust, Node,
+# GitHub release/raw) because the user may be writing any sub-project's code
+# here. NOT included: third-party auction hosts, Playwright CDN, npm-external
+# scripts — those belong to sub-project workspaces.
 
 repo_path: /Users/stevenfan/Unified Workspaces/microfoundry
 
-# Top-level container is the orchestrator — spawns child workspaces per sub-project.
-# Additional firewall domains beyond the base (GitHub, npm, Anthropic API, VS Code).
+tailscale_hostname: microfoundry-dev
+tailscale_serve_port: 3000
+tailscale_authkey_env_var: TAILSCALE_AUTHKEY
+
+remote_control_name: microfoundry
+
 firewall_extra_domains:
   # Python
   - pypi.org
@@ -14,7 +28,15 @@ firewall_extra_domains:
   - static.crates.io
   - index.crates.io
   - sh.rustup.rs
-  # GitHub raw content (for installer scripts, release downloads)
+  # GitHub raw content (installer scripts, release downloads)
   - raw.githubusercontent.com
   - objects.githubusercontent.com
   - codeload.github.com
+  # Documentation fetching during dev
+  - docs.rs
+  - doc.rust-lang.org
+
+# NOTE: secrets path is a global default handled by Drydock (~/.drydock/secrets/<ws_id>/).
+# Populate ~/.drydock/secrets/ws_microfoundry_microfoundry/ with one file per secret:
+#   echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/ws_microfoundry_microfoundry/anthropic_api_key
+# Inside the container, read via:  $(cat /run/secrets/anthropic_api_key)
