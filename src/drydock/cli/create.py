@@ -1,8 +1,11 @@
 """ws create — provision a new workspace."""
 
+from pathlib import Path
+
 import click
 
 from drydock.core.errors import WsError
+from drydock.core.overlay import OverlayConfig, generate_overlay, write_overlay
 from drydock.core.workspace import Workspace
 
 
@@ -64,8 +67,16 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
         out.error(e)
 
     # TODO: create git worktree
-    # TODO: generate devcontainer override
-    # TODO: devcontainer up
+
+    # Generate devcontainer override
+    overlay_dir = Path.home() / ".drydock" / "overlays"
+    overlay_config = OverlayConfig()
+    overlay_path = write_overlay(ws, overlay_dir, overlay_config)
+    ws = registry.update_workspace(
+        ws.name, config={"overlay_path": str(overlay_path)}
+    )
+
+    # TODO: devcontainer up (using overlay_path as --override-config)
     # TODO: update state to 'running' with container_id
 
     out.success(

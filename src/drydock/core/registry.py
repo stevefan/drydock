@@ -135,6 +135,9 @@ class Registry:
         if not fields:
             return self.get_workspace(name)
         fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        for key in ("labels", "config"):
+            if key in fields and isinstance(fields[key], dict):
+                fields[key] = json.dumps(fields[key])
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [name]
         self._conn.execute(
