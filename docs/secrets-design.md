@@ -23,9 +23,9 @@ The workspace never learns the broker's real keys. The broker is the only thing 
 The daemon doesn't exist yet. V1 implements the convention without the broker:
 
 - **Container path:** `/run/secrets/` (readonly bind mount)
-- **Host path:** `/srv/secrets/<workspace_id>/` (per-workspace directory on the host)
+- **Host path:** `~/.drydock/secrets/<workspace_id>/` (per-workspace directory on the host)
 - **Populate mechanism:** the operator populates the per-workspace directory before `ws create` — by hand, by shell script, or by 1Password CLI (`op read`)
-- **Revocation:** operator removes or rotates files in `/srv/secrets/<workspace_id>/` and restarts the workspace
+- **Revocation:** operator removes or rotates files in `~/.drydock/secrets/<workspace_id>/` and restarts the workspace
 
 Each secret is a plain file named after the key (lowercase, underscored):
 
@@ -45,12 +45,12 @@ TAILSCALE_AUTHKEY=$(cat /run/secrets/tailscale_authkey)
 
 ## Per-workspace directory convention
 
-V1 mounts `/srv/secrets/<workspace_id>/` readonly at `/run/secrets/`. The workspace id is deterministic from `ws create` args (`ws_<project>_<name_slug>`), so you can set up the directory before running create:
+V1 mounts `~/.drydock/secrets/<workspace_id>/` readonly at `/run/secrets/`. The workspace id is deterministic from `ws create` args (`ws_<project>_<name_slug>`), so you can set up the directory before running create:
 
 ```bash
-mkdir -p /srv/secrets/ws_microfoundry_microfoundry
-cp ~/.local/secrets/tailscale_authkey /srv/secrets/ws_microfoundry_microfoundry/
-cp ~/.local/secrets/anthropic_api_key /srv/secrets/ws_microfoundry_microfoundry/
+mkdir -p ~/.drydock/secrets/ws_microfoundry_microfoundry
+cp ~/.local/secrets/tailscale_authkey ~/.drydock/secrets/ws_microfoundry_microfoundry/
+cp ~/.local/secrets/anthropic_api_key ~/.drydock/secrets/ws_microfoundry_microfoundry/
 ws create microfoundry
 ```
 
@@ -60,7 +60,7 @@ If the directory doesn't exist, Docker's bind mount creates an empty one. The wo
 
 ## Sources by environment
 
-The operator's mechanism for populating `/srv/secrets/<workspace_id>/` can vary. Drydock doesn't prescribe it; it only prescribes where the container finds secrets.
+The operator's mechanism for populating `~/.drydock/secrets/<workspace_id>/` can vary. Drydock doesn't prescribe it; it only prescribes where the container finds secrets.
 
 | Environment | Populate mechanism |
 |---|---|
@@ -108,8 +108,8 @@ In v2 the daemon does this at lease time instead of at container-start time.
 
 - Secret files should be readable by the container user (mode 0440) and owned by a user the container can map to
 - Never log secret values — log only whether a secret was found
-- Host secrets directory (`/srv/secrets/`) should have restricted permissions (mode 0700)
-- Secrets are never committed to git — `.gitignore` excludes all `.env*` and `/srv/secrets/` is outside the repo
+- Host secrets directory (`~/.drydock/secrets/`) should have restricted permissions (mode 0700)
+- Secrets are never committed to git — `.gitignore` excludes all `.env*` and `~/.drydock/secrets/` is outside the repo
 - Cloud secret mounts should use tmpfs (in-memory) by default — no disk persistence
 - V2 daemon leases are time-bounded; rotate and revoke automatically
 

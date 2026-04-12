@@ -24,14 +24,14 @@ You'll also want:
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/ | Claude Code inside the workspace |
 | `TAILSCALE_AUTHKEY` | https://login.tailscale.com/admin/settings/keys | Auto-joining the tailnet |
 
-**How secrets reach the workspace.** The workspace mounts `/srv/secrets/<workspace_id>/` from your host at `/run/secrets/` (readonly). Before `ws create`, populate that directory with plain files named after each key:
+**How secrets reach the workspace.** The workspace mounts `~/.drydock/secrets/<workspace_id>/` from your host at `/run/secrets/` (readonly). Before `ws create`, populate that directory with plain files named after each key:
 
 ```bash
-mkdir -p /srv/secrets/ws_myproject_myproject
-chmod 700 /srv/secrets/ws_myproject_myproject
-echo -n "$ANTHROPIC_API_KEY" > /srv/secrets/ws_myproject_myproject/anthropic_api_key
-echo -n "$TAILSCALE_AUTHKEY"  > /srv/secrets/ws_myproject_myproject/tailscale_authkey
-chmod 400 /srv/secrets/ws_myproject_myproject/*
+mkdir -p ~/.drydock/secrets/ws_myproject_myproject
+chmod 700 ~/.drydock/secrets/ws_myproject_myproject
+echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/ws_myproject_myproject/anthropic_api_key
+echo -n "$TAILSCALE_AUTHKEY"  > ~/.drydock/secrets/ws_myproject_myproject/tailscale_authkey
+chmod 400 ~/.drydock/secrets/ws_myproject_myproject/*
 ```
 
 The workspace id is `ws_<project>_<name_slug>` — deterministic from the `ws create` args. If the directory is missing, Docker auto-creates an empty one and the workspace starts with an empty `/run/secrets/`; scripts that need secrets will see empty strings. See [secrets-design.md](secrets-design.md) for the full convention and the v2 broker direction.
@@ -126,9 +126,6 @@ firewall_extra_domains:
 
 # Optional IPv6 hosts (host:port format)
 firewall_ipv6_hosts: []
-
-# Secrets source — where /run/secrets/ content comes from
-secrets_source: /srv/secrets/myproject
 ```
 
 Unknown keys are rejected (so typos don't become silent no-ops). Missing file is fine — the CLI falls back to defaults.
@@ -178,9 +175,9 @@ The two workspaces are fully independent: different firewalls, different tailnet
 
 - **Nested spawning.** A Claude inside the microfoundry workspace cannot currently call `ws create auction-crawl` to spawn a child workspace. V1's `ws` is a host-side CLI. This is a known gap, captured in [v2-scope.md](v2-scope.md).
 - **Parent-child destroy cascade.** Each workspace is independent; destroying microfoundry does not destroy auction-crawl.
-- **`ws attach`.** Attaching to a workspace from your phone or another machine is planned for v1 but not yet implemented; for now, use the workspace's Tailscale hostname and the Claude Code remote control or SSH.
+- **`ws attach`.** Attaching to a workspace from your phone or another machine is planned but not yet implemented; for now, use the workspace's Tailscale hostname and the Claude Code remote control or SSH.
 
-For the nested-spawning story, see the v2 scope doc. For the microfoundry-specific requirement trail, see [requirement-microfoundry-nested-orchestration.md](requirement-microfoundry-nested-orchestration.md).
+For the nested-spawning design and the microfoundry requirement that drives it, see [v2-scope.md](v2-scope.md).
 
 ## Troubleshooting
 
@@ -205,6 +202,6 @@ Reinstall: `.venv/bin/pip install -e ".[dev]" --force-reinstall`. The editable i
 ## Where to go next
 
 - [CLAUDE.md](../CLAUDE.md) — agent-facing conventions for Drydock development
-- [vision.md](vision.md) — the long-form design rationale
-- [workspace-orchestration-spec-v1.md](workspace-orchestration-spec-v1.md) — detailed v1 spec
+- [vision.md](vision.md) — the fabric framing and long-form design rationale
 - [v2-scope.md](v2-scope.md) — the `ws` daemon for nested orchestration (upcoming)
+- [secrets-design.md](secrets-design.md) — secrets convention and the v2 broker direction
