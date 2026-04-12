@@ -2,9 +2,11 @@
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .errors import WsError
 from .workspace import Workspace
 
 DEFAULT_SECRETS_HOST_DIR = str(Path.home() / ".drydock" / "secrets")
@@ -62,12 +64,56 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
     return overlay
 
 
-def write_overlay(ws: Workspace, output_dir: Path, config: OverlayConfig | None = None) -> Path:
-    """Generate and write the override JSON file. Returns the file path."""
+def _strip_jsonc_comments(text: str) -> str:
+    """Strip // line comments and /* */ block comments from JSONC text."""
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+    text = re.sub(r'//[^\n]*', '', text)
+    return text
+
+
+def merge_into_base(base_path: Path, overlay: dict) -> dict:
+    """Read base devcontainer.json (JSONC) and deep-merge overlay onto it."""
+    if not base_path.exists():
+        raise WsError(
+            f"Base devcontainer.json not found at {base_path}",
+            fix=f"Create {base_path}, or check workspace_subdir in the project YAML",
+        )
+    raw = base_path.read_text()
+    base = json.loads(_strip_jsonc_comments(raw))
+
+    composite = dict(base)
+    for key, value in overlay.items():
+        if key == "containerEnv":
+            composite["containerEnv"] = {**composite.get("containerEnv", {}), **value}
+        elif key == "mounts":
+            composite["mounts"] = list(composite.get("mounts", [])) + list(value)
+        elif key == "forwardPorts":
+            seen = set()
+            merged: list[int] = []
+            for port in list(composite.get("forwardPorts", [])) + list(value):
+                if port not in seen:
+                    seen.add(port)
+                    merged.append(port)
+            composite["forwardPorts"] = merged
+        else:
+            composite[key] = value
+
+    return composite
+
+
+def write_overlay(
+    ws: Workspace,
+    output_dir: Path,
+    config: OverlayConfig | None = None,
+    *,
+    base_devcontainer_path: Path,
+) -> Path:
+    """Generate overlay, merge with base, and write composite JSON. Returns file path."""
     overlay = generate_overlay(ws, config)
+    composite = merge_into_base(base_devcontainer_path, overlay)
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{ws.id}.devcontainer.override.json"
-    path.write_text(json.dumps(overlay, indent=2) + "\n")
+    path = output_dir / f"{ws.id}.devcontainer.json"
+    path.write_text(json.dumps(composite, indent=2) + "\n")
     return path
 
 

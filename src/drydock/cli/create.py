@@ -7,7 +7,7 @@ import click
 
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.errors import WsError
-from drydock.core.overlay import OverlayConfig, generate_overlay, write_overlay
+from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.project_config import load_project_config
 from drydock.core.worktree import create_worktree
 from drydock.core.workspace import Workspace
@@ -89,21 +89,6 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
     except WsError as e:
         out.error(e)
 
-    # Generate devcontainer override
-    overlay_dir = Path.home() / ".drydock" / "overlays"
-    overlay_config = _overlay_from_project(proj_cfg)
-    overlay_path = write_overlay(ws, overlay_dir, overlay_config)
-    ws = registry.update_workspace(
-        ws.name, config={"overlay_path": str(overlay_path)}
-    )
-
-    # Launch devcontainer
-    devc = DevcontainerCLI(dry_run=dry_run)
-    try:
-        devc.check_available()
-    except WsError as e:
-        out.error(e)
-
     workspace_folder = (
         os.path.join(ws.worktree_path, ws.workspace_subdir)
         if ws.workspace_subdir
@@ -118,6 +103,21 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
             f"devcontainer.json not found at {devcontainer_json}",
             fix=f"Create {workspace_folder}/.devcontainer/devcontainer.json, or set a different workspace_subdir in the project YAML",
         )
+
+    # Generate composite devcontainer config (base + overlay merged)
+    overlay_dir = Path.home() / ".drydock" / "overlays"
+    overlay_config = _overlay_from_project(proj_cfg)
+    overlay_path = write_overlay(ws, overlay_dir, overlay_config, base_devcontainer_path=devcontainer_json)
+    ws = registry.update_workspace(
+        ws.name, config={"overlay_path": str(overlay_path)}
+    )
+
+    # Launch devcontainer
+    devc = DevcontainerCLI(dry_run=dry_run)
+    try:
+        devc.check_available()
+    except WsError as e:
+        out.error(e)
 
     ws = registry.update_state(ws.name, "provisioning")
     out.success(

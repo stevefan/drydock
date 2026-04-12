@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from drydock.core.errors import WsError
 from drydock.core.overlay import (
     OverlayConfig,
     generate_overlay,
+    merge_into_base,
     write_overlay,
 )
 from drydock.core.project_config import load_project_config
@@ -169,25 +171,106 @@ class TestGenerateOverlay:
         assert roundtripped == overlay
 
 
-class TestWriteOverlay:
-    def test_writes_file_to_output_dir(self, ws, tmp_path):
-        path = write_overlay(ws, tmp_path)
-        assert path.exists()
-        assert path.name == f"{ws.id}.devcontainer.override.json"
+class TestMergeIntoBase:
+    def _write_base(self, tmp_path, content):
+        base = tmp_path / ".devcontainer" / "devcontainer.json"
+        base.parent.mkdir(parents=True, exist_ok=True)
+        base.write_text(content)
+        return base
 
-    def test_written_file_is_valid_json(self, ws, tmp_path):
-        path = write_overlay(ws, tmp_path)
+    def test_base_build_preserved_with_overlay_env_and_mounts(self, tmp_path):
+        base_path = self._write_base(tmp_path, json.dumps({
+            "build": {"dockerfile": "Dockerfile"},
+            "containerEnv": {"EXISTING": "yes"},
+        }))
+        overlay = {
+            "name": "ws1",
+            "containerEnv": {"NEW_VAR": "val"},
+            "mounts": ["source=/a,target=/b,type=bind"],
+        }
+        composite = merge_into_base(base_path, overlay)
+        assert composite["build"] == {"dockerfile": "Dockerfile"}
+        assert composite["containerEnv"]["EXISTING"] == "yes"
+        assert composite["containerEnv"]["NEW_VAR"] == "val"
+        assert composite["mounts"] == ["source=/a,target=/b,type=bind"]
+
+    def test_jsonc_comments_parsed(self, tmp_path):
+        jsonc = '{\n  // line comment\n  "image": "node:20", /* block */\n  "name": "base"\n}'
+        base_path = self._write_base(tmp_path, jsonc)
+        composite = merge_into_base(base_path, {"name": "overlay"})
+        assert composite["image"] == "node:20"
+        assert composite["name"] == "overlay"
+
+    def test_overlay_container_env_overrides_base(self, tmp_path):
+        base_path = self._write_base(tmp_path, json.dumps({
+            "image": "node:20",
+            "containerEnv": {"SHARED": "base_val", "BASE_ONLY": "keep"},
+        }))
+        overlay = {"containerEnv": {"SHARED": "overlay_val"}}
+        composite = merge_into_base(base_path, overlay)
+        assert composite["containerEnv"]["SHARED"] == "overlay_val"
+        assert composite["containerEnv"]["BASE_ONLY"] == "keep"
+
+    def test_missing_base_raises_ws_error(self, tmp_path):
+        missing = tmp_path / "nope" / "devcontainer.json"
+        with pytest.raises(WsError, match="not found"):
+            merge_into_base(missing, {})
+
+    def test_forward_ports_dedup(self, tmp_path):
+        base_path = self._write_base(tmp_path, json.dumps({
+            "image": "node:20",
+            "forwardPorts": [3000, 8080],
+        }))
+        overlay = {"forwardPorts": [8080, 9090]}
+        composite = merge_into_base(base_path, overlay)
+        assert composite["forwardPorts"] == [3000, 8080, 9090]
+
+    def test_mounts_concatenated(self, tmp_path):
+        base_path = self._write_base(tmp_path, json.dumps({
+            "image": "node:20",
+            "mounts": ["source=/base,target=/base,type=bind"],
+        }))
+        overlay = {"mounts": ["source=/overlay,target=/overlay,type=bind"]}
+        composite = merge_into_base(base_path, overlay)
+        assert composite["mounts"] == [
+            "source=/base,target=/base,type=bind",
+            "source=/overlay,target=/overlay,type=bind",
+        ]
+
+
+class TestWriteOverlay:
+    def _make_base(self, tmp_path):
+        base = tmp_path / "base" / ".devcontainer" / "devcontainer.json"
+        base.parent.mkdir(parents=True, exist_ok=True)
+        base.write_text(json.dumps({"build": {"dockerfile": "Dockerfile"}}))
+        return base
+
+    def test_writes_file_to_output_dir(self, ws, tmp_path):
+        base = self._make_base(tmp_path)
+        out = tmp_path / "out"
+        path = write_overlay(ws, out, base_devcontainer_path=base)
+        assert path.exists()
+        assert path.name == f"{ws.id}.devcontainer.json"
+
+    def test_written_file_is_valid_json_with_base_merged(self, ws, tmp_path):
+        base = self._make_base(tmp_path)
+        out = tmp_path / "out"
+        path = write_overlay(ws, out, base_devcontainer_path=base)
         data = json.loads(path.read_text())
         assert data["name"] == ws.name
+        assert data["build"] == {"dockerfile": "Dockerfile"}
 
     def test_creates_output_dir_if_missing(self, ws, tmp_path):
+        base = self._make_base(tmp_path)
         nested = tmp_path / "a" / "b"
-        path = write_overlay(ws, nested)
+        path = write_overlay(ws, nested, base_devcontainer_path=base)
         assert path.exists()
 
     def test_config_passed_through(self, ws, tmp_path):
+        base = self._make_base(tmp_path)
+        out = tmp_path / "out"
         config = OverlayConfig(tailscale_hostname="custom")
-        path = write_overlay(ws, tmp_path, config)
+        path = write_overlay(ws, out, config, base_devcontainer_path=base)
         data = json.loads(path.read_text())
         assert data["containerEnv"]["TAILSCALE_HOSTNAME"] == "custom"
 
