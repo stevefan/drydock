@@ -10,9 +10,10 @@
 # Firewall posture: medium. npm + GitHub (base allowlist) plus a small
 # set of extras for dev tooling and any APIs the demo calls.
 
-# Same git-worktree friction as auction-crawl: 3duf is a subdirectory of
-# the microfoundry monorepo, not its own git repo. See friction notes.
-repo_path: /Users/stevenfan/Unified Workspaces/microfoundry/3duf
+# Monorepo sub-project layout. Git worktree is the full microfoundry
+# repo; devcontainer up scopes to 3duf/ via workspace_subdir.
+repo_path: /Users/stevenfan/Unified Workspaces/microfoundry
+workspace_subdir: 3duf
 
 tailscale_hostname: 3duf
 tailscale_serve_port: 8000  # 3DuF's browserify dev server typical default
@@ -30,6 +31,6 @@ firewall_extra_domains:
   - fonts.googleapis.com
   - fonts.gstatic.com
 
-# Secrets — 3duf doesn't need Anthropic by default. Leave the secrets
-# directory (~/.drydock/secrets/ws_3duf_3duf/) empty unless something
-# requires an API key.
+# Secrets: drydock's default path ~/.drydock/secrets/ws_3duf_3duf/.
+# 3duf doesn't need Anthropic by default; leave the directory empty unless
+# something later requires an API key.

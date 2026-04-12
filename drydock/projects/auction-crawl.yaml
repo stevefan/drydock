@@ -7,22 +7,16 @@
 # listing must not be able to reach anything outside the whitelist.
 #
 # Firewall posture: narrow. Only the specific auction hosts the crawler
-# legitimately visits, plus what's needed to run (pip install, Playwright
-# browser download, Anthropic classifier).
+# legitimately visits, plus pip install for its Python deps.
+# Playwright browsers are BAKED INTO THE IMAGE (see auction-crawl/
+# .devcontainer/Dockerfile) so the CDN hosts are NOT in the run-time
+# allowlist — they'd only be needed for a build that pulls browsers,
+# and that happens at docker-build time before the firewall is up.
 
-# NOTE: auction-crawl lives at microfoundry/auction-crawl/ — inside the
-# microfoundry git repo, not its own. Drydock v1's worktree.py currently
-# requires repo_path to contain .git directly, which this path does not.
-# Options:
-#   (a) Run from the monorepo root and rely on a per-sub-project devcontainer
-#       at microfoundry/auction-crawl/.devcontainer/ (not yet built).
-#   (b) Change repo_path to the monorepo root but set a future
-#       workspace_subdir field (not yet in the schema) to mount only
-#       auction-crawl/ into the container.
-# Leaving repo_path pointed at the sub-project for now as the intent; see
-# friction notes. If v1 rejects this at worktree-creation time, switch to
-# microfoundry root until a sub-directory workspace field exists.
-repo_path: /Users/stevenfan/Unified Workspaces/microfoundry/auction-crawl
+# Monorepo sub-project layout. Git worktree is the full microfoundry
+# repo; devcontainer up scopes to auction-crawl/ via workspace_subdir.
+repo_path: /Users/stevenfan/Unified Workspaces/microfoundry
+workspace_subdir: auction-crawl
 
 tailscale_hostname: auction-crawl
 tailscale_serve_port: 3000
@@ -31,25 +25,18 @@ tailscale_authkey_env_var: TAILSCALE_AUTHKEY
 remote_control_name: auction-crawl
 
 firewall_extra_domains:
-  # Python package install (pip install -e . inside the workspace)
+  # Python package install
   - pypi.org
   - files.pythonhosted.org
 
-  # Playwright browser downloads (CDN routes)
-  # Playwright downloads from Microsoft's CDN on recent versions; older
-  # versions hit playwright-local.azureedge.net. Include both.
-  - playwright.azureedge.net
-  - cdn.playwright.dev
-
   # Auction sites — the only third-party hosts this workspace should reach.
-  # Primary domains only; subdomains (e.g. www., api.) resolve to the same
-  # IPs in most cases. Expand if crawl breakages surface new subdomains.
   - ebay.com
   - www.ebay.com
   - govdeals.com
   - www.govdeals.com
   - publicsurplus.com
   - www.publicsurplus.com
+  - m.publicsurplus.com
   - labx.com
   - www.labx.com
   - gsaauctions.gov
@@ -61,8 +48,8 @@ firewall_extra_domains:
   - k-bid.com
   - www.k-bid.com
 
-# Secrets — scoped narrowly. Only ANTHROPIC_API_KEY is needed (for the
-# Haiku-driven classifier). NO eBay developer keys, no Fluigent vendor
-# creds — this workspace does not need them. Populate
-# ~/.drydock/secrets/ws_auction-crawl_auction-crawl/anthropic_api_key
-# (one file per secret, Docker-secret convention).
+# Secrets: drydock's default path ~/.drydock/secrets/ws_auction-crawl_auction-crawl/.
+# Populate with:
+#   echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/ws_auction-crawl_auction-crawl/anthropic_api_key
+# Inside container: $(cat /run/secrets/anthropic_api_key)
+# Only ANTHROPIC_API_KEY needed — no vendor API keys, no eBay developer creds.
