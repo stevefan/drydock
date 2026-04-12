@@ -1,0 +1,20 @@
+# Drydock project config for microfoundry top-level orchestrator workspace.
+# Consumed by `ws create microfoundry`.
+
+repo_path: /Users/stevenfan/Unified Workspaces/microfoundry
+
+# Top-level container is the orchestrator — spawns child workspaces per sub-project.
+# Additional firewall domains beyond the base (GitHub, npm, Anthropic API, VS Code).
+firewall_extra_domains:
+  # Python
+  - pypi.org
+  - files.pythonhosted.org
+  # Rust
+  - crates.io
+  - static.crates.io
+  - index.crates.io
+  - sh.rustup.rs
+  # GitHub raw content (for installer scripts, release downloads)
+  - raw.githubusercontent.com
+  - objects.githubusercontent.com
+  - codeload.github.com
