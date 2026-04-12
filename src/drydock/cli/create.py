@@ -6,6 +6,7 @@ import click
 
 from drydock.core.errors import WsError
 from drydock.core.overlay import OverlayConfig, generate_overlay, write_overlay
+from drydock.core.worktree import create_worktree
 from drydock.core.workspace import Workspace
 
 
@@ -66,7 +67,13 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
     except WsError as e:
         out.error(e)
 
-    # TODO: create git worktree
+    # Create git worktree for isolated workspace checkout
+    try:
+        worktree_dir = Path.home() / ".drydock" / "worktrees"
+        worktree_path = create_worktree(ws, base_dir=worktree_dir)
+        ws = registry.update_workspace(ws.name, worktree_path=str(worktree_path))
+    except WsError as e:
+        out.error(e)
 
     # Generate devcontainer override
     overlay_dir = Path.home() / ".drydock" / "overlays"
