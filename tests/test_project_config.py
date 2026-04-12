@@ -25,7 +25,6 @@ class TestLoadProjectConfig:
             "  - sentry.io\n"
             "firewall_ipv6_hosts:\n"
             "  - '[::1]:9090'\n"
-            "secrets_source: vault\n"
         )
         cfg = load_project_config("app", base_dir=tmp_path)
         assert cfg is not None
@@ -37,7 +36,6 @@ class TestLoadProjectConfig:
         assert cfg.remote_control_name == "App Agent"
         assert cfg.firewall_extra_domains == ["api.stripe.com", "sentry.io"]
         assert cfg.firewall_ipv6_hosts == ["[::1]:9090"]
-        assert cfg.secrets_source == "vault"
 
     def test_partial_yaml_preserves_defaults(self, tmp_path):
         (tmp_path / "web.yaml").write_text("repo_path: /code/web\n")
@@ -89,6 +87,12 @@ class TestLoadProjectConfig:
         cfg = load_project_config("bad", base_dir=tmp_path)
         assert cfg is not None
         assert cfg.workspace_subdir == 42
+
+    def test_secrets_source_rejected_as_unknown(self, tmp_path):
+        (tmp_path / "sec.yaml").write_text("repo_path: /code/x\nsecrets_source: vault\n")
+        with pytest.raises(WsError) as exc_info:
+            load_project_config("sec", base_dir=tmp_path)
+        assert "secrets_source" in str(exc_info.value)
 
     # Unknown keys are rejected so typos don't silently become no-ops
     def test_unknown_keys_rejected(self, tmp_path):

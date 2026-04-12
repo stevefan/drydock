@@ -123,9 +123,10 @@ class TestGenerateOverlay:
         assert "DRYDOCK_WORKSPACE_SUBDIR" not in overlay["containerEnv"]
 
     def test_secrets_mount_uses_workspace_scoped_path(self, ws):
+        expected_host_dir = str(Path.home() / ".drydock" / "secrets")
         overlay = generate_overlay(ws)
         mounts = overlay["mounts"]
-        assert any(f"/srv/secrets/{ws.id}" in m and "/run/secrets" in m for m in mounts)
+        assert any(f"{expected_host_dir}/{ws.id}" in m and "/run/secrets" in m for m in mounts)
 
     def test_secrets_mount_is_readonly(self, ws):
         overlay = generate_overlay(ws)

@@ -17,7 +17,6 @@ KNOWN_KEYS = {
     "remote_control_name",
     "firewall_extra_domains",
     "firewall_ipv6_hosts",
-    "secrets_source",
 }
 
 
@@ -32,7 +31,6 @@ class ProjectConfig:
     remote_control_name: str | None = None
     firewall_extra_domains: list[str] = field(default_factory=list)
     firewall_ipv6_hosts: list[str] = field(default_factory=list)
-    secrets_source: str | None = None
 
 
 def load_project_config(
@@ -77,5 +75,4 @@ def load_project_config(
         remote_control_name=raw.get("remote_control_name"),
         firewall_extra_domains=raw.get("firewall_extra_domains", []),
         firewall_ipv6_hosts=raw.get("firewall_ipv6_hosts", []),
-        secrets_source=raw.get("secrets_source"),
     )

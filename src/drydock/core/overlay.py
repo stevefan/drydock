@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .workspace import Workspace
 
-DEFAULT_SECRETS_HOST_DIR = "/srv/secrets"
+DEFAULT_SECRETS_HOST_DIR = str(Path.home() / ".drydock" / "secrets")
 DEFAULT_SECRETS_CONTAINER_DIR = "/run/secrets"
 SHORT_ID_LENGTH = 6
 
