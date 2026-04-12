@@ -36,9 +36,23 @@ class TestGenerateOverlay:
         assert env["DRYDOCK_WORKSPACE_NAME"] == "payments-refactor"
         assert env["DRYDOCK_PROJECT"] == "app"
 
-    def test_tailscale_hostname_defaults_to_workspace_name(self, ws):
-        overlay = generate_overlay(ws)
-        assert overlay["containerEnv"]["TAILSCALE_HOSTNAME"] == "payments-refactor"
+    def test_tailscale_hostname_defaults_to_name_with_short_id(self, ws):
+        hostname = generate_overlay(ws)["containerEnv"]["TAILSCALE_HOSTNAME"]
+        assert hostname.startswith("payments-refactor-")
+        suffix = hostname.removeprefix("payments-refactor-")
+        assert len(suffix) == 6 and all(c in "0123456789abcdef" for c in suffix)
+
+    def test_tailscale_hostname_is_deterministic(self, ws):
+        first = generate_overlay(ws)["containerEnv"]["TAILSCALE_HOSTNAME"]
+        second = generate_overlay(ws)["containerEnv"]["TAILSCALE_HOSTNAME"]
+        assert first == second
+
+    def test_tailscale_hostname_differs_across_workspaces(self):
+        ws_a = Workspace(name="app", project="proj-a", repo_path="/x", branch="b")
+        ws_b = Workspace(name="app", project="proj-b", repo_path="/x", branch="b")
+        a = generate_overlay(ws_a)["containerEnv"]["TAILSCALE_HOSTNAME"]
+        b = generate_overlay(ws_b)["containerEnv"]["TAILSCALE_HOSTNAME"]
+        assert a != b
 
     def test_tailscale_hostname_override(self, ws):
         config = OverlayConfig(tailscale_hostname="my-custom-host")
@@ -63,9 +77,9 @@ class TestGenerateOverlay:
         overlay = generate_overlay(ws, config)
         assert overlay["containerEnv"]["TAILSCALE_SERVE_PORT"] == "8080"
 
-    def test_remote_control_name_defaults_to_workspace_name(self, ws):
-        overlay = generate_overlay(ws)
-        assert overlay["containerEnv"]["REMOTE_CONTROL_NAME"] == "payments-refactor"
+    def test_remote_control_name_defaults_to_name_with_short_id(self, ws):
+        name = generate_overlay(ws)["containerEnv"]["REMOTE_CONTROL_NAME"]
+        assert name.startswith("payments-refactor-")
 
     def test_remote_control_name_override(self, ws):
         config = OverlayConfig(remote_control_name="My Agent")
@@ -96,10 +110,10 @@ class TestGenerateOverlay:
         overlay = generate_overlay(ws, config)
         assert overlay["containerEnv"]["DRYDOCK_PROJECT"] == "overridden"
 
-    def test_secrets_mount_uses_project_scoped_path(self, ws):
+    def test_secrets_mount_uses_workspace_scoped_path(self, ws):
         overlay = generate_overlay(ws)
         mounts = overlay["mounts"]
-        assert any("/srv/secrets/app" in m and "/run/secrets" in m for m in mounts)
+        assert any(f"/srv/secrets/{ws.id}" in m and "/run/secrets" in m for m in mounts)
 
     def test_secrets_mount_is_readonly(self, ws):
         overlay = generate_overlay(ws)
@@ -113,7 +127,7 @@ class TestGenerateOverlay:
         )
         overlay = generate_overlay(ws, config)
         secrets_mount = [m for m in overlay["mounts"] if "/secrets" in m][0]
-        assert "/opt/secrets/app" in secrets_mount
+        assert f"/opt/secrets/{ws.id}" in secrets_mount
         assert "target=/secrets" in secrets_mount
 
     def test_extra_mounts_appended(self, ws):

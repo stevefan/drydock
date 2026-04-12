@@ -2,6 +2,8 @@
 
 Drydock is a host-side CLI (`ws`) that provisions sandboxed Claude Code workspaces as devcontainers. Each workspace gets its own firewall, Tailscale hostname, secrets mount, and git worktree.
 
+A *workspace* is a durable addressable place where an agent works — not a throwaway container. It has a stable name, a scoped policy, a git worktree, and (once the container is up) a Claude Code session you can attach to from anywhere on your tailnet. The container can come and go; the workspace persists.
+
 This guide walks you from zero to a running workspace. If you're trying to use Drydock for Microfoundry (or any other monorepo with heterogeneous sub-projects), the per-project YAML section is the part that matters most.
 
 ## Prerequisites
@@ -22,7 +24,17 @@ You'll also want:
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/ | Claude Code inside the workspace |
 | `TAILSCALE_AUTHKEY` | https://login.tailscale.com/admin/settings/keys | Auto-joining the tailnet |
 
-Put them in `~/.drydock/env` or export in your shell profile; the workspace sources them at start time.
+**How secrets reach the workspace.** The workspace mounts `/srv/secrets/<workspace_id>/` from your host at `/run/secrets/` (readonly). Before `ws create`, populate that directory with plain files named after each key:
+
+```bash
+mkdir -p /srv/secrets/ws_myproject_myproject
+chmod 700 /srv/secrets/ws_myproject_myproject
+echo -n "$ANTHROPIC_API_KEY" > /srv/secrets/ws_myproject_myproject/anthropic_api_key
+echo -n "$TAILSCALE_AUTHKEY"  > /srv/secrets/ws_myproject_myproject/tailscale_authkey
+chmod 400 /srv/secrets/ws_myproject_myproject/*
+```
+
+The workspace id is `ws_<project>_<name_slug>` — deterministic from the `ws create` args. If the directory is missing, Docker auto-creates an empty one and the workspace starts with an empty `/run/secrets/`; scripts that need secrets will see empty strings. See [secrets-design.md](secrets-design.md) for the full convention and the v2 broker direction.
 
 ## Install `ws`
 

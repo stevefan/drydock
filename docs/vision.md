@@ -2,105 +2,121 @@
 
 ## What it is
 
-Drydock is the infrastructure layer for personal agent workspaces. It launches, tracks, connects, and manages containerized development environments across projects, machines, and sessions.
+Drydock is a **personal agent fabric**. It provisions, connects, and governs the sandboxed workspaces where your Claude agents live and do work.
 
-It's a workspace control plane — not a container template, not an IDE, not a CI system. Projects define their own environments (via devcontainer.json). Drydock orchestrates them: resolves secrets, applies network policy, registers the workspace, and makes it reachable from anywhere.
+It is not a container launcher. Launching containers is mechanical plumbing; `devcontainer`, Docker, and `git worktree` already do that. What Drydock provides — the thing that can't be replaced by shell scripts and conventions — is the *fabric*: a policy graph, a daemon-enforced trust boundary, audit, identity, secrets brokering, and cross-host placement.
+
+At v1 the fabric is still just a CLI wrapper over primitives. That's a stepping stone. The complete Drydock is a daemon-mediated control plane for a personal fleet of agent workspaces.
 
 ## Where it sits in the stack
 
 ```
 Substrate    — semantic layer: hypergraphs, dialogue, LLM-native knowledge processing
 Patchwork    — context layer: life data (transcripts, tweets, finance, search)
-Drydock      — infrastructure layer: where things run, how you connect, workspace lifecycle
+Drydock      — fabric layer: where workspaces run, how they're governed, how they're reachable
 ```
 
-Substrate ingests and processes. Patchwork stores and indexes. Drydock runs and connects. Each project (Substrate, Patchwork, ASI, Microfoundry, others) is a workspace that Drydock can spawn, manage, and provide resources to.
+Each project that uses Drydock (Substrate, Patchwork, Microfoundry, ASI, others) is a workspace or set of workspaces that Drydock spawns, governs, and provides resources to.
 
-## What it does
+## The fabric — the properties v1 is a stepping stone toward
 
-1. **Workspace lifecycle** — create, fork, stop, resume, destroy workspaces across projects. One command to go from "I want to work on Patchwork" to a running, firewalled, network-connected container with the right secrets.
+These are what make Drydock *infrastructure* rather than a convenience wrapper. V1 does not yet provide them; [v2-scope.md](v2-scope.md) is the plan to get there.
 
-2. **Resource brokering** — secrets mounted at `/run/secrets/`, per-workspace firewall policy, Tailscale networking. The single place that knows what each workspace needs and provides it.
+1. **Workspaces as durable addressable places, not container incarnations.** A workspace has a name, a policy scope, a history, and state that outlives its current container. Suspend a workspace on your laptop, resume it on your home server; the worktree, session state, and in-flight tasks move with it. Rebooting the host doesn't lose anything.
 
-3. **Host management** — workspaces run locally or on remote machines. Your laptop is a control surface, not necessarily the compute. Workspaces keep running when you close your laptop.
+2. **A daemon (`wsd`) as the sole control plane.** Every lifecycle operation — create, spawn-child, suspend, migrate, destroy — goes through the daemon. Every operation is authenticated, policy-checked, and audited. The `ws` CLI is one client; Claude Code in a workspace is another; a mobile app could be a third. The daemon is the authority.
 
-4. **Connectivity** — attach from laptop, phone, another Claude session. SSH, tmux, Claude Code remote control, browser terminal. The workspace is reachable regardless of how you're connecting.
+3. **A policy graph with enforced narrowness.** Each workspace has declared capabilities, delegatable subsets, firewall allowances, secret entitlements. When a parent spawns a child, the daemon walks the graph: the child cannot exceed the parent's grant; the parent cannot grant what it doesn't hold. Compromise of any single workspace can't laterally expand authority.
 
-5. **Registry** — what's running, where, on what branch, in what state. The fleet view across all projects and hosts.
+4. **Workspace-to-workspace messaging through the daemon.** When Substrate wants to query Patchwork — not via a direct TCP connection across the tailnet, not via the filesystem — it goes through a daemon-mediated call that checks "is A allowed to ask B this thing?" Agent coordination without broad network access. Audit trail is a natural consequence.
 
-## What it doesn't do
+5. **Drydock as secrets broker.** Workspaces don't hold long-lived secrets. They request credentials from the daemon, which fetches (from 1Password, vault, or direct), scopes to the keys this workspace is entitled to, and time-bounds (auto-rotate, auto-revoke on destroy). Your real API keys live exactly one place — the daemon's trust anchor — and are never copied, only leased.
 
-- **Define project environments** — that's the project's devcontainer.json. Drydock reads it, doesn't duplicate it.
-- **Process data or run application logic** — that's Substrate, Patchwork, etc.
-- **Provision cloud accounts or manage DNS** — manual for now, light automation later if the friction justifies it.
+6. **The host fleet.** Workspaces run on a dynamic set of machines: your laptop, a home server, a cloud VM. Daemons on each host coordinate (mesh or lead-elected). Placement decisions are informed by resource availability, persistence needs, data locality. You say `ws create microfoundry`; you don't say where.
 
-## How it relates to devcontainers
+7. **Audit as first-class.** "What did auction-crawl do yesterday?" returns: container lifetimes, outbound hosts reached, secrets requested, files modified, messages sent to other workspaces. Table stakes for autonomous agents; Drydock is where it's recorded because Drydock is where the operations happen.
 
-Projects own their `.devcontainer/devcontainer.json`. This works standalone with VS Code "Reopen in Container." Drydock is an alternative launch path that layers orchestration on top via `devcontainer up --override-config`.
+8. **The workspace is the unit of identity.** On the tailnet, each workspace has a stable hostname. In audit logs, each workspace is a principal. "Microfoundry asked to reach ebay.com at 14:23" is a coherent sentence.
 
-Two launch paths, no conflict:
+## What v1 actually delivers today
 
-| Path | What happens |
-|---|---|
-| VS Code "Reopen in Container" | Uses project's devcontainer.json directly. No Drydock involved. |
-| `ws create <project>` | Drydock merges project devcontainer + orchestration overlay. Managed lifecycle. |
+Scoped to a single host, no daemon, no cross-workspace messaging:
 
-The per-project Drydock config captures only what devcontainer.json can't express: secrets policy, firewall rules, Tailscale hostname, workspace metadata.
+1. **Per-workspace devcontainer override.** `ws create` generates a JSON overlay that gives each workspace its own Tailscale hostname, firewall extras, secrets mount, and identity env vars. Layered on top of the project's devcontainer.json via `devcontainer up --override-config`.
+2. **Git worktree per workspace.** Deterministic location, reused if the branch already exists, cleaned up on destroy.
+3. **Per-project YAML config** at `drydock/projects/{project}.yaml`. Workspaces resolve defaults from it; CLI flags win.
+4. **SQLite registry** at `~/.drydock/registry.db` tracking workspaces (name, state, branch, container id, paths).
+5. **Full lifecycle**: create (worktree + overlay + `devcontainer up`), stop (`devcontainer down`), destroy (stop + remove worktree + remove overlay + delete registry row).
+6. **Default-deny firewall + Tailscale + Claude Code remote control** — from the `.devcontainer/` template that ships with Drydock.
 
-## How it relates to Docker
-
-```
-ws CLI → devcontainer CLI → Docker/Podman
-```
-
-Drydock never talks to Docker directly. Podman support comes free from the devcontainer CLI. Drydock manages workspaces — the abstraction that connects a project, a git branch, a container, and the work happening inside it. Docker just runs containers.
+None of this enables nested orchestration. The `ws` CLI runs on the host; a Claude agent inside a workspace cannot currently spawn siblings. Microfoundry's nested case (see [requirement-microfoundry-nested-orchestration.md](requirement-microfoundry-nested-orchestration.md)) is the forcing function for v2.
 
 ## The agent angle
 
 Claude operates at two levels:
-- **Operator** — you (or Claude on your host) call `ws create` to provision workspaces.
-- **Occupant** — Claude runs inside each workspace as the development agent, accessible via remote control.
 
-Each workspace is a self-contained Claude agent environment: code, tools, network access, and a remote control endpoint. You check in from wherever you are — laptop, phone, another Claude session. Drydock is the workshop where you outfit the ships.
+- **Operator:** you, or a Claude on your host, call `ws create` to provision workspaces. This is the v1 primary mode.
+- **Occupant:** Claude runs *inside* each workspace as the development agent, accessible via remote control or SSH over Tailscale.
+
+Each workspace is a self-contained Claude agent environment: code, tools, scoped network access, a remote-control endpoint. You check in from wherever you are — laptop, phone, another Claude session. Drydock is the workshop where you outfit the ships.
+
+In the fabric end state, occupants become orchestrators of their own children (through the daemon, with narrowed policy). Today they don't.
 
 ## Network and firewall
 
-The existing default-deny firewall (iptables/ipset) and Tailscale integration are Drydock's foundation. Whether network setup lives in Drydock's overlay or in project devcontainers is still being worked out — but the capability is Drydock's responsibility either way. Projects shouldn't have to think about firewalling or tailnet attachment.
+Default-deny egress from every workspace container. Only explicitly whitelisted domains are reachable. Base whitelist covers GitHub, npm, Anthropic API, VS Code marketplace, Tailscale infrastructure. Per-project `firewall_extra_domains` add to it. The daemon (v2) will enforce that each child's firewall is strictly narrower than its parent's.
+
+Conservative tailnet policy: your devices reach workspaces, workspaces reach their internet whitelist, workspaces don't reach each other by default. Cross-workspace communication is a future capability gated on explicit policy — in the fabric model, mediated by the daemon.
 
 ## Architecture
 
-The `ws` CLI runs on the host — your laptop or a server. It is not containerized. Containers are workspaces, not orchestrators.
+### Today (v1)
 
 ```
 Host machine
-├── ws CLI (pip install)
+├── ws CLI (pip install, venv)
 ├── devcontainer CLI
 ├── Docker
-├── ~/.drydock/registry.db
-└── /srv/secrets/
+├── ~/.drydock/
+│     registry.db, overlays/, worktrees/
+└── /srv/secrets/<workspace_id>/   (operator populates)
          │
-         │  ws create substrate
+         │  ws create microfoundry  (from host only)
          ▼
     ┌─────────────────────────┐
-    │ Workspace container      │
-    │  Claude Code + remote    │
-    │  iptables firewall       │
-    │  Tailscale networking    │
-    │  project code mounted    │
+    │ Workspace container       │
+    │  Claude Code + remote     │
+    │  iptables firewall        │
+    │  Tailscale networking     │
+    │  worktree mounted         │
     └─────────────────────────┘
 ```
 
-The control plane is just a CLI and a SQLite file. No daemon, no server, no container-in-container. If remote orchestration becomes valuable later (scheduling workspaces across machines, API access), `ws` can grow a server mode — but v1 is a local CLI.
+### V2 direction (see [v2-scope.md](v2-scope.md))
 
-### Components
+```
+Host (or one of several hosts in the fleet)
+├── wsd daemon — sole control plane, authenticated
+├── policy validator — narrowness enforcement on every spawn
+├── parent-child registry — cascade semantics
+├── audit log
+└── secrets broker — time-bounded credential leases
+         ▲
+         │  authenticated calls over Tailscale
+         │
+    ┌─────────────────────────┐
+    │ Workspace                 │
+    │  ws CLI in workspace mode │
+    │    │ detects $DRYDOCK_... │
+    │    ▼                      │
+    │  daemon client            │
+    │  → create sibling         │
+    │  → request secret lease   │
+    │  → message other workspace│
+    └─────────────────────────┘
+```
 
-- **`ws` CLI** — Python, installed on host, wraps `devcontainer` CLI
-- **Registry** — SQLite at `~/.drydock/registry.db`, tracks workspace state
-- **Workspace template** — the `.devcontainer/` in this repo: Dockerfile with Claude, firewall, Tailscale, remote control. This is what gets built when a project doesn't have its own devcontainer.
-- **Override generator** — `ws create` produces a devcontainer override JSON that layers orchestration (identity, secrets, networking) onto any project's devcontainer
-- **Per-project config** — YAML in `drydock/projects/`, orchestration delta only
-- **Secrets** — resolved from `/srv/secrets/`, mounted at `/run/secrets/`
-- **Remote hosts** — SSH + devcontainer CLI on remote machines on the tailnet (future)
+The daemon doesn't replace the v1 primitives (overlay generator, worktree, devcontainer wrapper, registry) — it puts a trust boundary in front of them.
 
 ## Why it matters
 
@@ -110,39 +126,16 @@ The firewall is what makes autonomous agent work safe. Default-deny means Claude
 
 Tailscale makes location irrelevant. A workspace has a stable tailnet hostname. You think in workspace names, not machine names. You check in from your phone, your laptop, or another Claude session — it doesn't matter.
 
-## Network policy
+The daemon (v2) is what turns this from "a trust boundary at `ws create` time" into "a trust boundary at every operation." That's the difference between "I ran this yesterday" and "a dozen agents run concurrently, each with narrow capabilities, accountable."
 
-Conservative default: your devices can reach workspaces, workspaces can reach their internet whitelist, workspaces don't talk to each other.
+## What v1 is
 
-Drydock owns both layers of network policy:
-- **Tailscale ACLs** — tailnet-wide rules controlling which tagged nodes can reach which. Workspace containers get a `tag:workspace` tag. Personal devices get `tag:personal`.
-- **iptables on tailscale0** — per-container rules restricting which ports are exposed and what the container can initiate over the tailnet. No blanket `ACCEPT` on tailscale0.
+A local CLI, a SQLite file, and a `.devcontainer/` template with good defaults. Microfoundry can start using it today (see [getting-started.md](getting-started.md)). It's enough to validate the isolation model, firewall policy differentiation, and per-project config flow.
 
-Cross-workspace communication (e.g., Substrate reading from Patchwork) is a future capability, gated by explicit policy.
+## What v2 becomes
 
-## v1 scope
-
-The v1 mission: infrastructure and Claude that you can talk to and work on without worrying about your laptop being closed.
-
-**In scope:**
-- `ws create <project>` — local or remote (SSH host)
-- `ws list` / `ws inspect` / `ws attach` / `ws stop`
-- Secrets resolution and `/run/secrets/` mount
-- Firewall with per-project domain whitelist
-- Tailscale with conservative ACLs and locked-down tailscale0
-- Claude Code remote control running in each workspace
-- SQLite registry tracking workspace state
-- Per-project YAML config (orchestration delta only)
-
-**Out of scope for v1:**
-- Agent-to-agent coordination
-- Cross-workspace networking
-- Workspace forking
-- Tailscale ACL management UI
-- Host provisioning automation
-- Mobile dashboard
-- Substrate as task/conversation coordination medium
+Drydock becomes infrastructure the moment the daemon exists. Until then it's a convenience wrapper; after that, it's where policy, identity, and audit for your agent fleet live.
 
 ## What this is not
 
-Not a general platform. Not multi-tenant. Not trying to replace Kubernetes or GitHub Actions. It's a personal workspace control plane for someone who runs multiple projects with agent assistance across multiple machines. The right amount of infrastructure for that specific problem.
+Not a general platform. Not multi-tenant. Not trying to replace Kubernetes or GitHub Actions. It is a personal agent fabric for one person running a fleet of maybe 10-50 workspaces across 2-5 machines. The opinions are strong; the abstractions are few; the aim is to make autonomous agent work routine, safe, and legible.

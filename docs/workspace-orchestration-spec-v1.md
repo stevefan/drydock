@@ -1,5 +1,17 @@
 # Agent Workspace Orchestration Spec v1
 
+> **Historical note — read before using this doc.** This spec predates the personal-agent-fabric framing now canonical in [vision.md](vision.md). It was the early design corpus: core concepts, state machine, data model, directory layout, CLI shape. Much of its structural thinking survives and informs [v2-scope.md](v2-scope.md).
+>
+> However, large sections describe capabilities that are **not yet built**: forks, session management, tmux integration, mobile dashboard, summaries/transcripts, SSH attach, VibeTunnel, permission profiles, fleet-wide logging, `ws repair`, the REST API surface.
+>
+> What's actually shipped in v1 today (see [getting-started.md](getting-started.md)):
+> - `ws create / list / inspect / stop / destroy`
+> - SQLite registry + per-workspace git worktree + devcontainer override
+> - Per-project YAML config
+> - Default-deny firewall + Tailscale + Claude Code remote control in the devcontainer template
+>
+> Most of the "v1" features described below are now scoped to **v2 (daemon era)** or later, and will be reshaped by the daemon's policy and trust-boundary semantics. Treat this document as a reference for *what we were thinking when we started*, not as a specification of current behavior.
+
 ## 1. Purpose
 
 Provide a repeatable system for creating, managing, and steering agent workspaces across projects and branches, with good support for:

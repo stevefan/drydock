@@ -1,5 +1,6 @@
 """Devcontainer override generator for per-workspace orchestration."""
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,6 +9,15 @@ from .workspace import Workspace
 
 DEFAULT_SECRETS_HOST_DIR = "/srv/secrets"
 DEFAULT_SECRETS_CONTAINER_DIR = "/run/secrets"
+SHORT_ID_LENGTH = 6
+
+
+def _short_id(ws: Workspace) -> str:
+    return hashlib.sha256(ws.id.encode()).hexdigest()[:SHORT_ID_LENGTH]
+
+
+def _default_identity(ws: Workspace) -> str:
+    return f"{ws.name}-{_short_id(ws)}"
 
 
 @dataclass
@@ -65,16 +75,17 @@ def remove_overlay(overlay_path: str) -> None:
 def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]:
     env: dict[str, str] = {}
 
-    hostname = config.tailscale_hostname or ws.name
-    env["TAILSCALE_HOSTNAME"] = hostname
+    env["TAILSCALE_HOSTNAME"] = config.tailscale_hostname or _default_identity(ws)
 
     if config.tailscale_authkey:
         env["TAILSCALE_AUTHKEY"] = config.tailscale_authkey
 
     env["TAILSCALE_SERVE_PORT"] = str(config.tailscale_serve_port)
 
-    env["REMOTE_CONTROL_NAME"] = config.remote_control_name or ws.name
+    env["REMOTE_CONTROL_NAME"] = config.remote_control_name or _default_identity(ws)
 
+    # TODO(v2): replace with daemon-enforced firewall policy; the string format
+    # is a coupling to init-firewall.sh's arg parsing.
     if config.firewall_extra_domains:
         env["FIREWALL_EXTRA_DOMAINS"] = " ".join(config.firewall_extra_domains)
 
@@ -94,11 +105,12 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
 def _build_mounts(ws: Workspace, config: OverlayConfig) -> list[str]:
     mounts: list[str] = []
 
-    secrets_host = Path(config.secrets_host_dir)
-    project_secrets = secrets_host / ws.project
-    # Mount project-scoped secrets if the directory convention is followed
+    # Per-workspace secrets directory. Operator populates it before container
+    # start; docker auto-creates an empty dir if missing. v2 will replace this
+    # with daemon-brokered time-bounded credential leases.
+    workspace_secrets = Path(config.secrets_host_dir) / ws.id
     mounts.append(
-        f"source={project_secrets},target={config.secrets_container_dir},type=bind,readonly"
+        f"source={workspace_secrets},target={config.secrets_container_dir},type=bind,readonly"
     )
 
     mounts.extend(config.extra_mounts)

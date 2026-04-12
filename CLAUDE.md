@@ -1,6 +1,8 @@
-# Drydock — Agent Workspace Orchestration
+# Drydock — Personal Agent Fabric
 
-`ws` CLI that provisions sandboxed Claude Code workspaces (devcontainers with firewall, Tailscale, remote control). The CLI runs on the host; containers are workspaces, not orchestrators.
+Drydock provisions, connects, and governs the sandboxed workspaces where Claude agents live and do work. V1 ships as a host-side CLI (`ws`) over devcontainer primitives; the long-term shape is a daemon-mediated control plane with policy graph, audit, secrets brokering, and cross-host placement. See [docs/vision.md](docs/vision.md) for the fabric framing and [docs/v2-scope.md](docs/v2-scope.md) for the daemon design.
+
+The v1 CLI runs on the host; containers are workspaces, not orchestrators. Nested spawning (a workspace calling `ws create`) is a v2 feature.
 
 **New users: start with [docs/getting-started.md](docs/getting-started.md).** This file is agent-facing; the getting-started doc walks through install, project YAML config, and a concrete microfoundry example.
 
