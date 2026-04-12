@@ -2,6 +2,8 @@
 
 `ws` CLI that provisions sandboxed Claude Code workspaces (devcontainers with firewall, Tailscale, remote control). The CLI runs on the host; containers are workspaces, not orchestrators.
 
+**New users: start with [docs/getting-started.md](docs/getting-started.md).** This file is agent-facing; the getting-started doc walks through install, project YAML config, and a concrete microfoundry example.
+
 ## Repo structure
 
 ```
