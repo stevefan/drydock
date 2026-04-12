@@ -70,6 +70,26 @@ class TestLoadProjectConfig:
             load_project_config("list", base_dir=tmp_path)
         assert "mapping" in str(exc_info.value).lower()
 
+    def test_workspace_subdir_present(self, tmp_path):
+        (tmp_path / "mono.yaml").write_text(
+            "repo_path: /srv/code/mono\nworkspace_subdir: apps/frontend\n"
+        )
+        cfg = load_project_config("mono", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.workspace_subdir == "apps/frontend"
+
+    def test_workspace_subdir_absent_defaults_to_none(self, tmp_path):
+        (tmp_path / "plain.yaml").write_text("repo_path: /srv/code/plain\n")
+        cfg = load_project_config("plain", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.workspace_subdir is None
+
+    def test_workspace_subdir_wrong_type_passthrough(self, tmp_path):
+        (tmp_path / "bad.yaml").write_text("workspace_subdir: 42\n")
+        cfg = load_project_config("bad", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.workspace_subdir == 42
+
     # Unknown keys are rejected so typos don't silently become no-ops
     def test_unknown_keys_rejected(self, tmp_path):
         (tmp_path / "typo.yaml").write_text("repo_path: /code/x\ntypo_field: oops\n")

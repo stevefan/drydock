@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     base_ref        TEXT NOT NULL DEFAULT 'HEAD',
     state           TEXT NOT NULL DEFAULT 'defined',
     container_id    TEXT NOT NULL DEFAULT '',
+    workspace_subdir TEXT NOT NULL DEFAULT '',
     image           TEXT NOT NULL DEFAULT '',
     owner           TEXT NOT NULL DEFAULT '',
     hostname        TEXT NOT NULL DEFAULT '',
@@ -68,9 +69,9 @@ class Registry:
         self._conn.execute(
             """INSERT INTO workspaces
                (id, name, project, repo_path, worktree_path, branch, base_ref,
-                state, container_id, image, owner, hostname, created_at, updated_at,
-                labels, config)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                state, container_id, workspace_subdir, image, owner, hostname,
+                created_at, updated_at, labels, config)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ws.id,
                 ws.name,
@@ -81,6 +82,7 @@ class Registry:
                 ws.base_ref,
                 ws.state,
                 ws.container_id,
+                ws.workspace_subdir,
                 ws.image,
                 ws.owner,
                 ws.hostname,

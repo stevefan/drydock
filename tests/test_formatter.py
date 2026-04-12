@@ -14,6 +14,8 @@ def _init_repo(path):
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=path, capture_output=True, check=True)
     (path / "README.md").write_text("init")
+    (path / ".devcontainer").mkdir()
+    (path / ".devcontainer" / "devcontainer.json").write_text("{}")
     subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=path, capture_output=True, check=True)
 

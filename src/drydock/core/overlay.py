@@ -97,6 +97,9 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
     env["DRYDOCK_WORKSPACE_NAME"] = ws.name
     env["DRYDOCK_PROJECT"] = ws.project
 
+    if ws.workspace_subdir:
+        env["DRYDOCK_WORKSPACE_SUBDIR"] = ws.workspace_subdir
+
     env.update(config.extra_env)
 
     return env

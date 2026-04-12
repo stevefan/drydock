@@ -110,6 +110,18 @@ class TestGenerateOverlay:
         overlay = generate_overlay(ws, config)
         assert overlay["containerEnv"]["DRYDOCK_PROJECT"] == "overridden"
 
+    def test_workspace_subdir_included_when_set(self):
+        ws = Workspace(
+            name="sub", project="mono", repo_path="/srv/code/mono",
+            branch="ws/sub", workspace_subdir="apps/frontend",
+        )
+        overlay = generate_overlay(ws)
+        assert overlay["containerEnv"]["DRYDOCK_WORKSPACE_SUBDIR"] == "apps/frontend"
+
+    def test_workspace_subdir_omitted_when_empty(self, ws):
+        overlay = generate_overlay(ws)
+        assert "DRYDOCK_WORKSPACE_SUBDIR" not in overlay["containerEnv"]
+
     def test_secrets_mount_uses_workspace_scoped_path(self, ws):
         overlay = generate_overlay(ws)
         mounts = overlay["mounts"]

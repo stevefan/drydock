@@ -29,6 +29,8 @@ class Workspace:
     base_ref: str = "HEAD"
     state: str = "defined"
     container_id: str = ""
+    # Persisted as a first-class field rather than inside config dict so registry queries can filter on it.
+    workspace_subdir: str = ""
     image: str = ""
     owner: str = ""
     hostname: str = ""

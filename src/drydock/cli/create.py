@@ -1,5 +1,6 @@
 """ws create — provision a new workspace."""
 
+import os
 from pathlib import Path
 
 import click
@@ -49,6 +50,8 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
     if image is None:
         image = (proj_cfg.image if proj_cfg and proj_cfg.image else "")
 
+    workspace_subdir = (proj_cfg.workspace_subdir if proj_cfg and proj_cfg.workspace_subdir else "")
+
     ws = Workspace(
         name=name,
         project=project,
@@ -56,6 +59,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
         branch=branch,
         base_ref=base_ref,
         image=image,
+        workspace_subdir=workspace_subdir,
         owner=owner or "",
     )
 
@@ -100,6 +104,21 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
     except WsError as e:
         out.error(e)
 
+    workspace_folder = (
+        os.path.join(ws.worktree_path, ws.workspace_subdir)
+        if ws.workspace_subdir
+        else ws.worktree_path
+    )
+
+    # Preflight: verify devcontainer.json exists before invoking devcontainer CLI
+    devcontainer_json = Path(workspace_folder) / ".devcontainer" / "devcontainer.json"
+    if not devcontainer_json.exists():
+        registry.update_state(ws.name, "error")
+        raise WsError(
+            f"devcontainer.json not found at {devcontainer_json}",
+            fix=f"Create {workspace_folder}/.devcontainer/devcontainer.json, or set a different workspace_subdir in the project YAML",
+        )
+
     ws = registry.update_state(ws.name, "provisioning")
     out.success(
         {},
@@ -108,7 +127,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
 
     try:
         up_result = devc.up(
-            workspace_folder=ws.worktree_path,
+            workspace_folder=workspace_folder,
             override_config=str(overlay_path),
         )
         container_id = up_result.get("container_id", "")
