@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .errors import WsError
+from . import WsError
 from .workspace import Workspace
 
 logger = logging.getLogger(__name__)

@@ -6,7 +6,7 @@ import subprocess
 
 import click
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 
 
 def _find_container(worktree_path: str) -> str:

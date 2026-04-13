@@ -100,9 +100,9 @@ ws destroy myproject --force
 
 ## Per-project configuration
 
-For anything beyond the simplest case, create `drydock/projects/<project>.yaml` in the Drydock repo. `ws create <project>` reads this config and uses its values as defaults. CLI flags still win.
+For anything beyond the simplest case, create `~/.drydock/projects/<project>.yaml`. `ws create <project>` reads this config and uses its values as defaults. CLI flags still win.
 
-Example — `drydock/projects/myproject.yaml`:
+Example — `~/.drydock/projects/myproject.yaml`:
 
 ```yaml
 # Where the project's git repo lives on this host
@@ -137,7 +137,7 @@ Microfoundry is a monorepo with several sub-projects that have very different is
 Step 1 — top-level microfoundry workspace:
 
 ```yaml
-# drydock/projects/microfoundry.yaml
+# ~/.drydock/projects/microfoundry.yaml
 repo_path: /Users/you/Unified Workspaces/microfoundry
 tailscale_hostname: microfoundry-dev
 remote_control_name: microfoundry
@@ -154,7 +154,7 @@ ws create microfoundry
 Step 2 — narrow-scope workspace for `auction-crawl`:
 
 ```yaml
-# drydock/projects/auction-crawl.yaml
+# ~/.drydock/projects/auction-crawl.yaml
 repo_path: /Users/you/Unified Workspaces/microfoundry/auction-crawl
 tailscale_hostname: auction-crawl
 remote_control_name: auction-crawl

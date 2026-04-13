@@ -5,7 +5,7 @@ import sys
 
 import click
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 
 
 class Output:

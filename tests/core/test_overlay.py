@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.overlay import (
     OverlayConfig,
     generate_overlay,

@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .errors import WsError
+from . import WsError
 from .workspace import Workspace
 
 # Schema drops hostname and labels columns as of this revision.  Existing

@@ -4,7 +4,7 @@ import json
 import logging
 import subprocess
 
-from .errors import WsError
+from . import WsError
 
 logger = logging.getLogger(__name__)
 

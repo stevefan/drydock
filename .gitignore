@@ -14,5 +14,8 @@ node_modules/
 __pycache__/
 *.egg-info/
 
+# Per-host project configs (live at ~/.drydock/projects/)
+drydock/projects/
+
 # Agent state (private; skills/ stays tracked)
 .claude/projects/

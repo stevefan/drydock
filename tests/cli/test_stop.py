@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from drydock.cli.stop import stop
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.workspace import Workspace
 from drydock.output.formatter import Output
 

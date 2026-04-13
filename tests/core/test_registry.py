@@ -1,6 +1,6 @@
 import pytest
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.workspace import Workspace
 
 

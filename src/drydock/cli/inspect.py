@@ -2,13 +2,13 @@
 
 import click
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 
 
 @click.command()
 @click.argument("name")
 @click.pass_context
-def inspect_cmd(ctx, name):
+def inspect(ctx, name):
     """Show full details for a workspace."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.checkout import create_checkout, remove_checkout
 from drydock.core.workspace import Workspace
 

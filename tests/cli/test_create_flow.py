@@ -55,7 +55,7 @@ def test_create_failure_transitions_to_error(MockCLI, tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     _init_repo(repo)
 
-    from drydock.core.errors import WsError
+    from drydock.core import WsError
     mock_devc = MockCLI.return_value
     mock_devc.up.side_effect = WsError("devcontainer up failed: boom")
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 
 from drydock.core.devcontainer import DevcontainerCLI
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.overlay import remove_overlay
 from drydock.core.checkout import remove_checkout
 

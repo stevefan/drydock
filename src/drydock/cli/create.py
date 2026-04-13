@@ -1,12 +1,15 @@
 """ws create — provision a new workspace."""
 
+import logging
 import os
 from pathlib import Path
 
 import click
 
+logger = logging.getLogger(__name__)
+
 from drydock.core.devcontainer import DevcontainerCLI
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.project_config import load_project_config
 from drydock.core.checkout import create_checkout

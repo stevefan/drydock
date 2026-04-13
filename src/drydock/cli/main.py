@@ -1,8 +1,10 @@
 """ws — Drydock workspace orchestration CLI."""
 
+import logging
+
 import click
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.registry import Registry
 from drydock.output.formatter import Output
 
@@ -13,6 +15,7 @@ from drydock.output.formatter import Output
 @click.pass_context
 def cli(ctx, force_json, dry_run):
     """Drydock workspace orchestration."""
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     ctx.ensure_object(dict)
     ctx.obj["output"] = Output(force_json=force_json)
     ctx.obj["dry_run"] = dry_run
@@ -26,8 +29,8 @@ def cli(ctx, force_json, dry_run):
 
 # Import and register commands
 from drydock.cli.create import create  # noqa: E402
-from drydock.cli.list_cmd import list_cmd  # noqa: E402
-from drydock.cli.inspect_cmd import inspect_cmd  # noqa: E402
+from drydock.cli.list import list as list_cmd  # noqa: E402
+from drydock.cli.inspect import inspect as inspect_cmd  # noqa: E402
 from drydock.cli.stop import stop  # noqa: E402
 from drydock.cli.destroy import destroy  # noqa: E402
 from drydock.cli.attach import attach  # noqa: E402

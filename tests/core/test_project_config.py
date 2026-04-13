@@ -2,7 +2,7 @@
 
 import pytest
 
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.project_config import ProjectConfig, load_project_config
 
 

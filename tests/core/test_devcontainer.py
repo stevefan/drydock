@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from drydock.core.devcontainer import DevcontainerCLI, _parse_devcontainer_output
-from drydock.core.errors import WsError
+from drydock.core import WsError
 
 
 @patch("drydock.core.devcontainer.subprocess.run")

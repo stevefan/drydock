@@ -3,7 +3,7 @@
 import click
 
 from drydock.core.devcontainer import DevcontainerCLI
-from drydock.core.errors import WsError
+from drydock.core import WsError
 
 
 @click.command()

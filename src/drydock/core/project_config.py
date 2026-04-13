@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from .errors import WsError
+from . import WsError
 
 KNOWN_KEYS = {
     "repo_path",
@@ -35,8 +35,11 @@ class ProjectConfig:
     forward_ports: list[int] = field(default_factory=list)
 
 
+DEFAULT_PROJECTS_DIR = Path.home() / ".drydock" / "projects"
+
+
 def load_project_config(
-    project: str, base_dir: Path = Path("drydock/projects")
+    project: str, base_dir: Path = DEFAULT_PROJECTS_DIR
 ) -> ProjectConfig | None:
     path = base_dir / f"{project}.yaml"
     if not path.exists():

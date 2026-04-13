@@ -2,11 +2,14 @@
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .errors import WsError
+from . import WsError
+
+logger = logging.getLogger(__name__)
 from .workspace import Workspace
 
 DEFAULT_SECRETS_HOST_DIR = str(Path.home() / ".drydock" / "secrets")

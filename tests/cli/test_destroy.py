@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from drydock.cli.destroy import destroy
-from drydock.core.errors import WsError
+from drydock.core import WsError
 from drydock.core.registry import Registry
 from drydock.core.workspace import Workspace
 from drydock.output.formatter import Output
