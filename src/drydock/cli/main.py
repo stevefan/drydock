@@ -30,9 +30,11 @@ from drydock.cli.list_cmd import list_cmd  # noqa: E402
 from drydock.cli.inspect_cmd import inspect_cmd  # noqa: E402
 from drydock.cli.stop import stop  # noqa: E402
 from drydock.cli.destroy import destroy  # noqa: E402
+from drydock.cli.attach import attach  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(list_cmd, name="list")
 cli.add_command(inspect_cmd, name="inspect")
 cli.add_command(stop)
 cli.add_command(destroy)
+cli.add_command(attach)

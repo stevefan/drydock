@@ -1,0 +1,113 @@
+"""ws attach — open an editor attached to a running workspace."""
+
+import json
+import shutil
+import subprocess
+
+import click
+
+from drydock.core.errors import WsError
+
+
+def _find_container(overlay_path: str) -> str:
+    result = subprocess.run(
+        [
+            "docker", "ps", "-q",
+            "--filter", f"label=devcontainer.local_folder={overlay_path}",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    container_id = result.stdout.strip().split("\n")[0].strip()
+    if not container_id:
+        return ""
+    name_result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Name}}", container_id],
+        capture_output=True,
+        text=True,
+    )
+    return name_result.stdout.strip().lstrip("/")
+
+
+def _read_workspace_folder(overlay_path: str) -> str:
+    try:
+        with open(overlay_path) as f:
+            data = json.load(f)
+        return data.get("workspaceFolder", "/workspace")
+    except (OSError, json.JSONDecodeError):
+        return "/workspace"
+
+
+def _hex_encode(name: str) -> str:
+    return "".join(f"{b:02x}" for b in name.encode("utf-8"))
+
+
+@click.command()
+@click.argument("name")
+@click.option("--editor", default="code", help="Editor binary (code, cursor, code-insiders)")
+@click.pass_context
+def attach(ctx, name, editor):
+    """Attach an editor to a running workspace."""
+    out = ctx.obj["output"]
+    registry = ctx.obj["registry"]
+
+    ws = registry.get_workspace(name)
+    if not ws:
+        out.error(
+            WsError(
+                f"Workspace '{name}' not found",
+                fix="Run 'ws list' to see available workspaces",
+            )
+        )
+        return
+
+    if ws.state != "running":
+        out.error(
+            WsError(
+                f"Workspace '{name}' is not running (state: {ws.state})",
+                fix=f"Run 'ws create {ws.project} {name}' to start it",
+            )
+        )
+        return
+
+    overlay_path = ws.config.get("overlay_path", "")
+    if not overlay_path:
+        out.error(
+            WsError(
+                f"Workspace '{name}' has no overlay_path in config",
+                fix="Workspace may have been created with an older version of ws",
+            )
+        )
+        return
+
+    folder = _read_workspace_folder(overlay_path)
+    container_name = _find_container(overlay_path)
+    if not container_name:
+        out.error(
+            WsError(
+                f"No running container found for workspace '{name}'",
+                fix="The container may have stopped. Run 'ws inspect {name}' to check status",
+            )
+        )
+        return
+
+    hex_name = _hex_encode(container_name)
+    uri = f"vscode-remote://attached-container+{hex_name}{folder}"
+
+    if not shutil.which(editor):
+        out.error(
+            WsError(
+                f"Editor '{editor}' not found on PATH",
+                fix="Install the shell command: VS Code Command Palette -> "
+                    "'Shell Command: Install code command in PATH'. "
+                    "Or pass --editor <your-binary>.",
+            )
+        )
+        return
+
+    subprocess.Popen([editor, "--folder-uri", uri])
+
+    out.success(
+        {"uri": uri, "editor": editor, "workspace": name, "container": container_name},
+        human_lines=[f"Opening {name} in {editor}..."],
+    )
