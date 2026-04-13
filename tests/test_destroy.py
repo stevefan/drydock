@@ -38,7 +38,10 @@ def env(tmp_path):
 
     wt_path = tmp_path / "worktrees" / "wt"
     wt_path.parent.mkdir(parents=True)
-    _git(repo, "worktree", "add", str(wt_path), "-b", "ws/test", "HEAD")
+    subprocess.run(
+        ["git", "clone", str(repo), str(wt_path)],
+        capture_output=True, text=True, check=True,
+    )
 
     overlay_dir = tmp_path / "overlays"
     overlay_dir.mkdir()
@@ -102,7 +105,7 @@ class TestDestroyWorktree:
         def fail_remove(*args, **kwargs):
             raise RuntimeError("boom")
 
-        monkeypatch.setattr("drydock.cli.destroy.remove_worktree", fail_remove)
+        monkeypatch.setattr("drydock.cli.destroy.remove_checkout", fail_remove)
         monkeypatch.setattr("drydock.cli.destroy.remove_overlay", fail_remove)
 
         # Make paths exist so cleanup is attempted

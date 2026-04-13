@@ -9,7 +9,7 @@ from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.errors import WsError
 from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.project_config import load_project_config
-from drydock.core.worktree import create_worktree
+from drydock.core.checkout import create_checkout
 from drydock.core.workspace import Workspace
 
 
@@ -81,11 +81,11 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
     except WsError as e:
         out.error(e)
 
-    # Create git worktree for isolated workspace checkout
+    # Create standalone clone for isolated workspace checkout
     try:
-        worktree_dir = Path.home() / ".drydock" / "worktrees"
-        worktree_path = create_worktree(ws, base_dir=worktree_dir)
-        ws = registry.update_workspace(ws.name, worktree_path=str(worktree_path))
+        checkout_dir = Path.home() / ".drydock" / "worktrees"
+        checkout_path = create_checkout(ws, base_dir=checkout_dir)
+        ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))
     except WsError as e:
         out.error(e)
 

@@ -122,16 +122,16 @@ def test_workspace_subdir_threads_to_workspace_folder(MockCLI, tmp_path, monkeyp
     mock_devc = MockCLI.return_value
     mock_devc.up.return_value = {"container_id": "ctr-sub", "containerId": "ctr-sub"}
 
-    from drydock.core.worktree import create_worktree as real_create_worktree
+    from drydock.core.checkout import create_checkout as real_create_checkout
 
-    def patched_create_worktree(ws, base_dir=None):
-        result = real_create_worktree(ws, base_dir=base_dir)
+    def patched_create_checkout(ws, base_dir=None):
+        result = real_create_checkout(ws, base_dir=base_dir)
         devc_dir = result / "apps" / "frontend" / ".devcontainer"
         devc_dir.mkdir(parents=True, exist_ok=True)
         (devc_dir / "devcontainer.json").write_text("{}")
         return result
 
-    monkeypatch.setattr("drydock.cli.create.create_worktree", patched_create_worktree)
+    monkeypatch.setattr("drydock.cli.create.create_checkout", patched_create_checkout)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["--json", "create", "mono"])

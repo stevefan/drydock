@@ -8,7 +8,7 @@ import click
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.errors import WsError
 from drydock.core.overlay import remove_overlay
-from drydock.core.worktree import remove_worktree
+from drydock.core.checkout import remove_checkout
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +78,9 @@ def destroy(ctx, name, force):
 
     if ws.worktree_path and Path(ws.worktree_path).exists():
         try:
-            remove_worktree(ws.repo_path, ws.worktree_path)
+            remove_checkout(ws.repo_path, ws.worktree_path)
         except Exception as exc:
-            logger.warning("Failed to remove worktree %s: %s", ws.worktree_path, exc)
+            logger.warning("Failed to remove checkout %s: %s", ws.worktree_path, exc)
 
     overlay_path = ws.config.get("overlay_path")
     if overlay_path and Path(overlay_path).exists():
