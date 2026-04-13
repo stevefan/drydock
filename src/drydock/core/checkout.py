@@ -16,7 +16,10 @@ DEFAULT_CHECKOUT_BASE = Path.home() / ".drydock" / "worktrees"
 def create_checkout(ws: Workspace, base_dir: Path | None = None) -> Path:
     """Create a standalone git clone for the workspace, returning the checkout path.
 
-    Clones from ``ws.repo_path`` using ``--reference`` for disk efficiency.
+    Clones from ``ws.repo_path`` using ``--reference --dissociate`` for
+    fast initial setup (hardlinked objects) that detaches after clone so
+    the checkout is self-contained — no alternates file pointing at a
+    host path that would be invalid inside a container.
     If ``ws.branch`` already exists in the source repo, clones that branch
     directly; otherwise clones the default branch and creates ``ws.branch``
     from ``ws.base_ref``.
@@ -42,13 +45,13 @@ def create_checkout(ws: Workspace, base_dir: Path | None = None) -> Path:
     if _branch_exists(repo, ws.branch):
         _run_git(
             repo,
-            ["git", "clone", "--reference", str(repo), "--branch", ws.branch, str(repo), str(dest)],
+            ["git", "clone", "--reference", str(repo), "--dissociate", "--branch", ws.branch, str(repo), str(dest)],
             error_context=f"clone (existing branch '{ws.branch}')",
         )
     else:
         _run_git(
             repo,
-            ["git", "clone", "--reference", str(repo), str(repo), str(dest)],
+            ["git", "clone", "--reference", str(repo), "--dissociate", str(repo), str(dest)],
             error_context="clone",
         )
         _run_git(
