@@ -27,14 +27,14 @@ You'll also want:
 **How secrets reach the workspace.** The workspace mounts `~/.drydock/secrets/<workspace_id>/` from your host at `/run/secrets/` (readonly). Before `ws create`, populate that directory with plain files named after each key:
 
 ```bash
-mkdir -p ~/.drydock/secrets/ws_myproject_myproject
-chmod 700 ~/.drydock/secrets/ws_myproject_myproject
-echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/ws_myproject_myproject/anthropic_api_key
-echo -n "$TAILSCALE_AUTHKEY"  > ~/.drydock/secrets/ws_myproject_myproject/tailscale_authkey
-chmod 400 ~/.drydock/secrets/ws_myproject_myproject/*
+mkdir -p ~/.drydock/secrets/ws_myproject
+chmod 700 ~/.drydock/secrets/ws_myproject
+echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/ws_myproject/anthropic_api_key
+echo -n "$TAILSCALE_AUTHKEY"  > ~/.drydock/secrets/ws_myproject/tailscale_authkey
+chmod 400 ~/.drydock/secrets/ws_myproject/*
 ```
 
-The workspace id is `ws_<project>_<name_slug>` — deterministic from the `ws create` args. If the directory is missing, Docker auto-creates an empty one and the workspace starts with an empty `/run/secrets/`; scripts that need secrets will see empty strings. See [secrets-design.md](secrets-design.md) for the full convention and the v2 broker direction.
+The workspace id is `ws_<name_slug>` — deterministic from the `ws create` args (dashes and spaces in the name become underscores). If the directory is missing, Docker auto-creates an empty one and the workspace starts with an empty `/run/secrets/`; scripts that need secrets will see empty strings. See [secrets-design.md](secrets-design.md) for the full convention and the v2 broker direction.
 
 ## Install `ws`
 
@@ -73,8 +73,8 @@ ws create myproject --repo-path /path/to/myproject
 This:
 
 1. Creates a new branch `ws/myproject` off the project's HEAD
-2. Materializes it as a git worktree at `~/.drydock/worktrees/ws_myproject_myproject/`
-3. Writes a devcontainer override JSON at `~/.drydock/overlays/ws_myproject_myproject.devcontainer.override.json`
+2. Materializes it as a git worktree at `~/.drydock/worktrees/ws_myproject/`
+3. Writes a devcontainer override JSON at `~/.drydock/overlays/ws_myproject.devcontainer.override.json`
 4. Runs `devcontainer up` with the override to launch the container
 5. Records everything in `~/.drydock/registry.db`
 

@@ -8,7 +8,7 @@ from drydock.core.workspace import Workspace
 def test_create_and_get(registry):
     ws = Workspace(name="test-ws", project="myapp", repo_path="/srv/code/myapp")
     created = registry.create_workspace(ws)
-    assert created.id == "ws_myapp_test_ws"
+    assert created.id == "ws_test_ws"
     assert created.state == "defined"
 
     fetched = registry.get_workspace("test-ws")

@@ -50,8 +50,8 @@ class TestGenerateOverlay:
         assert first == second
 
     def test_tailscale_hostname_differs_across_workspaces(self):
-        ws_a = Workspace(name="app", project="proj-a", repo_path="/x", branch="b")
-        ws_b = Workspace(name="app", project="proj-b", repo_path="/x", branch="b")
+        ws_a = Workspace(name="app-foo", project="proj", repo_path="/x", branch="b")
+        ws_b = Workspace(name="app-bar", project="proj", repo_path="/x", branch="b")
         a = generate_overlay(ws_a)["containerEnv"]["TAILSCALE_HOSTNAME"]
         b = generate_overlay(ws_b)["containerEnv"]["TAILSCALE_HOSTNAME"]
         assert a != b

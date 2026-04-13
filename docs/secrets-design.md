@@ -45,12 +45,12 @@ TAILSCALE_AUTHKEY=$(cat /run/secrets/tailscale_authkey)
 
 ## Per-workspace directory convention
 
-V1 mounts `~/.drydock/secrets/<workspace_id>/` readonly at `/run/secrets/`. The workspace id is deterministic from `ws create` args (`ws_<project>_<name_slug>`), so you can set up the directory before running create:
+V1 mounts `~/.drydock/secrets/<workspace_id>/` readonly at `/run/secrets/`. The workspace id is deterministic from the `ws create` name argument (`ws_<name_slug>` — dashes and spaces in the name become underscores), so you can set up the directory before running create:
 
 ```bash
-mkdir -p ~/.drydock/secrets/ws_microfoundry_microfoundry
-cp ~/.local/secrets/tailscale_authkey ~/.drydock/secrets/ws_microfoundry_microfoundry/
-cp ~/.local/secrets/anthropic_api_key ~/.drydock/secrets/ws_microfoundry_microfoundry/
+mkdir -p ~/.drydock/secrets/ws_microfoundry
+cp ~/.local/secrets/tailscale_authkey ~/.drydock/secrets/ws_microfoundry/
+cp ~/.local/secrets/anthropic_api_key ~/.drydock/secrets/ws_microfoundry/
 ws create microfoundry
 ```
 

@@ -41,8 +41,11 @@ class Workspace:
 
     def __post_init__(self):
         if not self.id:
-            slug = self.name.replace("-", "_").replace(" ", "_")
-            self.id = f"ws_{self.project}_{slug}"
+            # Name is unique in the registry (UNIQUE constraint), so it's a
+            # sufficient identifier on its own. Project is metadata, not part
+            # of the id.
+            name_slug = self.name.replace("-", "_").replace(" ", "_")
+            self.id = f"ws_{name_slug}"
         now = datetime.now(timezone.utc).isoformat()
         if not self.created_at:
             self.created_at = now
