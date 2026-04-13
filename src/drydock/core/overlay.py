@@ -191,7 +191,9 @@ def _build_mounts(ws: Workspace, config: OverlayConfig) -> list[str]:
 
     mounts.append("source=drydock-vscode-server,target=/home/node/.vscode-server,type=volume")
     mounts.append("source=drydock-npm-cache,target=/home/node/.npm,type=volume")
-    mounts.append("source=drydock-tool-cache,target=/home/node/.cache,type=volume")
+    # Narrow: only share pip cache. Umbrella ~/.cache would shadow project-baked
+    # subdirs (e.g. Playwright browsers at ~/.cache/ms-playwright) at runtime.
+    mounts.append("source=drydock-pip-cache,target=/home/node/.cache/pip,type=volume")
     mounts.append("source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig,type=bind,readonly")
 
     mounts.extend(config.extra_mounts)

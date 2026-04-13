@@ -155,7 +155,7 @@ class TestGenerateOverlay:
         assert "tailscale-state" in mounts[3]
         assert "drydock-vscode-server" in mounts[4]
         assert "drydock-npm-cache" in mounts[5]
-        assert "drydock-tool-cache" in mounts[6]
+        assert "drydock-pip-cache" in mounts[6]
         assert ".gitconfig" in mounts[7]
 
     def test_vscode_server_mount(self, ws):
@@ -170,10 +170,10 @@ class TestGenerateOverlay:
         assert "target=/home/node/.npm" in m
         assert "type=volume" in m
 
-    def test_tool_cache_mount(self, ws):
+    def test_pip_cache_mount(self, ws):
         overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if "drydock-tool-cache" in x][0]
-        assert "target=/home/node/.cache" in m
+        m = [x for x in overlay["mounts"] if "drydock-pip-cache" in x][0]
+        assert "target=/home/node/.cache/pip" in m
         assert "type=volume" in m
 
     def test_gitconfig_mount(self, ws):

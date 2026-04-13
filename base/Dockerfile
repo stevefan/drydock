@@ -41,7 +41,7 @@ RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudo
 RUN mkdir -p /home/node/.claude \
              /home/node/.vscode-server \
              /home/node/.npm \
-             /home/node/.cache && \
+             /home/node/.cache/pip && \
     chown -R node:node /home/node/.claude \
                         /home/node/.vscode-server \
                         /home/node/.npm \
@@ -49,7 +49,10 @@ RUN mkdir -p /home/node/.claude \
 VOLUME /home/node/.claude
 VOLUME /home/node/.vscode-server
 VOLUME /home/node/.npm
-VOLUME /home/node/.cache
+# Narrow shared cache: only /home/node/.cache/pip, not the umbrella.
+# Umbrella would shadow project-baked assets like Playwright browsers at
+# /home/node/.cache/ms-playwright.
+VOLUME /home/node/.cache/pip
 
 USER node
 WORKDIR /workspaces
