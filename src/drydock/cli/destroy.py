@@ -58,8 +58,13 @@ def destroy(ctx, name, force):
         return
 
     if ws.state in ("running", "idle", "ready") and ws.container_id:
+        devc = DevcontainerCLI()
         try:
-            DevcontainerCLI().stop(container_id=ws.container_id)
+            devc.tailnet_logout(container_id=ws.container_id)
+        except Exception as exc:
+            logger.warning("Failed tailnet logout for %s: %s", name, exc)
+        try:
+            devc.stop(container_id=ws.container_id)
         except Exception as exc:
             logger.warning("Failed to stop container for %s: %s", name, exc)
 

@@ -1,9 +1,12 @@
 """Wrapper around the devcontainer CLI."""
 
 import json
+import logging
 import subprocess
 
 from .errors import WsError
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_devcontainer_output(stdout: str) -> dict | None:
@@ -110,6 +113,20 @@ class DevcontainerCLI:
                 f"docker stop failed: {result.stderr.strip()}",
                 fix=f"Stop manually: docker stop {container_id}",
             )
+
+    def tailnet_logout(self, container_id: str) -> None:
+        """Ask tailscale to log out before stopping the container."""
+        if not container_id or self.dry_run:
+            return
+        try:
+            subprocess.run(
+                ["docker", "exec", container_id, "sudo", "tailscale", "logout"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception as exc:
+            logger.warning("tailnet logout failed for %s: %s", container_id, exc)
 
     def exec_command(
         self,

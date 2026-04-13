@@ -179,6 +179,34 @@ def test_up_ndjson_stdout_extracts_container_id(mock_run):
 
 
 @patch("drydock.core.devcontainer.subprocess.run")
+def test_tailnet_logout_calls_docker_exec(mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="", stderr="",
+    )
+    cli = DevcontainerCLI()
+    cli.tailnet_logout("ctr-abc")
+
+    mock_run.assert_called_once_with(
+        ["docker", "exec", "ctr-abc", "sudo", "tailscale", "logout"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@patch("drydock.core.devcontainer.subprocess.run")
+def test_tailnet_logout_tolerates_failure(mock_run):
+    mock_run.side_effect = OSError("container gone")
+    cli = DevcontainerCLI()
+    cli.tailnet_logout("ctr-gone")
+
+
+def test_tailnet_logout_skipped_in_dry_run():
+    cli = DevcontainerCLI(dry_run=True)
+    cli.tailnet_logout("ctr-abc")
+
+
+@patch("drydock.core.devcontainer.subprocess.run")
 def test_up_container_id_in_nested_outcome(mock_run):
     mock_run.return_value = subprocess.CompletedProcess(
         args=[], returncode=0,

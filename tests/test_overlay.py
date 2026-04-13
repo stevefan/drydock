@@ -148,12 +148,15 @@ class TestGenerateOverlay:
     def test_infra_mounts_count_and_order(self, ws):
         overlay = generate_overlay(ws)
         mounts = overlay["mounts"]
-        assert len(mounts) == 5
+        assert len(mounts) == 8
         assert "/run/secrets" in mounts[0]
-        assert "drydock-vscode-server" in mounts[1]
-        assert "drydock-npm-cache" in mounts[2]
-        assert "drydock-tool-cache" in mounts[3]
-        assert ".gitconfig" in mounts[4]
+        assert "claude-code-config" in mounts[1]
+        assert "claude-code-bashhistory" in mounts[2]
+        assert "tailscale-state" in mounts[3]
+        assert "drydock-vscode-server" in mounts[4]
+        assert "drydock-npm-cache" in mounts[5]
+        assert "drydock-tool-cache" in mounts[6]
+        assert ".gitconfig" in mounts[7]
 
     def test_vscode_server_mount(self, ws):
         overlay = generate_overlay(ws)
@@ -181,13 +184,33 @@ class TestGenerateOverlay:
         assert "type=bind" in m
         assert "readonly" in m
 
+    def test_claude_code_config_mount(self, ws):
+        overlay = generate_overlay(ws)
+        m = [x for x in overlay["mounts"] if "claude-code-config" in x][0]
+        assert "target=/home/node/.claude" in m
+        assert "type=volume" in m
+
+    def test_claude_code_bashhistory_mount(self, ws):
+        overlay = generate_overlay(ws)
+        m = [x for x in overlay["mounts"] if "claude-code-bashhistory" in x][0]
+        assert "target=/commandhistory" in m
+        assert "type=volume" in m
+        assert "${devcontainerId}" in m
+
+    def test_tailscale_state_mount(self, ws):
+        overlay = generate_overlay(ws)
+        m = [x for x in overlay["mounts"] if "tailscale-state" in x][0]
+        assert "target=/tmp/tailscale" in m
+        assert "type=volume" in m
+        assert "${devcontainerId}" in m
+
     def test_extra_mounts_after_infra_mounts(self, ws):
         config = OverlayConfig(
             extra_mounts=["source=/data,target=/data,type=bind"]
         )
         overlay = generate_overlay(ws, config)
         mounts = overlay["mounts"]
-        assert len(mounts) == 6
+        assert len(mounts) == 9
         assert mounts[-1] == "source=/data,target=/data,type=bind"
 
     def test_extra_mounts_appended(self, ws):
@@ -281,6 +304,22 @@ class TestMergeIntoBase:
             "source=/base,target=/base,type=bind",
             "source=/overlay,target=/overlay,type=bind",
         ]
+
+    def test_mounts_dedup_by_target_overlay_wins(self, tmp_path):
+        base_path = self._write_base(tmp_path, json.dumps({
+            "image": "node:20",
+            "mounts": [
+                "source=old-vol,target=/shared,type=volume",
+                "source=/keep,target=/keep,type=bind",
+            ],
+        }))
+        overlay = {"mounts": ["source=new-vol,target=/shared,type=volume"]}
+        composite = merge_into_base(base_path, overlay)
+        targets = [m.split("target=")[1].split(",")[0] for m in composite["mounts"]]
+        assert targets.count("/shared") == 1
+        shared = [m for m in composite["mounts"] if "target=/shared" in m][0]
+        assert "source=new-vol" in shared
+        assert "source=/keep,target=/keep,type=bind" in composite["mounts"]
 
 
 class TestWriteOverlay:

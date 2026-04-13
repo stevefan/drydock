@@ -137,3 +137,26 @@ class TestDestroyContainerStop:
         assert result.exit_code == 0
         assert env["registry"].get_workspace("test-ws") is None
         assert not env["wt_path"].exists()
+
+    @patch("drydock.cli.destroy.DevcontainerCLI")
+    def test_tailnet_logout_called_before_stop(self, MockCLI, env):
+        env["registry"].update_state("test-ws", "running")
+        call_order = []
+        mock_devc = MockCLI.return_value
+        mock_devc.tailnet_logout.side_effect = lambda **kw: call_order.append("logout")
+        mock_devc.stop.side_effect = lambda **kw: call_order.append("stop")
+
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        assert call_order == ["logout", "stop"]
+        mock_devc.tailnet_logout.assert_called_once_with(container_id="cid_abc")
+
+    @patch("drydock.cli.destroy.DevcontainerCLI")
+    def test_stop_called_even_if_logout_raises(self, MockCLI, env):
+        env["registry"].update_state("test-ws", "running")
+        mock_devc = MockCLI.return_value
+        mock_devc.tailnet_logout.side_effect = RuntimeError("boom")
+
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        mock_devc.stop.assert_called_once_with(container_id="cid_abc")

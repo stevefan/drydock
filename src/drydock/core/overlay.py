@@ -71,6 +71,21 @@ def _strip_jsonc_comments(text: str) -> str:
     return text
 
 
+def _mount_target(mount_str: str) -> str | None:
+    for part in mount_str.split(","):
+        if part.startswith("target="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def _dedup_mounts(base: list[str], overlay: list[str]) -> list[str]:
+    """Concatenate mounts, deduplicating by target. Overlay wins on conflict."""
+    overlay_targets = {_mount_target(m) for m in overlay}
+    result = [m for m in base if _mount_target(m) not in overlay_targets]
+    result.extend(overlay)
+    return result
+
+
 def merge_into_base(base_path: Path, overlay: dict) -> dict:
     """Read base devcontainer.json (JSONC) and deep-merge overlay onto it."""
     if not base_path.exists():
@@ -86,7 +101,9 @@ def merge_into_base(base_path: Path, overlay: dict) -> dict:
         if key == "containerEnv":
             composite["containerEnv"] = {**composite.get("containerEnv", {}), **value}
         elif key == "mounts":
-            composite["mounts"] = list(composite.get("mounts", [])) + list(value)
+            composite["mounts"] = _dedup_mounts(
+                list(composite.get("mounts", [])), list(value)
+            )
         elif key == "forwardPorts":
             seen = set()
             merged: list[int] = []
@@ -165,6 +182,10 @@ def _build_mounts(ws: Workspace, config: OverlayConfig) -> list[str]:
     mounts.append(
         f"source={workspace_secrets},target={config.secrets_container_dir},type=bind,readonly"
     )
+
+    mounts.append("source=claude-code-config,target=/home/node/.claude,type=volume")
+    mounts.append("source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume")
+    mounts.append("source=tailscale-state-${devcontainerId},target=/tmp/tailscale,type=volume")
 
     mounts.append("source=drydock-vscode-server,target=/home/node/.vscode-server,type=volume")
     mounts.append("source=drydock-npm-cache,target=/home/node/.npm,type=volume")

@@ -127,7 +127,7 @@ if [ -n "$FIREWALL_EXTRA_DOMAINS" ]; then
     # (newline+tab) would otherwise treat the whole value as one "domain".
     IFS=' ' read -ra EXTRA <<< "$FIREWALL_EXTRA_DOMAINS"
     ALL_DOMAINS+=("${EXTRA[@]}")
-    echo "Extra project domains: ${EXTRA[*]}"
+    ( IFS=' '; echo "Extra project domains: ${EXTRA[*]}" )
 fi
 
 # Resolve and add all allowed domains

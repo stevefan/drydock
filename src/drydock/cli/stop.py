@@ -43,6 +43,7 @@ def stop(ctx, name, force):
         return
 
     devc = DevcontainerCLI(dry_run=dry_run)
+    devc.tailnet_logout(container_id=ws.container_id)
     devc.stop(container_id=ws.container_id)
 
     ws = registry.update_state(name, "suspended")
