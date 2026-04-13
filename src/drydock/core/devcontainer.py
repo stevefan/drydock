@@ -114,6 +114,22 @@ class DevcontainerCLI:
                 fix=f"Stop manually: docker stop {container_id}",
             )
 
+    def remove(self, container_id: str) -> None:
+        """Remove a stopped container so the next devcontainer up rebuilds fresh.
+
+        Without this, devcontainer CLI happily reuses a stopped container with
+        matching labels, ignoring any overlay changes that have landed since.
+        """
+        if not container_id or self.dry_run:
+            return
+        result = subprocess.run(
+            ["docker", "rm", container_id], capture_output=True, text=True
+        )
+        if result.returncode != 0 and "No such container" not in result.stderr:
+            logger.warning(
+                "docker rm failed for %s: %s", container_id, result.stderr.strip()
+            )
+
     def tailnet_logout(self, container_id: str) -> None:
         """Ask tailscale to log out before stopping the container."""
         if not container_id or self.dry_run:

@@ -57,16 +57,24 @@ def destroy(ctx, name, force):
         )
         return
 
-    if ws.state in ("running", "idle", "ready") and ws.container_id:
+    if ws.container_id:
         devc = DevcontainerCLI()
+        if ws.state in ("running", "idle", "ready"):
+            try:
+                devc.tailnet_logout(container_id=ws.container_id)
+            except Exception as exc:
+                logger.warning("Failed tailnet logout for %s: %s", name, exc)
+            try:
+                devc.stop(container_id=ws.container_id)
+            except Exception as exc:
+                logger.warning("Failed to stop container for %s: %s", name, exc)
+        # Remove even when state is error/suspended/defined — otherwise the
+        # next ws create will reuse the stopped container and ignore overlay
+        # updates.
         try:
-            devc.tailnet_logout(container_id=ws.container_id)
+            devc.remove(container_id=ws.container_id)
         except Exception as exc:
-            logger.warning("Failed tailnet logout for %s: %s", name, exc)
-        try:
-            devc.stop(container_id=ws.container_id)
-        except Exception as exc:
-            logger.warning("Failed to stop container for %s: %s", name, exc)
+            logger.warning("Failed to remove container for %s: %s", name, exc)
 
     if ws.worktree_path and Path(ws.worktree_path).exists():
         try:
