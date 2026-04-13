@@ -1,7 +1,5 @@
 """Tests for per-project YAML configuration."""
 
-from pathlib import Path
-
 import pytest
 
 from drydock.core.errors import WsError

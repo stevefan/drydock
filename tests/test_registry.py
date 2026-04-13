@@ -1,7 +1,6 @@
 import pytest
 
 from drydock.core.errors import WsError
-from drydock.core.registry import Registry
 from drydock.core.workspace import Workspace
 
 

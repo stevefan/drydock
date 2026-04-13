@@ -18,7 +18,7 @@ def inspect_cmd(ctx, name):
         out.error(
             WsError(
                 f"Workspace '{name}' not found",
-                fix=f"Run 'ws list' to see available workspaces",
+                fix="Run 'ws list' to see available workspaces",
             )
         )
         return
@@ -36,7 +36,6 @@ def inspect_cmd(ctx, name):
             f"  repo:       {ws.repo_path}",
             f"  worktree:   {ws.worktree_path or '(none)'}",
             f"  container:  {ws.container_id or '(none)'}",
-            f"  hostname:   {ws.hostname or '(none)'}",
             f"  image:      {ws.image or '(default)'}",
             f"  created:    {ws.created_at}",
             f"  updated:    {ws.updated_at}",

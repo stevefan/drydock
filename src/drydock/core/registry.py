@@ -8,6 +8,10 @@ from pathlib import Path
 from .errors import WsError
 from .workspace import Workspace
 
+# Schema drops hostname and labels columns as of this revision.  Existing
+# SQLite registries with those columns still read fine (SQLite ignores extra
+# columns), but new databases won't have them.  If you hit column-mismatch
+# errors after upgrading, delete ~/.drydock/registry.db and re-create.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
     id              TEXT PRIMARY KEY,
@@ -22,10 +26,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
     workspace_subdir TEXT NOT NULL DEFAULT '',
     image           TEXT NOT NULL DEFAULT '',
     owner           TEXT NOT NULL DEFAULT '',
-    hostname        TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
-    labels          TEXT NOT NULL DEFAULT '{}',
     config          TEXT NOT NULL DEFAULT '{}'
 );
 
@@ -69,9 +71,9 @@ class Registry:
         self._conn.execute(
             """INSERT INTO workspaces
                (id, name, project, repo_path, worktree_path, branch, base_ref,
-                state, container_id, workspace_subdir, image, owner, hostname,
-                created_at, updated_at, labels, config)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                state, container_id, workspace_subdir, image, owner,
+                created_at, updated_at, config)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ws.id,
                 ws.name,
@@ -85,10 +87,8 @@ class Registry:
                 ws.workspace_subdir,
                 ws.image,
                 ws.owner,
-                ws.hostname,
                 ws.created_at,
                 ws.updated_at,
-                json.dumps(ws.labels),
                 json.dumps(ws.config),
             ),
         )
@@ -137,9 +137,8 @@ class Registry:
         if not fields:
             return self.get_workspace(name)
         fields["updated_at"] = datetime.now(timezone.utc).isoformat()
-        for key in ("labels", "config"):
-            if key in fields and isinstance(fields[key], dict):
-                fields[key] = json.dumps(fields[key])
+        if "config" in fields and isinstance(fields["config"], dict):
+            fields["config"] = json.dumps(fields["config"])
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [name]
         self._conn.execute(
@@ -168,6 +167,5 @@ class Registry:
 
     def _row_to_workspace(self, row: sqlite3.Row) -> Workspace:
         d = dict(row)
-        d["labels"] = json.loads(d["labels"])
         d["config"] = json.loads(d["config"])
         return Workspace(**d)

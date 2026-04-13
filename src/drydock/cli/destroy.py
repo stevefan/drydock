@@ -41,7 +41,7 @@ def destroy(ctx, name, force):
             {"dry_run": True, "action": "destroy", "workspace": ws.to_dict()},
             human_lines=[
                 f"Would destroy workspace '{name}':",
-                f"  Remove registry entry",
+                "  Remove registry entry",
                 f"  Remove worktree at {ws.worktree_path}" if ws.worktree_path else "",
                 f"  Stop container {ws.container_id}" if ws.container_id else "",
             ],
@@ -59,7 +59,7 @@ def destroy(ctx, name, force):
 
     if ws.container_id:
         devc = DevcontainerCLI()
-        if ws.state in ("running", "idle", "ready"):
+        if ws.state == "running":
             try:
                 devc.tailnet_logout(container_id=ws.container_id)
             except Exception as exc:

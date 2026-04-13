@@ -3,20 +3,6 @@
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
-VALID_STATES = frozenset(
-    {
-        "defined",
-        "provisioning",
-        "ready",
-        "running",
-        "idle",
-        "suspended",
-        "error",
-        "archived",
-        "destroyed",
-    }
-)
-
 
 @dataclass
 class Workspace:
@@ -33,10 +19,8 @@ class Workspace:
     workspace_subdir: str = ""
     image: str = ""
     owner: str = ""
-    hostname: str = ""
     created_at: str = ""
     updated_at: str = ""
-    labels: dict = field(default_factory=dict)
     config: dict = field(default_factory=dict)
 
     def __post_init__(self):

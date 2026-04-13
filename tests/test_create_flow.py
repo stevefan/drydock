@@ -2,7 +2,7 @@
 
 import json
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
@@ -149,8 +149,6 @@ def test_preflight_raises_when_devcontainer_json_missing(MockCLI, tmp_path, monk
     repo = tmp_path / "repo"
     _init_repo(repo, devcontainer=False)
 
-    mock_devc = MockCLI.return_value
-
     runner = CliRunner()
     result = runner.invoke(
         cli, ["--json", "create", "proj", "ws-ndc", "--repo-path", str(repo)]
@@ -224,7 +222,6 @@ def _find_last_json_block(lines):
     """Find the last JSON object in output (may have multiple JSON outputs)."""
     brace_depth = 0
     block_lines = []
-    in_block = False
 
     for line in reversed(lines):
         stripped = line.strip()

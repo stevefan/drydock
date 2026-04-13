@@ -34,7 +34,6 @@ class OverlayConfig:
     remote_control_name: str = ""
     extra_env: dict[str, str] = field(default_factory=dict)
     extra_mounts: list[str] = field(default_factory=list)
-    extra_labels: dict[str, str] = field(default_factory=dict)
     forward_ports: list[int] = field(default_factory=list)
 
 

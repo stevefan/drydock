@@ -138,7 +138,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
             merged_config = {**ws.config, "lifecycle_warning": lifecycle_warning}
             update_kwargs["config"] = merged_config
         ws = registry.update_workspace(ws.name, **update_kwargs)
-    except WsError as e:
+    except WsError:
         registry.update_state(ws.name, "error")
         raise
 

@@ -26,11 +26,11 @@ def stop(ctx, name, force):
         )
         return
 
-    if ws.state not in ("running", "idle", "ready"):
+    if ws.state != "running":
         out.error(
             WsError(
                 f"Workspace '{name}' is in state '{ws.state}', cannot stop",
-                fix=f"Only running/idle/ready workspaces can be stopped",
+                fix="Only running workspaces can be stopped",
             )
         )
         return
