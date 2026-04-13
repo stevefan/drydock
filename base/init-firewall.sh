@@ -123,7 +123,9 @@ BASE_DOMAINS=(
 # Merge base + project-specific domains
 ALL_DOMAINS=("${BASE_DOMAINS[@]}")
 if [ -n "$FIREWALL_EXTRA_DOMAINS" ]; then
-    read -ra EXTRA <<< "$FIREWALL_EXTRA_DOMAINS"
+    # FIREWALL_EXTRA_DOMAINS is space-separated; the script's strict IFS
+    # (newline+tab) would otherwise treat the whole value as one "domain".
+    IFS=' ' read -ra EXTRA <<< "$FIREWALL_EXTRA_DOMAINS"
     ALL_DOMAINS+=("${EXTRA[@]}")
     echo "Extra project domains: ${EXTRA[*]}"
 fi
@@ -166,7 +168,9 @@ ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null |
 FIREWALL_IPV6_HOSTS="${FIREWALL_IPV6_HOSTS:-}"
 if [ -n "$FIREWALL_IPV6_HOSTS" ]; then
     echo "Configuring IPv6 allowlist..."
-    for entry in $FIREWALL_IPV6_HOSTS; do
+    # Space-separated; override strict IFS for this split.
+    IFS=' ' read -ra IPV6_ENTRIES <<< "$FIREWALL_IPV6_HOSTS"
+    for entry in "${IPV6_ENTRIES[@]}"; do
         host="${entry%%:*}"
         port="${entry##*:}"
         ipv6=$(dig +noall +answer AAAA "$host" | awk '$4 == "AAAA" {print $5}')
