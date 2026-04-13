@@ -9,11 +9,14 @@ import click
 from drydock.core.errors import WsError
 
 
-def _find_container(overlay_path: str) -> str:
+def _find_container(worktree_path: str) -> str:
+    # devcontainer CLI labels containers with devcontainer.local_folder=<workspace-folder>,
+    # which is the path passed via --workspace-folder — i.e. the worktree path in drydock's
+    # case (not the overlay path).
     result = subprocess.run(
         [
             "docker", "ps", "-q",
-            "--filter", f"label=devcontainer.local_folder={overlay_path}",
+            "--filter", f"label=devcontainer.local_folder={worktree_path}",
         ],
         capture_output=True,
         text=True,
@@ -81,7 +84,7 @@ def attach(ctx, name, editor):
         return
 
     folder = _read_workspace_folder(overlay_path)
-    container_name = _find_container(overlay_path)
+    container_name = _find_container(ws.worktree_path)
     if not container_name:
         out.error(
             WsError(
