@@ -35,8 +35,21 @@ RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudo
   echo "node ALL=(root) NOPASSWD: /usr/sbin/ipset" >> /etc/sudoers.d/node-drydock && \
   chmod 0440 /etc/sudoers.d/node-drydock
 
-RUN mkdir -p /home/node/.claude && chown node:node /home/node/.claude
+# Pre-create target directories for named-volume mounts with node:node
+# ownership so the volumes inherit correct perms on first mount.
+# Without this, docker creates empty named volumes owned by root.
+RUN mkdir -p /home/node/.claude \
+             /home/node/.vscode-server \
+             /home/node/.npm \
+             /home/node/.cache && \
+    chown -R node:node /home/node/.claude \
+                        /home/node/.vscode-server \
+                        /home/node/.npm \
+                        /home/node/.cache
 VOLUME /home/node/.claude
+VOLUME /home/node/.vscode-server
+VOLUME /home/node/.npm
+VOLUME /home/node/.cache
 
 USER node
 WORKDIR /workspaces
