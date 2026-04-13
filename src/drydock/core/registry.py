@@ -168,4 +168,9 @@ class Registry:
     def _row_to_workspace(self, row: sqlite3.Row) -> Workspace:
         d = dict(row)
         d["config"] = json.loads(d["config"])
+        # Drop columns that the current Workspace dataclass doesn't accept.
+        # Lets existing registries (with legacy columns like hostname/labels)
+        # migrate forward without needing a schema rewrite.
+        allowed = Workspace.__dataclass_fields__.keys()
+        d = {k: v for k, v in d.items() if k in allowed}
         return Workspace(**d)
