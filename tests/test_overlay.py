@@ -145,6 +145,51 @@ class TestGenerateOverlay:
         assert f"/opt/secrets/{ws.id}" in secrets_mount
         assert "target=/secrets" in secrets_mount
 
+    def test_infra_mounts_count_and_order(self, ws):
+        overlay = generate_overlay(ws)
+        mounts = overlay["mounts"]
+        assert len(mounts) == 5
+        assert "/run/secrets" in mounts[0]
+        assert "drydock-vscode-server" in mounts[1]
+        assert "drydock-npm-cache" in mounts[2]
+        assert "drydock-tool-cache" in mounts[3]
+        assert ".gitconfig" in mounts[4]
+
+    def test_vscode_server_mount(self, ws):
+        overlay = generate_overlay(ws)
+        m = [x for x in overlay["mounts"] if "drydock-vscode-server" in x][0]
+        assert "target=/home/node/.vscode-server" in m
+        assert "type=volume" in m
+
+    def test_npm_cache_mount(self, ws):
+        overlay = generate_overlay(ws)
+        m = [x for x in overlay["mounts"] if "drydock-npm-cache" in x][0]
+        assert "target=/home/node/.npm" in m
+        assert "type=volume" in m
+
+    def test_tool_cache_mount(self, ws):
+        overlay = generate_overlay(ws)
+        m = [x for x in overlay["mounts"] if "drydock-tool-cache" in x][0]
+        assert "target=/home/node/.cache" in m
+        assert "type=volume" in m
+
+    def test_gitconfig_mount(self, ws):
+        overlay = generate_overlay(ws)
+        m = [x for x in overlay["mounts"] if ".gitconfig" in x][0]
+        assert "source=${localEnv:HOME}/.gitconfig" in m
+        assert "target=/home/node/.gitconfig" in m
+        assert "type=bind" in m
+        assert "readonly" in m
+
+    def test_extra_mounts_after_infra_mounts(self, ws):
+        config = OverlayConfig(
+            extra_mounts=["source=/data,target=/data,type=bind"]
+        )
+        overlay = generate_overlay(ws, config)
+        mounts = overlay["mounts"]
+        assert len(mounts) == 6
+        assert mounts[-1] == "source=/data,target=/data,type=bind"
+
     def test_extra_mounts_appended(self, ws):
         config = OverlayConfig(
             extra_mounts=["source=/data,target=/data,type=bind"]

@@ -166,6 +166,11 @@ def _build_mounts(ws: Workspace, config: OverlayConfig) -> list[str]:
         f"source={workspace_secrets},target={config.secrets_container_dir},type=bind,readonly"
     )
 
+    mounts.append("source=drydock-vscode-server,target=/home/node/.vscode-server,type=volume")
+    mounts.append("source=drydock-npm-cache,target=/home/node/.npm,type=volume")
+    mounts.append("source=drydock-tool-cache,target=/home/node/.cache,type=volume")
+    mounts.append("source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig,type=bind,readonly")
+
     mounts.extend(config.extra_mounts)
 
     return mounts
