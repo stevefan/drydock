@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   jq \
   mosh \
   sudo \
+  tmux \
   && apt-get clean && rm -rf /var/lib/apt/lists/* \
   && curl -fsSL https://tailscale.com/install.sh | sh
 
