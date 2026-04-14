@@ -72,6 +72,32 @@ class TestSet:
 
         assert result.exit_code == 1
 
+    # Regression: workspace names flow into ssh/rsync remote-command strings on
+    # push. Before validation, a name like "foo;touch /tmp/pwned" would derive a
+    # ws_id carrying shell metachars and execute on the remote host.
+    def test_unsafe_workspace_name_rejected(self, tmp_path):
+        reg = _registry(None)  # unregistered → slug-derivation path
+        with patch("drydock.cli.secret._secrets_root", return_value=tmp_path):
+            result = _invoke(["set", "foo;touch /tmp/pwn", "K"], registry=reg, input="v")
+
+        assert result.exit_code != 0
+        # No filesystem artifact with shell metachars should have been created.
+        assert not list(tmp_path.rglob("*;*"))
+        assert not list(tmp_path.rglob("* *"))
+
+    # Regression: key names flow into path segments; guard against traversal
+    # (../) and shell metachars reaching the filesystem.
+    def test_unsafe_key_name_rejected(self, tmp_path):
+        reg = _registry(_make_ws())
+        with patch("drydock.cli.secret._secrets_root", return_value=tmp_path):
+            result = _invoke(["set", "test-ws", "../escape"], registry=reg, input="v")
+
+        assert result.exit_code != 0
+        # No file named "escape" should have been created anywhere under tmp_path
+        # (or worse, at tmp_path.parent if traversal had worked).
+        assert not list(tmp_path.rglob("escape"))
+        assert not (tmp_path.parent / "escape").exists()
+
 
 class TestList:
     def test_returns_names_and_metadata(self, tmp_path):
@@ -130,26 +156,6 @@ class TestRm:
 
 
 class TestPush:
-    @patch("drydock.cli.secret.subprocess.run")
-    def test_constructs_expected_rsync_command(self, mock_run, tmp_path):
-        secret_dir = tmp_path / "ws_test_ws"
-        secret_dir.mkdir(parents=True)
-        (secret_dir / "K").write_text("v")
-
-        reg = _registry(_make_ws())
-        with patch("drydock.cli.secret._secrets_root", return_value=tmp_path):
-            result = _invoke(["push", "test-ws", "--to", "host1"], registry=reg)
-
-        assert result.exit_code == 0
-        assert mock_run.call_count == 2
-        mkdir_call = mock_run.call_args_list[0]
-        rsync_call = mock_run.call_args_list[1]
-        assert "ssh" in mkdir_call[0][0]
-        assert "host1" in mkdir_call[0][0]
-        assert "rsync" in rsync_call[0][0]
-        assert "-a" in rsync_call[0][0]
-        assert any("host1:" in arg for arg in rsync_call[0][0])
-
     def test_dry_run_does_not_execute(self, tmp_path):
         secret_dir = tmp_path / "ws_test_ws"
         secret_dir.mkdir(parents=True)

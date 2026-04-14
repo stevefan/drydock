@@ -1,15 +1,22 @@
 """ws secret — manage workspace secrets (file-backed)."""
 
 import os
+import re
 import stat
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 
 from drydock.core import WsError
+
+# ws_id flows into ssh/rsync remote-command strings; anything outside this
+# character set would enable command injection on the remote host.
+_WS_ID_RE = re.compile(r"^ws_[a-zA-Z0-9_]+$")
+_KEY_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
 def _secrets_root() -> Path:
@@ -19,13 +26,51 @@ def _secrets_root() -> Path:
 def _ws_id_for(name: str, registry) -> str:
     ws = registry.get_workspace(name)
     if ws:
-        return ws.id
-    name_slug = name.replace("-", "_").replace(" ", "_")
-    return f"ws_{name_slug}"
+        ws_id = ws.id
+    else:
+        name_slug = name.replace("-", "_").replace(" ", "_")
+        ws_id = f"ws_{name_slug}"
+    if not _WS_ID_RE.match(ws_id):
+        raise WsError(
+            f"Unsafe workspace name {name!r} (derived id {ws_id!r} has characters outside [A-Za-z0-9_])",
+            fix="Use a workspace name matching [A-Za-z0-9_-] with no whitespace or shell metacharacters",
+        )
+    return ws_id
+
+
+def _validate_key_name(key_name: str) -> None:
+    if not _KEY_NAME_RE.match(key_name):
+        raise WsError(
+            f"Invalid secret key name {key_name!r}",
+            fix="Use characters from [A-Za-z0-9_.-] only (no slashes, whitespace, or shell metacharacters)",
+        )
 
 
 def _ws_secret_dir(ws_id: str) -> Path:
     return _secrets_root() / ws_id
+
+
+def _write_secret_atomic(secret_dir: Path, key_name: str, value: bytes) -> Path:
+    """Write `value` into `secret_dir/key_name` atomically with mode 0400.
+
+    tempfile.mkstemp creates with mode 0600 + O_EXCL, so nothing ever appears
+    at the target path with wider permissions. We chmod to 0400 on the temp
+    file and rename into place.
+    """
+    target = secret_dir / key_name
+    fd, tmp_name = tempfile.mkstemp(dir=str(secret_dir), prefix=f".{key_name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(value)
+        os.chmod(tmp_name, 0o400)
+        os.rename(tmp_name, str(target))
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+    return target
 
 
 @click.group()
@@ -42,6 +87,11 @@ def secret_set(ctx, workspace, key_name):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
+    try:
+        _validate_key_name(key_name)
+    except WsError as e:
+        out.error(e)
+
     if sys.stdin.isatty():
         click.echo("Enter secret value (then EOF / Ctrl-D):", err=True)
 
@@ -53,14 +103,16 @@ def secret_set(ctx, workspace, key_name):
     if not ws:
         click.echo(f"warning: workspace '{workspace}' not in registry (pre-populating)", err=True)
 
-    ws_id = _ws_id_for(workspace, registry)
+    try:
+        ws_id = _ws_id_for(workspace, registry)
+    except WsError as e:
+        out.error(e)
+
     secret_dir = _ws_secret_dir(ws_id)
     secret_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(secret_dir, 0o700)
 
-    secret_path = secret_dir / key_name
-    secret_path.write_bytes(value)
-    os.chmod(secret_path, 0o400)
+    secret_path = _write_secret_atomic(secret_dir, key_name, value)
 
     out.success(
         {"workspace": workspace, "key": key_name, "path": str(secret_path), "bytes": len(value)},
@@ -76,7 +128,10 @@ def secret_list(ctx, workspace):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws_id = _ws_id_for(workspace, registry)
+    try:
+        ws_id = _ws_id_for(workspace, registry)
+    except WsError as e:
+        out.error(e)
     secret_dir = _ws_secret_dir(ws_id)
 
     if not secret_dir.is_dir():
@@ -117,23 +172,25 @@ def secret_rm(ctx, workspace, key_name, force):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws_id = _ws_id_for(workspace, registry)
+    try:
+        _validate_key_name(key_name)
+        ws_id = _ws_id_for(workspace, registry)
+    except WsError as e:
+        out.error(e)
     secret_path = _ws_secret_dir(ws_id) / key_name
 
-    if not secret_path.exists():
-        out.success(
-            {"workspace": workspace, "key": key_name, "removed": False},
-            human_lines=[f"Secret '{key_name}' not found (no-op)."],
-        )
-        return
-
-    if not force and sys.stdin.isatty():
+    if secret_path.exists() and not force and sys.stdin.isatty():
         click.confirm(f"Remove secret '{key_name}' from workspace '{workspace}'?", abort=True)
 
-    secret_path.unlink()
+    try:
+        secret_path.unlink()
+        removed = True
+    except FileNotFoundError:
+        removed = False
+
     out.success(
-        {"workspace": workspace, "key": key_name, "removed": True},
-        human_lines=[f"Secret '{key_name}' removed."],
+        {"workspace": workspace, "key": key_name, "removed": removed},
+        human_lines=[f"Secret '{key_name}' {'removed' if removed else 'not found (no-op)'}."],
     )
 
 
@@ -147,7 +204,10 @@ def secret_push(ctx, workspace, ssh_host):
     registry = ctx.obj["registry"]
     dry_run = ctx.obj.get("dry_run", False)
 
-    ws_id = _ws_id_for(workspace, registry)
+    try:
+        ws_id = _ws_id_for(workspace, registry)
+    except WsError as e:
+        out.error(e)
     secret_dir = _ws_secret_dir(ws_id)
 
     if not secret_dir.is_dir():
