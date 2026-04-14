@@ -69,29 +69,54 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
         )
         return
 
-    if existing and existing.state == "running" and force:
+    if existing and existing.state == "error" and not force:
+        out.error(
+            WsError(
+                f"Workspace '{name}' is in state 'error'",
+                fix=f"Rebuild from clean state: ws create {project} {name} --force",
+                code="workspace_in_error_state",
+            )
+        )
+        return
+
+    if existing and existing.state == "provisioning":
+        out.error(
+            WsError(
+                f"Workspace '{name}' is currently provisioning",
+                fix=f"Wait for the in-flight operation, or investigate: ws inspect {name}",
+                code="workspace_provisioning",
+            )
+        )
+        return
+
+    if existing and existing.state in ("running", "error") and force:
         if not dry_run:
-            devc = DevcontainerCLI()
-            try:
-                devc.tailnet_logout(container_id=existing.container_id)
-            except Exception as exc:
-                logger.warning("Failed tailnet logout for %s: %s", name, exc)
-            try:
-                devc.stop(container_id=existing.container_id)
-            except Exception as exc:
-                logger.warning("Failed to stop container for %s: %s", name, exc)
-            try:
-                devc.remove(container_id=existing.container_id)
-            except Exception as exc:
-                logger.warning("Failed to remove container for %s: %s", name, exc)
+            if existing.container_id:
+                devc = DevcontainerCLI()
+                try:
+                    devc.tailnet_logout(container_id=existing.container_id)
+                except Exception as exc:
+                    logger.warning("Failed tailnet logout for %s: %s", name, exc)
+                try:
+                    devc.stop(container_id=existing.container_id)
+                    devc.remove(container_id=existing.container_id)
+                except WsError:
+                    registry.update_state(name, "error")
+                    raise
             registry.update_state(name, "suspended")
             log_event("workspace.force_recreate", existing.id)
-        existing = registry.get_workspace(name)
+            existing = registry.get_workspace(name)
 
-    if existing and existing.state == "suspended":
+    if existing and existing.state in ("suspended", "defined"):
         ws = existing
-    elif existing and existing.state not in ("running",):
-        ws = existing
+    elif existing:
+        out.error(
+            WsError(
+                f"Workspace '{name}' is in unexpected state '{existing.state}'",
+                fix=f"Investigate: ws inspect {name}",
+            )
+        )
+        return
     else:
         ws = Workspace(
             name=name,

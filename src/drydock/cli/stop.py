@@ -9,9 +9,8 @@ from drydock.core.audit import log_event
 
 @click.command()
 @click.argument("name")
-@click.option("--force", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def stop(ctx, name, force):
+def stop(ctx, name):
     """Stop a running workspace.
 
     Stops the container and removes it so the next ws create rebuilds fresh.
@@ -49,8 +48,12 @@ def stop(ctx, name, force):
 
     devc = DevcontainerCLI(dry_run=dry_run)
     devc.tailnet_logout(container_id=ws.container_id)
-    devc.stop(container_id=ws.container_id)
-    devc.remove(container_id=ws.container_id)
+    try:
+        devc.stop(container_id=ws.container_id)
+        devc.remove(container_id=ws.container_id)
+    except WsError:
+        registry.update_state(name, "error")
+        raise
 
     ws = registry.update_state(name, "suspended")
     log_event("workspace.stopped", ws.id)

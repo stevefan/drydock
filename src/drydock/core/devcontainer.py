@@ -126,8 +126,9 @@ class DevcontainerCLI:
             ["docker", "rm", container_id], capture_output=True, text=True
         )
         if result.returncode != 0 and "No such container" not in result.stderr:
-            logger.warning(
-                "docker rm failed for %s: %s", container_id, result.stderr.strip()
+            raise WsError(
+                f"docker rm failed: {result.stderr.strip()}",
+                fix=f"Remove manually: docker rm {container_id}",
             )
 
     def tailnet_logout(self, container_id: str) -> None:

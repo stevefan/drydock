@@ -61,7 +61,9 @@ def test_stop_dry_run_skips_cli_call(MockCLI):
 
 
 @patch("drydock.cli.stop.DevcontainerCLI")
-def test_stop_propagates_wserror(MockCLI):
+def test_stop_propagates_wserror_and_marks_error(MockCLI):
+    """Failure during stop/remove marks the workspace as 'error' so next
+    ws create refuses to silently reuse half-torn-down state."""
     ws = _make_ws()
     registry = MagicMock()
     registry.get_workspace.return_value = ws
@@ -72,7 +74,7 @@ def test_stop_propagates_wserror(MockCLI):
     result = _invoke(registry)
 
     assert result.exit_code != 0
-    registry.update_state.assert_not_called()
+    registry.update_state.assert_called_once_with("test-ws", "error")
 
 
 @patch("drydock.cli.stop.DevcontainerCLI")

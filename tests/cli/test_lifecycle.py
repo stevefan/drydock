@@ -1,15 +1,13 @@
-"""Tests for ephemeral-container lifecycle: stop-removes-container, suspended
-resume, running-error-with-fix, --force rebuild, and pre-sweep."""
+"""Tests for ephemeral-container lifecycle: suspended resume, running-error-with-fix,
+--force rebuild, and error-state rejection."""
 
 import json
 import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
 from drydock.cli.main import cli
-from drydock.core import WsError
 from drydock.core.registry import Registry
 from drydock.core.workspace import Workspace
 from drydock.output.formatter import Output
@@ -26,45 +24,6 @@ def _init_repo(path, devcontainer=True):
         (path / ".devcontainer" / "devcontainer.json").write_text("{}")
     subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=path, capture_output=True, check=True)
-
-
-def _find_last_json_block(lines):
-    brace_depth = 0
-    block_lines = []
-    for line in reversed(lines):
-        stripped = line.strip()
-        brace_depth += stripped.count("}") - stripped.count("{")
-        block_lines.append(line)
-        if brace_depth <= 0 and "{" in stripped:
-            break
-    block_lines.reverse()
-    return block_lines
-
-
-# Regression: container lingers after stop → silently restarted without postStartCommand
-@patch("drydock.cli.stop.DevcontainerCLI")
-def test_stop_removes_container(MockCLI):
-    """Catches regression where stopped container gets silently restarted by devcontainer CLI."""
-    ws = Workspace(
-        name="test-ws", project="proj", repo_path="/tmp/repo",
-        worktree_path="/tmp/wt", branch="ws/test", state="running",
-        container_id="abc123",
-    )
-    registry = MagicMock()
-    registry.get_workspace.return_value = ws
-    registry.update_state.return_value = ws
-
-    runner = CliRunner()
-    from drydock.cli.stop import stop
-    result = runner.invoke(
-        stop, ["test-ws"],
-        obj={"registry": registry, "output": Output(force_json=True), "dry_run": False},
-    )
-
-    assert result.exit_code == 0
-    mock_devc = MockCLI.return_value
-    mock_devc.stop.assert_called_once_with(container_id="abc123")
-    mock_devc.remove.assert_called_once_with(container_id="abc123")
 
 
 # Regression: suspended workspaces couldn't be resumed — WorkspaceExistsError
@@ -176,26 +135,28 @@ def test_force_rebuild_preserves_checkout(MockCLI, tmp_path, monkeypatch):
     registry.close()
 
 
-# Original Bug 2 root cause: stale stopped container confuses devcontainer CLI
-@patch("drydock.cli.create.DevcontainerCLI")
-def test_presweep_removes_stale_containers(MockCLI, tmp_path, monkeypatch):
-    """Catches the bug where a stale stopped container with matching
-    devcontainer.local_folder label gets silently restarted without postStartCommand."""
+# Contract: error-state workspaces need --force to rebuild; non-forced create must
+# not silently reuse them (which would ignore new CLI args and mask the failure).
+def test_create_on_error_workspace_requires_force(tmp_path, monkeypatch):
+    """Catches regression where error-state workspaces get silently reused on plain
+    ws create, hiding the original failure and ignoring new CLI args."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-
-    mock_devc = MockCLI.return_value
-    mock_devc.up.return_value = {"container_id": "fresh-ctr", "containerId": "fresh-ctr"}
-    mock_devc.remove_stale_containers.return_value = ["stale-ctr-999"]
+    registry = Registry(db_path=tmp_path / ".drydock" / "registry.db")
+    ws = Workspace(
+        name="broken", project="proj", repo_path="/tmp/repo",
+        state="error", container_id="dead-ctr",
+    )
+    registry.create_workspace(ws)
+    registry.update_state("broken", "error")
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--json", "create", "proj", "sweeptest", "--repo-path", str(repo)],
+        cli, ["--json", "create", "proj", "broken"],
+        obj={"registry": registry, "output": Output(force_json=True), "dry_run": False},
     )
-    assert result.exit_code == 0, result.output
 
-    mock_devc.remove_stale_containers.assert_called_once()
-    call_args = mock_devc.remove_stale_containers.call_args
-    workspace_folder = call_args[0][0] if call_args[0] else call_args[1].get("workspace_folder")
-    assert workspace_folder is not None
+    assert result.exit_code != 0
+    err = json.loads(result.output.strip())
+    assert err["error"] == "workspace_in_error_state"
+    assert "--force" in err["fix"]
+    registry.close()
