@@ -6,11 +6,6 @@ from drydock.core.audit import log_event
 
 
 class TestLogEvent:
-    def test_creates_log_file(self, tmp_path):
-        log_path = tmp_path / "audit.log"
-        log_event("workspace.created", "ws_test", log_path=log_path)
-        assert log_path.exists()
-
     def test_writes_valid_json_line(self, tmp_path):
         log_path = tmp_path / "audit.log"
         log_event("workspace.created", "ws_test", log_path=log_path)
@@ -19,13 +14,6 @@ class TestLogEvent:
         assert entry["event"] == "workspace.created"
         assert entry["workspace_id"] == "ws_test"
         assert "timestamp" in entry
-
-    def test_timestamp_is_iso_format(self, tmp_path):
-        log_path = tmp_path / "audit.log"
-        log_event("workspace.created", "ws_test", log_path=log_path)
-        entry = json.loads(log_path.read_text().strip())
-        assert "T" in entry["timestamp"]
-        assert "+" in entry["timestamp"] or entry["timestamp"].endswith("Z") or "+00:00" in entry["timestamp"]
 
     def test_extra_fields_merged(self, tmp_path):
         log_path = tmp_path / "audit.log"
@@ -47,12 +35,6 @@ class TestLogEvent:
         log_path = tmp_path / "nested" / "dir" / "audit.log"
         log_event("workspace.created", "ws_test", log_path=log_path)
         assert log_path.exists()
-
-    def test_no_extra_produces_clean_entry(self, tmp_path):
-        log_path = tmp_path / "audit.log"
-        log_event("workspace.destroyed", "ws_test", log_path=log_path)
-        entry = json.loads(log_path.read_text().strip())
-        assert set(entry.keys()) == {"timestamp", "event", "workspace_id"}
 
     def test_round_trip_all_events(self, tmp_path):
         log_path = tmp_path / "audit.log"

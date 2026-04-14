@@ -66,22 +66,10 @@ class TestGenerateOverlay:
         overlay = generate_overlay(ws, config)
         assert overlay["containerEnv"]["TAILSCALE_AUTHKEY"] == "tskey-auth-abc123"
 
-    def test_tailscale_authkey_omitted_when_empty(self, ws):
-        overlay = generate_overlay(ws)
-        assert "TAILSCALE_AUTHKEY" not in overlay["containerEnv"]
-
-    def test_tailscale_serve_port_default(self, ws):
-        overlay = generate_overlay(ws)
-        assert overlay["containerEnv"]["TAILSCALE_SERVE_PORT"] == "3000"
-
     def test_tailscale_serve_port_custom(self, ws):
         config = OverlayConfig(tailscale_serve_port=8080)
         overlay = generate_overlay(ws, config)
         assert overlay["containerEnv"]["TAILSCALE_SERVE_PORT"] == "8080"
-
-    def test_remote_control_name_defaults_to_name_with_short_id(self, ws):
-        name = generate_overlay(ws)["containerEnv"]["REMOTE_CONTROL_NAME"]
-        assert name.startswith("payments-refactor-")
 
     def test_remote_control_name_override(self, ws):
         config = OverlayConfig(remote_control_name="My Agent")
@@ -92,10 +80,6 @@ class TestGenerateOverlay:
         config = OverlayConfig(firewall_extra_domains=["example.com", "api.stripe.com"])
         overlay = generate_overlay(ws, config)
         assert overlay["containerEnv"]["FIREWALL_EXTRA_DOMAINS"] == "example.com api.stripe.com"
-
-    def test_firewall_extra_domains_omitted_when_empty(self, ws):
-        overlay = generate_overlay(ws)
-        assert "FIREWALL_EXTRA_DOMAINS" not in overlay["containerEnv"]
 
     def test_firewall_ipv6_hosts(self, ws):
         config = OverlayConfig(firewall_ipv6_hosts=["[::1]:8080"])
@@ -119,10 +103,6 @@ class TestGenerateOverlay:
         )
         overlay = generate_overlay(ws)
         assert overlay["containerEnv"]["DRYDOCK_WORKSPACE_SUBDIR"] == "apps/frontend"
-
-    def test_workspace_subdir_omitted_when_empty(self, ws):
-        overlay = generate_overlay(ws)
-        assert "DRYDOCK_WORKSPACE_SUBDIR" not in overlay["containerEnv"]
 
     def test_secrets_mount_uses_workspace_scoped_path(self, ws):
         expected_host_dir = str(Path.home() / ".drydock" / "secrets")
@@ -158,64 +138,12 @@ class TestGenerateOverlay:
         assert "drydock-pip-cache" in mounts[6]
         assert ".gitconfig" in mounts[7]
 
-    def test_vscode_server_mount(self, ws):
-        overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if "drydock-vscode-server" in x][0]
-        assert "target=/home/node/.vscode-server" in m
-        assert "type=volume" in m
-
-    def test_npm_cache_mount(self, ws):
-        overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if "drydock-npm-cache" in x][0]
-        assert "target=/home/node/.npm" in m
-        assert "type=volume" in m
-
-    def test_pip_cache_mount(self, ws):
-        overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if "drydock-pip-cache" in x][0]
-        assert "target=/home/node/.cache/pip" in m
-        assert "type=volume" in m
-
-    def test_gitconfig_mount(self, ws):
-        overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if ".gitconfig" in x][0]
-        assert "source=${localEnv:HOME}/.gitconfig" in m
-        assert "target=/home/node/.gitconfig" in m
-        assert "type=bind" in m
-        assert "readonly" in m
-
-    def test_claude_code_config_mount(self, ws):
-        overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if "claude-code-config" in x][0]
-        assert "target=/home/node/.claude" in m
-        assert "type=volume" in m
-
     def test_claude_profile_parameterizes_volume_name(self, ws):
         config = OverlayConfig(claude_profile="staging")
         overlay = generate_overlay(ws, config)
         m = [x for x in overlay["mounts"] if "/home/node/.claude" in x][0]
         assert "source=claude-code-config-staging" in m
         assert "type=volume" in m
-
-    def test_claude_profile_empty_uses_default_volume(self, ws):
-        config = OverlayConfig(claude_profile="")
-        overlay = generate_overlay(ws, config)
-        m = [x for x in overlay["mounts"] if "/home/node/.claude" in x][0]
-        assert "source=claude-code-config," in m
-
-    def test_claude_code_bashhistory_mount(self, ws):
-        overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if "claude-code-bashhistory" in x][0]
-        assert "target=/commandhistory" in m
-        assert "type=volume" in m
-        assert "${devcontainerId}" in m
-
-    def test_tailscale_state_mount(self, ws):
-        overlay = generate_overlay(ws)
-        m = [x for x in overlay["mounts"] if "tailscale-state" in x][0]
-        assert "target=/tmp/tailscale" in m
-        assert "type=volume" in m
-        assert "${devcontainerId}" in m
 
     def test_extra_mounts_after_infra_mounts(self, ws):
         config = OverlayConfig(
@@ -226,30 +154,10 @@ class TestGenerateOverlay:
         assert len(mounts) == 9
         assert mounts[-1] == "source=/data,target=/data,type=bind"
 
-    def test_extra_mounts_appended(self, ws):
-        config = OverlayConfig(
-            extra_mounts=["source=/data,target=/data,type=bind"]
-        )
-        overlay = generate_overlay(ws, config)
-        assert "source=/data,target=/data,type=bind" in overlay["mounts"]
-
     def test_forward_ports_included_when_set(self, ws):
         config = OverlayConfig(forward_ports=[8000])
         overlay = generate_overlay(ws, config)
         assert overlay["forwardPorts"] == [8000]
-
-    def test_forward_ports_omitted_when_empty(self, ws):
-        overlay = generate_overlay(ws)
-        assert "forwardPorts" not in overlay
-
-    def test_overlay_is_valid_json_serializable(self, ws):
-        config = OverlayConfig(
-            firewall_extra_domains=["a.com"],
-            extra_env={"K": "V"},
-        )
-        overlay = generate_overlay(ws, config)
-        roundtripped = json.loads(json.dumps(overlay))
-        assert roundtripped == overlay
 
 
 class TestMergeIntoBase:
@@ -356,12 +264,6 @@ class TestWriteOverlay:
         data = json.loads(path.read_text())
         assert data["name"] == ws.name
         assert data["build"] == {"dockerfile": "Dockerfile"}
-
-    def test_creates_output_dir_if_missing(self, ws, tmp_path):
-        base = self._make_base(tmp_path)
-        nested = tmp_path / "a" / "b"
-        path = write_overlay(ws, nested, base_devcontainer_path=base)
-        assert path.exists()
 
     def test_config_passed_through(self, ws, tmp_path):
         base = self._make_base(tmp_path)

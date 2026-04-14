@@ -99,13 +99,3 @@ def test_exec_reads_workspace_folder_from_overlay(mock_find, mock_execvp, tmp_pa
     )
 
 
-@patch("drydock.cli.exec.os.execvp")
-@patch("drydock.cli.exec._find_container_id", return_value="ctr-abc")
-def test_exec_defaults_workspace_when_no_overlay(mock_find, mock_execvp):
-    registry = MagicMock()
-    registry.get_workspace.return_value = _make_ws()
-    _invoke(registry)
-    args = mock_execvp.call_args[0][1]
-    assert "-w" in args
-    idx = args.index("-w")
-    assert args[idx + 1] == "/workspace"

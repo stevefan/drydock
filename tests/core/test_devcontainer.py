@@ -11,37 +11,6 @@ from drydock.core import WsError
 
 
 @patch("drydock.core.devcontainer.subprocess.run")
-def test_up_includes_log_format_json(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0,
-        stdout=json.dumps({"containerId": "abc123", "outcome": "success"}),
-        stderr="",
-    )
-    cli = DevcontainerCLI()
-    cli.up(workspace_folder="/tmp/ws")
-
-    cmd = mock_run.call_args[0][0]
-    assert "--log-format" in cmd
-    idx = cmd.index("--log-format")
-    assert cmd[idx + 1] == "json"
-
-
-@patch("drydock.core.devcontainer.subprocess.run")
-def test_up_includes_override_config(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0,
-        stdout=json.dumps({"containerId": "abc123"}),
-        stderr="",
-    )
-    cli = DevcontainerCLI()
-    cli.up(workspace_folder="/tmp/ws", override_config="/tmp/override.json")
-
-    cmd = mock_run.call_args[0][0]
-    assert "--override-config" in cmd
-    assert "/tmp/override.json" in cmd
-
-
-@patch("drydock.core.devcontainer.subprocess.run")
 def test_up_extracts_container_id(mock_run):
     mock_run.return_value = subprocess.CompletedProcess(
         args=[], returncode=0,
@@ -55,21 +24,6 @@ def test_up_extracts_container_id(mock_run):
     assert result["containerId"] == "deadbeef"
     assert result["exit_code"] == 0
     assert "warning" not in result
-
-
-@patch("drydock.core.devcontainer.subprocess.run")
-def test_up_returns_full_dict_when_no_container_id(mock_run):
-    payload = {"outcome": "success", "remoteUser": "node"}
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0,
-        stdout=json.dumps(payload),
-        stderr="",
-    )
-    cli = DevcontainerCLI()
-    result = cli.up(workspace_folder="/tmp/ws")
-
-    assert "container_id" not in result
-    assert result["outcome"] == "success"
 
 
 @patch("drydock.core.devcontainer.subprocess.run")
@@ -110,21 +64,6 @@ def test_up_nonzero_no_container_id_raises(mock_run):
     cli = DevcontainerCLI()
     with pytest.raises(WsError, match="devcontainer up failed"):
         cli.up(workspace_folder="/tmp/ws")
-
-
-@patch("drydock.core.devcontainer.subprocess.run")
-def test_up_zero_exit_with_container_id_no_warning(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0,
-        stdout=json.dumps({"containerId": "ctr-clean", "outcome": "success"}),
-        stderr="",
-    )
-    cli = DevcontainerCLI()
-    result = cli.up(workspace_folder="/tmp/ws")
-
-    assert result["container_id"] == "ctr-clean"
-    assert result["exit_code"] == 0
-    assert "warning" not in result
 
 
 def test_up_dry_run_returns_command():

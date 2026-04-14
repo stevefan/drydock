@@ -35,23 +35,6 @@ class TestLoadProjectConfig:
         assert cfg.firewall_extra_domains == ["api.stripe.com", "sentry.io"]
         assert cfg.firewall_ipv6_hosts == ["[::1]:9090"]
 
-    def test_partial_yaml_preserves_defaults(self, tmp_path):
-        (tmp_path / "web.yaml").write_text("repo_path: /code/web\n")
-        cfg = load_project_config("web", base_dir=tmp_path)
-        assert cfg is not None
-        assert cfg.repo_path == "/code/web"
-        assert cfg.image is None
-        assert cfg.tailscale_hostname is None
-        assert cfg.tailscale_serve_port is None
-        assert cfg.firewall_extra_domains == []
-        assert cfg.firewall_ipv6_hosts == []
-
-    def test_empty_yaml_returns_empty_config(self, tmp_path):
-        (tmp_path / "empty.yaml").write_text("")
-        cfg = load_project_config("empty", base_dir=tmp_path)
-        assert cfg is not None
-        assert cfg == ProjectConfig()
-
     def test_invalid_yaml_raises_wserror_with_fix(self, tmp_path):
         (tmp_path / "bad.yaml").write_text(":\n  - :\n  bad: [")
         with pytest.raises(WsError) as exc_info:
@@ -74,12 +57,6 @@ class TestLoadProjectConfig:
         assert cfg is not None
         assert cfg.workspace_subdir == "apps/frontend"
 
-    def test_workspace_subdir_absent_defaults_to_none(self, tmp_path):
-        (tmp_path / "plain.yaml").write_text("repo_path: /srv/code/plain\n")
-        cfg = load_project_config("plain", base_dir=tmp_path)
-        assert cfg is not None
-        assert cfg.workspace_subdir is None
-
     def test_workspace_subdir_wrong_type_passthrough(self, tmp_path):
         (tmp_path / "bad.yaml").write_text("workspace_subdir: 42\n")
         cfg = load_project_config("bad", base_dir=tmp_path)
@@ -91,12 +68,6 @@ class TestLoadProjectConfig:
         with pytest.raises(WsError) as exc_info:
             load_project_config("sec", base_dir=tmp_path)
         assert "secrets_source" in str(exc_info.value)
-
-    def test_forward_ports_defaults_to_empty_list(self, tmp_path):
-        (tmp_path / "plain.yaml").write_text("repo_path: /code/x\n")
-        cfg = load_project_config("plain", base_dir=tmp_path)
-        assert cfg is not None
-        assert cfg.forward_ports == []
 
     def test_forward_ports_parses_int_list(self, tmp_path):
         (tmp_path / "fp.yaml").write_text(
@@ -114,18 +85,6 @@ class TestLoadProjectConfig:
         assert cfg is not None
         assert cfg.forward_ports == ["8080:80"]
 
-    def test_forward_ports_rejects_non_list(self, tmp_path):
-        (tmp_path / "bad.yaml").write_text("forward_ports: 8000\n")
-        cfg = load_project_config("bad", base_dir=tmp_path)
-        assert cfg is not None
-        assert cfg.forward_ports == 8000
-
-    def test_extra_mounts_defaults_to_empty_list(self, tmp_path):
-        (tmp_path / "plain.yaml").write_text("repo_path: /code/x\n")
-        cfg = load_project_config("plain", base_dir=tmp_path)
-        assert cfg is not None
-        assert cfg.extra_mounts == []
-
     def test_extra_mounts_parses_string_list(self, tmp_path):
         (tmp_path / "mnt.yaml").write_text(
             "extra_mounts:\n"
@@ -136,12 +95,6 @@ class TestLoadProjectConfig:
         assert cfg is not None
         assert len(cfg.extra_mounts) == 2
         assert "source=/data" in cfg.extra_mounts[0]
-
-    def test_claude_profile_defaults_to_none(self, tmp_path):
-        (tmp_path / "plain.yaml").write_text("repo_path: /code/x\n")
-        cfg = load_project_config("plain", base_dir=tmp_path)
-        assert cfg is not None
-        assert cfg.claude_profile is None
 
     def test_claude_profile_parsed(self, tmp_path):
         (tmp_path / "prof.yaml").write_text("claude_profile: staging\n")

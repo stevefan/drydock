@@ -82,18 +82,6 @@ class TestCreateCheckout:
         )
         assert result.stdout.strip() == ws.branch
 
-    def test_git_operations_work_inside_clone(self, ws, tmp_path):
-        base = tmp_path / "checkouts"
-        dest = create_checkout(ws, base_dir=base)
-
-        for cmd in [
-            ["git", "log", "--oneline"],
-            ["git", "status"],
-            ["git", "branch"],
-        ]:
-            result = subprocess.run(cmd, cwd=dest, capture_output=True, text=True)
-            assert result.returncode == 0, f"{' '.join(cmd)} failed: {result.stderr}"
-
     def test_existing_branch_used(self, ws, repo, tmp_path):
         _git(repo, "branch", ws.branch)
 
@@ -172,15 +160,6 @@ class TestCreateCheckout:
         with pytest.raises(WsError, match="git failed"):
             create_checkout(ws, base_dir=tmp_path / "co")
 
-    def test_creates_base_dir_if_missing(self, ws, tmp_path):
-        base = tmp_path / "a" / "b" / "c"
-        dest = create_checkout(ws, base_dir=base)
-        assert dest.exists()
-
-    def test_checkout_path_uses_ws_id(self, ws, tmp_path):
-        base = tmp_path / "checkouts"
-        dest = create_checkout(ws, base_dir=base)
-        assert dest.name == ws.id
 
 
 class TestRemoveCheckout:

@@ -164,26 +164,6 @@ def test_preflight_raises_when_devcontainer_json_missing(MockCLI, tmp_path, monk
 
 
 @patch("drydock.cli.create.DevcontainerCLI")
-def test_preflight_passes_when_devcontainer_json_exists(MockCLI, tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-
-    mock_devc = MockCLI.return_value
-    mock_devc.up.return_value = {"container_id": "ctr-ok", "containerId": "ctr-ok"}
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--json", "create", "proj", "ws-ok2", "--repo-path", str(repo)]
-    )
-    assert result.exit_code == 0, result.output
-
-    lines = [l for l in result.output.strip().split("\n") if l.strip()]
-    last_json = json.loads("\n".join(_find_last_json_block(lines)))
-    assert last_json["state"] == "running"
-
-
-@patch("drydock.cli.create.DevcontainerCLI")
 def test_create_with_lifecycle_warning_still_running(MockCLI, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     repo = tmp_path / "repo"

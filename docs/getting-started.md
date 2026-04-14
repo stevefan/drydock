@@ -73,25 +73,29 @@ ws create myproject --repo-path /path/to/myproject
 This:
 
 1. Creates a new branch `ws/myproject` off the project's HEAD
-2. Materializes it as a git worktree at `~/.drydock/worktrees/ws_myproject/`
-3. Writes a devcontainer override JSON at `~/.drydock/overlays/ws_myproject.devcontainer.override.json`
-4. Runs `devcontainer up` with the override to launch the container
-5. Records everything in `~/.drydock/registry.db`
+2. Clones the project into `~/.drydock/worktrees/ws_myproject/` as a standalone git repo with its own `.git` directory (uses `git clone --reference --dissociate` for disk efficiency; fully self-contained at runtime)
+3. Writes a composite devcontainer.json at `~/.drydock/overlays/ws_myproject.devcontainer.json` by merging the project's own `.devcontainer/devcontainer.json` with drydock's per-workspace overlay (identity env vars, scoped secrets mount, firewall extras, Tailscale hostname, shared volumes)
+4. Runs `devcontainer up` with the composite to launch the container
+5. Records everything in `~/.drydock/registry.db` and logs the event to `~/.drydock/audit.log`
 
-Check it:
+Interact with it:
 
 ```bash
-ws list
-ws inspect myproject
+ws list                   # all desks
+ws inspect myproject      # full state for one
+ws status                 # fleet health: tailscale, supervisor, firewall, per-desk
+ws attach myproject --editor cursor   # open in editor
+ws exec myproject         # shell inside the desk
+ws exec myproject pytest  # run a command inside
 ```
 
-Stop it (container down; registry remembers it):
+Stop it (container down; volume state preserved so next `ws create` reuses session history):
 
 ```bash
 ws stop myproject
 ```
 
-Destroy it (container down, worktree removed, overlay removed, registry row deleted):
+Destroy it (container removed, checkout `rm -rf`'d, overlay deleted, registry row gone; Tailscale node logged out before stop so your tailnet admin stays clean):
 
 ```bash
 ws --dry-run destroy myproject   # preview first
@@ -126,6 +130,24 @@ firewall_extra_domains:
 
 # Optional IPv6 hosts (host:port format)
 firewall_ipv6_hosts: []
+
+# Ports to forward from the desk to your host (optional)
+forward_ports: [3000, 8080]
+
+# Sub-directory of the repo to treat as the workspace root (optional;
+# useful for monorepos where individual sub-projects have their own
+# .devcontainer/). The git checkout still includes the full repo.
+workspace_subdir: auction-crawl
+
+# Per-project Claude config isolation (optional). Default unset = all
+# desks share one claude-code-config volume (auth/history propagate).
+# Set to isolate: each profile gets its own volume.
+claude_profile: staging
+
+# Host bind-mounts to inject into the desk (optional). Useful for
+# Notebook vaults, shared data dirs, host-side tooling.
+extra_mounts:
+  - "source=/Users/you/Notebooks/mylab,target=/workspace/vault,type=bind,readonly"
 ```
 
 Unknown keys are rejected (so typos don't become silent no-ops). Missing file is fine — the CLI falls back to defaults.

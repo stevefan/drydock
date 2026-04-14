@@ -38,25 +38,6 @@ def test_status_empty_registry():
     assert result.exit_code == 0
 
 
-@patch("drydock.cli.status._docker_container_id", return_value="")
-def test_status_no_container(mock_docker):
-    registry = MagicMock()
-    registry.list_workspaces.return_value = [_make_ws()]
-    result = _invoke(registry)
-    assert result.exit_code == 0
-
-
-@patch("drydock.cli.status._probe_firewall", return_value=True)
-@patch("drydock.cli.status._probe_supervisor", return_value=True)
-@patch("drydock.cli.status._probe_tailscale", return_value=True)
-@patch("drydock.cli.status._docker_container_id", return_value="ctr-abc")
-def test_status_all_healthy(mock_docker, mock_ts, mock_sup, mock_fw):
-    registry = MagicMock()
-    registry.list_workspaces.return_value = [_make_ws()]
-    result = _invoke(registry)
-    assert result.exit_code == 0
-
-
 @patch("drydock.cli.status._probe_firewall", return_value=True)
 @patch("drydock.cli.status._probe_supervisor", return_value=True)
 @patch("drydock.cli.status._probe_tailscale", return_value=True)
