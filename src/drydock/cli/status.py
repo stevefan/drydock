@@ -76,7 +76,13 @@ def _probe_workspace(ws) -> dict:
     if not ws.worktree_path:
         return row
 
-    cid = _docker_container_id(ws.worktree_path)
+    # devcontainer CLI labels with the workspace-folder it was given, which is
+    # worktree_path + workspace_subdir for sub-project desks.
+    from pathlib import Path as _P
+    effective_folder = str(
+        _P(ws.worktree_path) / ws.workspace_subdir if ws.workspace_subdir else _P(ws.worktree_path)
+    )
+    cid = _docker_container_id(effective_folder)
     if not cid:
         row["container"] = "not found"
         return row

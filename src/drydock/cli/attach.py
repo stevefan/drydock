@@ -84,7 +84,13 @@ def attach(ctx, name, editor):
         return
 
     folder = _read_workspace_folder(overlay_path)
-    container_name = _find_container(ws.worktree_path)
+    # devcontainer CLI labels containers with the workspace-folder it was given
+    # (worktree_path + workspace_subdir for sub-project desks).
+    from pathlib import Path as _P
+    effective_workspace_folder = str(
+        _P(ws.worktree_path) / ws.workspace_subdir if ws.workspace_subdir else _P(ws.worktree_path)
+    )
+    container_name = _find_container(effective_workspace_folder)
     if not container_name:
         out.error(
             WsError(
