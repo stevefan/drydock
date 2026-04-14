@@ -144,6 +144,32 @@ class DevcontainerCLI:
         except Exception as exc:
             logger.warning("tailnet logout failed for %s: %s", container_id, exc)
 
+    def remove_stale_containers(self, workspace_folder: str) -> list[str]:
+        """Remove stopped containers whose devcontainer.local_folder label matches workspace_folder."""
+        if self.dry_run:
+            return []
+        result = subprocess.run(
+            [
+                "docker", "ps", "-a", "--filter", "status=exited",
+                "--filter", f"label=devcontainer.local_folder={workspace_folder}",
+                "--format", "{{.ID}}",
+            ],
+            capture_output=True, text=True,
+        )
+        removed = []
+        for cid in result.stdout.strip().splitlines():
+            cid = cid.strip()
+            if not cid:
+                continue
+            rm_result = subprocess.run(
+                ["docker", "rm", cid], capture_output=True, text=True,
+            )
+            if rm_result.returncode == 0:
+                removed.append(cid)
+            else:
+                logger.warning("Failed to remove stale container %s: %s", cid, rm_result.stderr.strip())
+        return removed
+
     def exec_command(
         self,
         workspace_folder: str,

@@ -25,8 +25,9 @@ from drydock.core.workspace import Workspace
 @click.option("--repo-path", default=None, help="Path to project repo")
 @click.option("--image", default=None, help="Container image override")
 @click.option("--owner", default=None, help="Workspace owner (user profile name)")
+@click.option("--force", is_flag=True, help="Destroy existing container and rebuild fresh")
 @click.pass_context
-def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
+def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force):
     """Create a new workspace.
 
     PROJECT is the project name. NAME is an optional workspace name
@@ -56,43 +57,85 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
 
     workspace_subdir = (proj_cfg.workspace_subdir if proj_cfg and proj_cfg.workspace_subdir else "")
 
-    ws = Workspace(
-        name=name,
-        project=project,
-        repo_path=repo_path,
-        branch=branch,
-        base_ref=base_ref,
-        image=image,
-        workspace_subdir=workspace_subdir,
-        owner=owner or "",
-    )
+    existing = registry.get_workspace(name)
 
-    if dry_run:
-        out.success(
-            {"dry_run": True, "workspace": ws.to_dict()},
-            human_lines=[
-                f"Would create workspace '{name}':",
-                f"  project:  {project}",
-                f"  branch:   {branch}",
-                f"  base_ref: {base_ref}",
-                f"  repo:     {repo_path}",
-            ],
+    if existing and existing.state == "running" and not force:
+        out.error(
+            WsError(
+                f"Workspace '{name}' is already running",
+                fix=f"ws create {name} --force",
+                code="workspace_already_running",
+            )
         )
         return
 
-    try:
-        ws = registry.create_workspace(ws)
-        log_event("workspace.created", ws.id)
-    except WsError as e:
-        out.error(e)
+    if existing and existing.state == "running" and force:
+        if not dry_run:
+            devc = DevcontainerCLI()
+            try:
+                devc.tailnet_logout(container_id=existing.container_id)
+            except Exception as exc:
+                logger.warning("Failed tailnet logout for %s: %s", name, exc)
+            try:
+                devc.stop(container_id=existing.container_id)
+            except Exception as exc:
+                logger.warning("Failed to stop container for %s: %s", name, exc)
+            try:
+                devc.remove(container_id=existing.container_id)
+            except Exception as exc:
+                logger.warning("Failed to remove container for %s: %s", name, exc)
+            registry.update_state(name, "suspended")
+            log_event("workspace.force_recreate", existing.id)
+        existing = registry.get_workspace(name)
 
-    # Create standalone clone for isolated workspace checkout
-    try:
-        checkout_dir = Path.home() / ".drydock" / "worktrees"
-        checkout_path = create_checkout(ws, base_dir=checkout_dir)
-        ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))
-    except WsError as e:
-        out.error(e)
+    if existing and existing.state == "suspended":
+        ws = existing
+    elif existing and existing.state not in ("running",):
+        ws = existing
+    else:
+        ws = Workspace(
+            name=name,
+            project=project,
+            repo_path=repo_path,
+            branch=branch,
+            base_ref=base_ref,
+            image=image,
+            workspace_subdir=workspace_subdir,
+            owner=owner or "",
+        )
+
+        if dry_run:
+            out.success(
+                {"dry_run": True, "workspace": ws.to_dict()},
+                human_lines=[
+                    f"Would create workspace '{name}':",
+                    f"  project:  {project}",
+                    f"  branch:   {branch}",
+                    f"  base_ref: {base_ref}",
+                    f"  repo:     {repo_path}",
+                ],
+            )
+            return
+
+        try:
+            ws = registry.create_workspace(ws)
+            log_event("workspace.created", ws.id)
+        except WsError as e:
+            out.error(e)
+
+        try:
+            checkout_dir = Path.home() / ".drydock" / "worktrees"
+            checkout_path = create_checkout(ws, base_dir=checkout_dir)
+            ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))
+        except WsError as e:
+            out.error(e)
+
+    if dry_run:
+        out.success(
+            {"dry_run": True, "action": "resume", "workspace": ws.to_dict()},
+            human_lines=[f"Would resume workspace '{name}'"],
+        )
+        return
 
     workspace_folder = (
         os.path.join(ws.worktree_path, ws.workspace_subdir)
@@ -123,6 +166,9 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
         devc.check_available()
     except WsError as e:
         out.error(e)
+
+    # Pre-sweep: remove stale stopped containers that would confuse devcontainer CLI
+    devc.remove_stale_containers(workspace_folder)
 
     ws = registry.update_state(ws.name, "provisioning")
     out.success(

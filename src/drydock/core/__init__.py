@@ -14,12 +14,16 @@ class WsError(Exception):
     message: str
     fix: str | None = None
     context: dict = field(default_factory=dict)
+    code: str | None = None
 
     def __str__(self) -> str:
         return self.message
 
     def to_dict(self) -> dict:
-        d = {"error": self.message}
+        if self.code:
+            d: dict = {"error": self.code, "message": self.message}
+        else:
+            d = {"error": self.message}
         if self.fix:
             d["fix"] = self.fix
         if self.context:
