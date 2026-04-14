@@ -33,7 +33,7 @@ ws create myproject
 
 **Create for a specific user:**
 ```bash
-ws create myproject --owner steven
+ws create myproject --owner alice
 ```
 
 **Check what's running:**

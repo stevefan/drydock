@@ -4,7 +4,7 @@ Drydock's secrets handling evolves through four phases. Each phase preserves the
 
 ## The principle
 
-Thin command surface, backend evolves. Users write `ws secret set microfoundry anthropic_api_key` from Phase 1 through Phase 4; the plumbing behind it swaps without CLI churn.
+Thin command surface, backend evolves. Users write `ws secret set myapp anthropic_api_key` from Phase 1 through Phase 4; the plumbing behind it swaps without CLI churn.
 
 ## Phase 1 — file-backed (v0.1.x, shipped as of v0.1.0 + this iteration)
 
@@ -34,7 +34,7 @@ New capabilities the CLI gains:
 - **Scoped delegation**: `ws secret set <parent-ws> <key> --delegatable-to <child-ws>` — parent desk declares which secrets it may hand to spawned children. Enforces narrowness (child can request a subset, never more).
 - **Rotation**: daemon rotates secrets on a cadence; containers receive fresh leases automatically.
 - **Immediate revocation**: `ws secret rm` → daemon kills leases; running containers lose access next request.
-- **Scoping per principal**: in multi-user era (V3+), secrets are scoped to owner; Gabe's secrets don't leak to Steven's desks.
+- **Scoping per principal**: in multi-user era (V3+), secrets are scoped to owner; one user's secrets don't leak to another user's desks.
 
 Migration: `ws secret migrate --to broker` copies file-backed secrets into the daemon's store, updates mounts from bind-readonly-file to daemon-lease. One-time.
 
@@ -45,7 +45,7 @@ Backend: pluggable via flag or per-workspace YAML.
 ```yaml
 # in a project YAML
 secrets_backend: 1password   # or "vault", "aws-secrets", "gcp-secret-manager", "files"
-secrets_source: "op://Private/MicrofoundryKeys"
+secrets_source: "op://Private/MyappKeys"
 ```
 
 Drydock resolves secrets from the external source at create time; the daemon mediates the lease semantics; local files become a cache at most.
@@ -59,7 +59,7 @@ Backend: the same daemon grown into a generalized capability broker. Secrets are
 - **API secrets** (ANTHROPIC_API_KEY, GitHub tokens)
 - **Cloud credentials** (S3 access keys scoped to specific buckets, bounded TTL)
 - **Compute quotas** (CPU-hours on a specific host, wall-clock budget for a desk)
-- **Network reachability tokens** (may-call-patchwork, may-reach-a-specific-cross-workspace-endpoint)
+- **Network reachability tokens** (may-call-a-peer-desk, may-reach-a-specific-cross-workspace-endpoint)
 - **Storage mounts** (may-mount `s3://bucket/path`, readonly)
 
 All issued via the same lease mechanism. The CLI becomes `ws cap` or `ws lease` (or stays as `ws secret` for backward compat + grows sibling commands). Command surface remains user-friendly; the broker's policy graph decides what's allowed.

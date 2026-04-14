@@ -10,15 +10,9 @@ It is not a container launcher. Launching containers is mechanical plumbing; `de
 
 At v1, the fabric is still a CLI wrapper over primitives. That's a stepping stone. The complete Drydock is a daemon-mediated control plane for a personal fleet of agent workspaces. [v2-scope.md](v2-scope.md) is the plan to get there.
 
-## Where it sits in the stack
+## Where it sits
 
-```
-Substrate    — semantic layer: hypergraphs, dialogue, LLM-native knowledge processing
-Patchwork    — context layer: life data (transcripts, tweets, finance, search)
-Drydock      — fabric layer: where workspaces run, how they're governed, how they're reachable
-```
-
-Each project that uses Drydock (Substrate, Patchwork, Microfoundry, ASI, others) is a workspace or set of workspaces that Drydock spawns, governs, and provides resources to.
+Drydock is the **fabric layer**: where workspaces run, how they're governed, how they're reachable. Projects that use Drydock — application repos, monorepos, isolated experiments — each map to one or more workspaces that Drydock spawns, governs, and provides resources to. Drydock itself is infrastructure; the projects that sit on top of it are independent.
 
 ## The fabric — what Drydock becomes
 
@@ -30,15 +24,15 @@ These are the properties that make Drydock *infrastructure* rather than a conven
 
 3. **A policy graph with enforced narrowness.** Each workspace has declared capabilities, delegatable subsets, firewall allowances, secret entitlements. Children are strictly narrower than parents. Compromise of any single workspace cannot laterally expand authority.
 
-4. **Workspace-to-workspace messaging through the daemon.** When Substrate queries Patchwork, the daemon mediates and checks "is A allowed to ask B this thing?" Agent coordination without broad network access. Audit trail is a natural consequence.
+4. **Workspace-to-workspace messaging through the daemon.** When one workspace queries another, the daemon mediates and checks "is A allowed to ask B this thing?" Agent coordination without broad network access. Audit trail is a natural consequence.
 
 5. **Drydock as secrets broker.** Workspaces request time-bounded credential leases from the daemon. Real API keys live in exactly one place — the daemon's trust anchor — and are never copied, only leased. Auto-rotate, auto-revoke on destroy.
 
-6. **The host fleet.** Workspaces run on a dynamic set of machines: laptop, home server, cloud VM. Placement follows resource availability, persistence needs, data locality. You say `ws create microfoundry`; you don't say where.
+6. **The host fleet.** Workspaces run on a dynamic set of machines: laptop, home server, cloud VM. Placement follows resource availability, persistence needs, data locality. You say `ws create myapp`; you don't say where.
 
-7. **Audit as first-class.** "What did auction-crawl do yesterday?" returns: container lifetimes, outbound hosts reached, secrets requested, files modified, messages sent to other workspaces.
+7. **Audit as first-class.** "What did `scraper-desk` do yesterday?" returns: container lifetimes, outbound hosts reached, secrets requested, files modified, messages sent to other workspaces.
 
-8. **The workspace is the unit of identity.** On the tailnet, a stable hostname. In audit logs, a principal. "Microfoundry asked to reach ebay.com at 14:23" is a coherent sentence.
+8. **The workspace is the unit of identity.** On the tailnet, a stable hostname. In audit logs, a principal. "Desk `scraper` asked to reach `example.com` at 14:23" is a coherent sentence.
 
 ## What v1 delivers today
 
@@ -51,7 +45,7 @@ Scoped to a single host, no daemon, no cross-workspace messaging:
 - **Full lifecycle**: create (worktree + overlay + `devcontainer up`), stop (`devcontainer down`), destroy (stop + worktree rm + overlay rm + registry delete).
 - **Default-deny firewall + Tailscale + Claude Code remote control**, from the `.devcontainer/` template.
 
-Microfoundry can start using v1 today from the host ([getting-started.md](getting-started.md)). What v1 does *not* do: nested orchestration. The `ws` CLI runs on the host; a Claude agent inside a workspace cannot spawn siblings. That's v2.
+You can start using v1 today from the host ([getting-started.md](getting-started.md)). What v1 does *not* do: nested orchestration. The `ws` CLI runs on the host; a Claude agent inside a workspace cannot spawn siblings. That's v2.
 
 ## The agent angle
 
@@ -74,7 +68,7 @@ Host machine
 ├── ~/.drydock/
 │     registry.db, overlays/, worktrees/, secrets/<workspace_id>/
          │
-         │  ws create microfoundry  (from host only)
+         │  ws create myapp  (from host only)
          ▼
     ┌─────────────────────────┐
     │ Workspace container       │

@@ -4,7 +4,7 @@ Drydock is a host-side CLI (`ws`) that provisions sandboxed Claude Code workspac
 
 A *workspace* is a durable addressable place where an agent works — not a throwaway container. It has a stable name, a scoped policy, a git worktree, and (once the container is up) a Claude Code session you can attach to from anywhere on your tailnet. The container can come and go; the workspace persists.
 
-This guide walks you from zero to a running workspace. If you're trying to use Drydock for Microfoundry (or any other monorepo with heterogeneous sub-projects), the per-project YAML section is the part that matters most.
+This guide walks you from zero to a running workspace. If you're using Drydock for a monorepo with heterogeneous sub-projects, the per-project YAML section is the part that matters most.
 
 ## Prerequisites
 
@@ -137,7 +137,7 @@ forward_ports: [3000, 8080]
 # Sub-directory of the repo to treat as the workspace root (optional;
 # useful for monorepos where individual sub-projects have their own
 # .devcontainer/). The git checkout still includes the full repo.
-workspace_subdir: auction-crawl
+workspace_subdir: services/api
 
 # Per-project Claude config isolation (optional). Default unset = all
 # desks share one claude-code-config volume (auth/history propagate).
@@ -152,17 +152,17 @@ extra_mounts:
 
 Unknown keys are rejected (so typos don't become silent no-ops). Missing file is fine — the CLI falls back to defaults.
 
-## A real example: Microfoundry
+## A worked example: heterogeneous monorepo
 
-Microfoundry is a monorepo with several sub-projects that have very different isolation needs. The current (v1) approach is to treat each sub-project as a separate Drydock workspace.
+A common case is a monorepo whose sub-projects have different isolation needs — e.g. a core library with no network, a web app, and a scraper that pulls untrusted HTML from arbitrary hosts. In v1 each sub-project maps to a separate Drydock workspace.
 
-Step 1 — top-level microfoundry workspace:
+Step 1 — top-level project workspace:
 
 ```yaml
-# ~/.drydock/projects/microfoundry.yaml
-repo_path: /Users/you/Unified Workspaces/microfoundry
-tailscale_hostname: microfoundry-dev
-remote_control_name: microfoundry
+# ~/.drydock/projects/myapp.yaml
+repo_path: /path/to/myapp
+tailscale_hostname: myapp-dev
+remote_control_name: myapp
 firewall_extra_domains:
   - github.com
   - pypi.org
@@ -170,36 +170,35 @@ firewall_extra_domains:
 ```
 
 ```bash
-ws create microfoundry
+ws create myapp
 ```
 
-Step 2 — narrow-scope workspace for `auction-crawl`:
+Step 2 — narrow-scope workspace for the high-risk sub-project:
 
 ```yaml
-# ~/.drydock/projects/auction-crawl.yaml
-repo_path: /Users/you/Unified Workspaces/microfoundry/auction-crawl
-tailscale_hostname: auction-crawl
-remote_control_name: auction-crawl
+# ~/.drydock/projects/myapp-scraper.yaml
+repo_path: /path/to/myapp/scraper
+tailscale_hostname: myapp-scraper
+remote_control_name: myapp-scraper
 firewall_extra_domains:
-  - ebay.com
-  - govdeals.com
-  - publicsurplus.com
-  # ...only the hosts auction-crawl legitimately needs
+  - example.com
+  - api.example.org
+  # ...only the hosts this sub-project legitimately needs
 ```
 
 ```bash
-ws create auction-crawl
+ws create myapp-scraper
 ```
 
-The two workspaces are fully independent: different firewalls, different tailnet hostnames, different worktrees, different containers. A bug in auction-crawl's Playwright scripts can't reach anything beyond the auction hosts listed above.
+The two workspaces are fully independent: different firewalls, different tailnet hostnames, different worktrees, different containers. A bug in the scraper's automation can't reach anything beyond the hosts listed above.
 
-### What v1 does *not* do for microfoundry (yet)
+### What v1 does *not* do yet
 
-- **Nested spawning.** A Claude inside the microfoundry workspace cannot currently call `ws create auction-crawl` to spawn a child workspace. V1's `ws` is a host-side CLI. This is a known gap, captured in [v2-scope.md](v2-scope.md).
-- **Parent-child destroy cascade.** Each workspace is independent; destroying microfoundry does not destroy auction-crawl.
+- **Nested spawning.** A Claude inside the top-level workspace cannot currently call `ws create` to spawn a child workspace. V1's `ws` is a host-side CLI. This is a known gap, captured in [v2-scope.md](v2-scope.md).
+- **Parent-child destroy cascade.** Each workspace is independent; destroying a parent does not destroy its conceptual children.
 - **`ws attach`.** Attaching to a workspace from your phone or another machine is planned but not yet implemented; for now, use the workspace's Tailscale hostname and the Claude Code remote control or SSH.
 
-For the nested-spawning design and the microfoundry requirement that drives it, see [v2-scope.md](v2-scope.md).
+For the nested-spawning design and the monorepo case that drives it, see [v2-scope.md](v2-scope.md).
 
 ## Troubleshooting
 

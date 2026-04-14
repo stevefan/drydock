@@ -4,7 +4,7 @@ Drydock provisions, connects, and governs the sandboxed workspaces where Claude 
 
 The v1 CLI runs on the host; containers are workspaces, not orchestrators. Nested spawning (a workspace calling `ws create`) is a v2 feature.
 
-**New users: start with [docs/getting-started.md](docs/getting-started.md).** This file is agent-facing; the getting-started doc walks through install, project YAML config, and a concrete microfoundry example.
+**New users: start with [docs/getting-started.md](docs/getting-started.md).** This file is agent-facing; the getting-started doc walks through install, project YAML config, and a concrete walkthrough.
 
 ## Repo structure
 

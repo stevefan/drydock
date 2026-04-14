@@ -6,7 +6,7 @@ A personal agent fabric. Each workspace is a durable, addressable place where an
 
 ## What it does today
 
-- **One-command desks.** `ws create microfoundry` spins up a sandboxed devcontainer with its own Tailscale hostname, default-deny firewall, scoped secrets, Claude Code remote-control, and a git checkout of your project on a fresh branch.
+- **One-command desks.** `ws create myapp` spins up a sandboxed devcontainer with its own Tailscale hostname, default-deny firewall, scoped secrets, Claude Code remote-control, and a git checkout of your project on a fresh branch.
 - **Reachable from anywhere.** Desks are on your tailnet. Attach via `ws attach <name>` (opens VS Code / Cursor), SSH via `mosh node@<desk>`, or jump in from the Claude mobile app at `claude.ai/code`.
 - **Fleet aware.** `ws status` shows every desk's health (tailscale joined? supervisor alive? firewall active?). Audit log at `~/.drydock/audit.log` tracks lifecycle events.
 - **Isolated by default.** Each desk gets its own `/run/secrets/` directory, its own narrow firewall allowlist, its own git branch. Compromise of one desk doesn't reach the others.
@@ -71,7 +71,7 @@ Makefile           test / lint / install / base-publish / rebuild / clean-regist
 
 ## Where it's going
 
-- **V2 (designed in [docs/v2-scope.md](docs/v2-scope.md)):** daemon-mediated control plane. Enables agent-spawns-agent with enforced narrowness (auction-crawl-child can't exceed microfoundry-parent's policy). Opens nested orchestration; audit becomes first-class.
+- **V2 (designed in [docs/v2-scope.md](docs/v2-scope.md)):** daemon-mediated control plane. Enables agent-spawns-agent with enforced narrowness (a child desk's policy cannot exceed its parent's). Opens nested orchestration; audit becomes first-class.
 - **V3:** fleet-awareness. Desks live on any host in your tailnet (laptop, home server, cloud VM); `ws` from laptop orchestrates them across hosts. Laptop becomes viewport; always-on host runs desks continuously.
 - **V4+:** cloud fabric. Remote filesystem mounts, capability broker (secrets broker generalized), projects that primarily live in cloud because that's where the data lives.
 

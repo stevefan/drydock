@@ -6,7 +6,7 @@ An **agent-desk** is a durable, addressable place where an agent works. It has a
 
 V1 treats workspaces as container-plus-worktree: useful, but the *container* is where identity effectively lives. When the container goes, so does the in-flight work, the session, the shell state. V2 inverts this — the *desk* is the first-class thing, owned by the daemon; containers are its current embodiment.
 
-Nested spawning (microfoundry's forcing function) is one consequence of this inversion: if desks are daemon entities, then an occupying agent can ask the daemon for a sibling desk without Drydock violating its own layering principles. Migration (V3) is another: if state belongs to the desk rather than to the container, the desk can move.
+Nested spawning — the forcing function for V2 — is one consequence of this inversion: if desks are daemon entities, then an occupying agent can ask the daemon for a sibling desk without Drydock violating its own layering principles. Migration (V3) is another: if state belongs to the desk rather than to the container, the desk can move.
 
 This document scopes **V2: single-host daemon, desk-as-first-class, policy + nested spawn + audit**. Migration itself is V3 — but V2's interfaces must not preclude it.
 
@@ -21,7 +21,7 @@ This document scopes **V2: single-host daemon, desk-as-first-class, policy + nes
 
 ## What V2 explicitly does *not* do (belongs in V3)
 
-- **Migration.** `ws migrate microfoundry laptop→cloud` is V3.
+- **Migration.** `ws migrate myapp laptop→cloud` is V3.
 - **Suspend/resume.** The foundation for migration. On a single host, Docker Desktop's VM suspension already covers laptop close/open. Building Drydock-level suspend/resume before there's a reason (migration) is ceremony.
 - **Fleet-aware daemon.** Multi-host coordination, placement decisions, lead election.
 - **`drydock-base` image.** Publishing a base image so project devcontainers can `FROM ghcr.io/.../drydock-base`. Only becomes load-bearing when desks migrate between hosts with potentially different base-template versions.
@@ -29,24 +29,23 @@ This document scopes **V2: single-host daemon, desk-as-first-class, policy + nes
 
 All of these are V3, and the V3 design starts from whatever V2 ships. The architectural commitment V2 makes, to unblock V3 later: **desk state must be serializable.** What lives in the daemon's ownership (registry, overlay, secrets broker leases) has portable representations; what lives in the container is either derived from that state (rebuildable from devcontainer + worktree) or volume-mounted to host-owned paths (session files, bash history, tool caches). V2 gets this discipline right from day one, even without implementing migration itself.
 
-## Forcing function: microfoundry
+## Forcing function: heterogeneous monorepos
 
-Microfoundry is the first monorepo with heterogeneous sub-projects whose isolation needs differ by an order of magnitude:
+The concrete case that forces V2 is a monorepo whose sub-projects have isolation needs that differ by an order of magnitude. A representative shape:
 
 | Sub-project | Stack | Isolation need |
 |---|---|---|
-| `microfluidics-dsl` | Python (CadQuery) | Low — pure compute |
-| `fluid-cad` | Rust (PDE solver, Z3) | Low — pure compute |
-| `mold-template` | Python (CadQuery) | Low — pure compute |
-| `3duf` | Node / web app | Medium — dev server, browser |
-| `auction-crawl` | Python + Playwright | **High** — browser automation hitting arbitrary auction sites, pulls untrusted HTML |
-| `confocal-microscope` | Config files (Zeiss) | N/A — data only |
+| `core-lib` | Pure compute | Low — no network, no untrusted input |
+| `cli-tool` | Pure compute | Low — no network, no untrusted input |
+| `web-app` | Node / web | Medium — dev server, browser |
+| `scraper` | Browser automation | **High** — pulls untrusted HTML from arbitrary external hosts |
+| `dataset` | Config / data | N/A — data only |
 
-The requirement: a top-level Claude in the microfoundry desk that can edit across all sub-projects, spawn narrower child desks per high-isolation sub-project, and confine the risky ones (`auction-crawl`) so a compromised listing can't reach anything but whitelisted auction hosts.
+The requirement: a top-level agent in the monorepo desk that can edit across all sub-projects, spawn narrower child desks per high-isolation sub-project, and confine the risky ones (`scraper`) so a compromised page can't reach anything but the hosts that sub-project legitimately needs.
 
 The wrong mechanism is mounting the Docker socket into the parent container — that collapses the blast radius to the whole fleet and contradicts Drydock's default-deny posture. The right mechanism is the daemon: parent asks permission, daemon validates policy, daemon dispatches spawn.
 
-Substrate and Patchwork are more homogeneous and don't exercise this axis. If Drydock handles microfoundry well, the design generalizes; if not, microfoundry is where it breaks first.
+Homogeneous repos (all sub-projects with similar isolation needs) don't exercise this axis. The heterogeneous case is where the design first breaks or generalizes.
 
 ## Principles
 
@@ -66,17 +65,17 @@ Host
 ├── secrets broker (leases, not static mounts)
 └── Docker
        │
-       │  ws create microfoundry   (from host)
+       │  ws create myapp   (from host)
        ▼
   ┌──────────────────────────────────────┐
-  │ Desk "microfoundry"                   │
+  │ Desk "myapp"                          │
   │                                       │
   │   ws CLI (desk mode)                  │
   │     │ detects DRYDOCK_WORKSPACE_ID    │
   │     │ routes to wsd via Tailscale     │
   │     ▼                                 │
   │   HTTP → wsd → policy check → spawn   │
-  │           auction-crawl child         │
+  │           scraper child               │
   └──────────────────────────────────────┘
 ```
 
@@ -166,13 +165,13 @@ else:
 
 ## When to build V2
 
-When microfoundry's nested case becomes painful enough that spawning children from the host feels wrong. Microfoundry can run today in V1 mode (each desk host-spawned); pain surfaces when a top-level agent wants to spawn narrower children and can't.
+When the nested case becomes painful enough that spawning children from the host feels wrong. A heterogeneous monorepo can run today in V1 mode (each desk host-spawned); pain surfaces when a top-level agent wants to spawn narrower children and can't.
 
 ## What V3 adds (preview)
 
 V3 takes the agent-desk further: desks become **mobile**. The architectural bet of V2 — desks are serializable daemon entities — pays off in V3 as actual portability.
 
-- **Migration primitive.** `ws migrate microfoundry laptop→cloud`. Suspend on source, serialize state, transfer, deserialize, resume on destination.
+- **Migration primitive.** `ws migrate myapp laptop→cloud`. Suspend on source, serialize state, transfer, deserialize, resume on destination.
 - **Fleet-aware daemon.** Multiple hosts running `wsd`, coordinated. Placement decisions driven by policy (prefer cloud for heavy compute, prefer interactive host for desks you're currently attached to).
 - **Identity continuity across hosts.** Same Tailscale hostname, same audit principal, same `DRYDOCK_WORKSPACE_ID` across host changes.
 - **`drydock-base` image.** Published base image so project devcontainers `FROM` it. Migration between hosts requires base-template consistency; duplication across project-owned devcontainers is tolerable in V2, unacceptable in V3.
