@@ -7,6 +7,7 @@ import click
 
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core import WsError
+from drydock.core.audit import log_event
 from drydock.core.overlay import remove_overlay
 from drydock.core.checkout import remove_checkout
 
@@ -89,6 +90,7 @@ def destroy(ctx, name, force):
         except Exception as exc:
             logger.warning("Failed to remove overlay %s: %s", overlay_path, exc)
 
+    log_event("workspace.destroyed", ws.id)
     registry.delete_workspace(name)
 
     out.success(

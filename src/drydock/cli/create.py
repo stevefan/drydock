@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core import WsError
+from drydock.core.audit import log_event
 from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.project_config import load_project_config
 from drydock.core.checkout import create_checkout
@@ -81,6 +82,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
 
     try:
         ws = registry.create_workspace(ws)
+        log_event("workspace.created", ws.id)
     except WsError as e:
         out.error(e)
 
@@ -141,8 +143,10 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner):
             merged_config = {**ws.config, "lifecycle_warning": lifecycle_warning}
             update_kwargs["config"] = merged_config
         ws = registry.update_workspace(ws.name, **update_kwargs)
+        log_event("workspace.running", ws.id)
     except WsError:
         registry.update_state(ws.name, "error")
+        log_event("workspace.error", ws.id)
         raise
 
     human_lines = [
@@ -175,4 +179,8 @@ def _overlay_from_project(proj_cfg) -> OverlayConfig:
         kwargs["firewall_ipv6_hosts"] = proj_cfg.firewall_ipv6_hosts
     if proj_cfg.forward_ports:
         kwargs["forward_ports"] = proj_cfg.forward_ports
+    if proj_cfg.extra_mounts:
+        kwargs["extra_mounts"] = proj_cfg.extra_mounts
+    if proj_cfg.claude_profile is not None:
+        kwargs["claude_profile"] = proj_cfg.claude_profile
     return OverlayConfig(**kwargs)

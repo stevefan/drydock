@@ -120,6 +120,35 @@ class TestLoadProjectConfig:
         assert cfg is not None
         assert cfg.forward_ports == 8000
 
+    def test_extra_mounts_defaults_to_empty_list(self, tmp_path):
+        (tmp_path / "plain.yaml").write_text("repo_path: /code/x\n")
+        cfg = load_project_config("plain", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.extra_mounts == []
+
+    def test_extra_mounts_parses_string_list(self, tmp_path):
+        (tmp_path / "mnt.yaml").write_text(
+            "extra_mounts:\n"
+            "  - 'source=/data,target=/data,type=bind'\n"
+            "  - 'source=vol,target=/vol,type=volume'\n"
+        )
+        cfg = load_project_config("mnt", base_dir=tmp_path)
+        assert cfg is not None
+        assert len(cfg.extra_mounts) == 2
+        assert "source=/data" in cfg.extra_mounts[0]
+
+    def test_claude_profile_defaults_to_none(self, tmp_path):
+        (tmp_path / "plain.yaml").write_text("repo_path: /code/x\n")
+        cfg = load_project_config("plain", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.claude_profile is None
+
+    def test_claude_profile_parsed(self, tmp_path):
+        (tmp_path / "prof.yaml").write_text("claude_profile: staging\n")
+        cfg = load_project_config("prof", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.claude_profile == "staging"
+
     # Unknown keys are rejected so typos don't silently become no-ops
     def test_unknown_keys_rejected(self, tmp_path):
         (tmp_path / "typo.yaml").write_text("repo_path: /code/x\ntypo_field: oops\n")

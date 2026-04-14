@@ -35,10 +35,10 @@ fi
 # the postStartCommand chain — downstream supervisors (remote-control) still
 # need to launch. Log and continue.
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
-    sudo tailscale up --hostname="$TAILSCALE_HOSTNAME" --authkey="$TAILSCALE_AUTHKEY" 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing without tailnet join" | tee -a "$LOG_FILE"
+    sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" --authkey="$TAILSCALE_AUTHKEY" 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing without tailnet join" | tee -a "$LOG_FILE"
 else
     echo "WARNING: No TAILSCALE_AUTHKEY set. You'll need to authenticate manually via the URL below." | tee -a "$LOG_FILE"
-    sudo tailscale up --hostname="$TAILSCALE_HOSTNAME" 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing" | tee -a "$LOG_FILE"
+    sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing" | tee -a "$LOG_FILE"
 fi
 
 # Serve the dev server on the tailnet (only meaningful if tailscale up succeeded)

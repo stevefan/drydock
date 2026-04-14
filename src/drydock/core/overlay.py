@@ -38,6 +38,7 @@ class OverlayConfig:
     extra_env: dict[str, str] = field(default_factory=dict)
     extra_mounts: list[str] = field(default_factory=list)
     forward_ports: list[int] = field(default_factory=list)
+    claude_profile: str = ""
 
 
 def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict:
@@ -185,7 +186,12 @@ def _build_mounts(ws: Workspace, config: OverlayConfig) -> list[str]:
         f"source={workspace_secrets},target={config.secrets_container_dir},type=bind,readonly"
     )
 
-    mounts.append("source=claude-code-config,target=/home/node/.claude,type=volume")
+    claude_vol = (
+        f"claude-code-config-{config.claude_profile}"
+        if config.claude_profile
+        else "claude-code-config"
+    )
+    mounts.append(f"source={claude_vol},target=/home/node/.claude,type=volume")
     mounts.append("source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume")
     mounts.append("source=tailscale-state-${devcontainerId},target=/tmp/tailscale,type=volume")
 

@@ -190,6 +190,19 @@ class TestGenerateOverlay:
         assert "target=/home/node/.claude" in m
         assert "type=volume" in m
 
+    def test_claude_profile_parameterizes_volume_name(self, ws):
+        config = OverlayConfig(claude_profile="staging")
+        overlay = generate_overlay(ws, config)
+        m = [x for x in overlay["mounts"] if "/home/node/.claude" in x][0]
+        assert "source=claude-code-config-staging" in m
+        assert "type=volume" in m
+
+    def test_claude_profile_empty_uses_default_volume(self, ws):
+        config = OverlayConfig(claude_profile="")
+        overlay = generate_overlay(ws, config)
+        m = [x for x in overlay["mounts"] if "/home/node/.claude" in x][0]
+        assert "source=claude-code-config," in m
+
     def test_claude_code_bashhistory_mount(self, ws):
         overlay = generate_overlay(ws)
         m = [x for x in overlay["mounts"] if "claude-code-bashhistory" in x][0]
@@ -391,6 +404,30 @@ class TestProjectYamlToOverlay:
         assert env["REMOTE_CONTROL_NAME"] == "App RC"
         assert env["FIREWALL_EXTRA_DOMAINS"] == "api.stripe.com"
         assert env["FIREWALL_IPV6_HOSTS"] == "[::1]:4000"
+
+    def test_project_yaml_extra_mounts_in_overlay(self, ws, tmp_path):
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        (projects_dir / "app.yaml").write_text(
+            "extra_mounts:\n"
+            "  - 'source=/data,target=/data,type=bind'\n"
+        )
+        proj_cfg = load_project_config("app", base_dir=projects_dir)
+        assert proj_cfg is not None
+        overlay_config = OverlayConfig(extra_mounts=proj_cfg.extra_mounts)
+        overlay = generate_overlay(ws, overlay_config)
+        assert "source=/data,target=/data,type=bind" in overlay["mounts"]
+
+    def test_project_yaml_claude_profile_in_overlay(self, ws, tmp_path):
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        (projects_dir / "app.yaml").write_text("claude_profile: prod\n")
+        proj_cfg = load_project_config("app", base_dir=projects_dir)
+        assert proj_cfg is not None
+        overlay_config = OverlayConfig(claude_profile=proj_cfg.claude_profile or "")
+        overlay = generate_overlay(ws, overlay_config)
+        m = [x for x in overlay["mounts"] if "/home/node/.claude" in x][0]
+        assert "source=claude-code-config-prod" in m
 
     def test_project_yaml_forward_ports_in_overlay(self, ws, tmp_path):
         projects_dir = tmp_path / "projects"

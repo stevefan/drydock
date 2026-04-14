@@ -4,6 +4,7 @@ import click
 
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core import WsError
+from drydock.core.audit import log_event
 
 
 @click.command()
@@ -47,6 +48,7 @@ def stop(ctx, name, force):
     devc.stop(container_id=ws.container_id)
 
     ws = registry.update_state(name, "suspended")
+    log_event("workspace.stopped", ws.id)
 
     out.success(
         ws.to_dict(),

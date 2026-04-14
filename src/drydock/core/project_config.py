@@ -18,6 +18,8 @@ KNOWN_KEYS = {
     "firewall_extra_domains",
     "firewall_ipv6_hosts",
     "forward_ports",
+    "extra_mounts",
+    "claude_profile",
 }
 
 
@@ -33,6 +35,8 @@ class ProjectConfig:
     firewall_extra_domains: list[str] = field(default_factory=list)
     firewall_ipv6_hosts: list[str] = field(default_factory=list)
     forward_ports: list[int] = field(default_factory=list)
+    extra_mounts: list[str] = field(default_factory=list)
+    claude_profile: str | None = None
 
 
 DEFAULT_PROJECTS_DIR = Path.home() / ".drydock" / "projects"
@@ -81,4 +85,6 @@ def load_project_config(
         firewall_extra_domains=raw.get("firewall_extra_domains", []),
         firewall_ipv6_hosts=raw.get("firewall_ipv6_hosts", []),
         forward_ports=raw.get("forward_ports", []),
+        extra_mounts=raw.get("extra_mounts", []),
+        claude_profile=raw.get("claude_profile"),
     )
