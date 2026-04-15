@@ -56,6 +56,24 @@ class WsdClient:
         finally:
             s.close()
 
+    def call_rpc(
+        self,
+        method: str,
+        params: dict | list | None = None,
+        request_id: str | int | None = "test-1",
+    ) -> dict:
+        payload: dict[str, object] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            payload["params"] = params
+        if request_id is not None:
+            payload["id"] = request_id
+        response = self.call(payload)
+        if "result" in response:
+            return {"result": response["result"]}
+        if "error" in response:
+            return {"error": response["error"]}
+        return response
+
 
 @pytest.fixture
 def wsd():

@@ -1,4 +1,4 @@
-"""Slice 1a daemon skeleton tests. Each justified per CLAUDE.md §Tests
+"""Slice 1b daemon JSON-RPC tests. Each justified per CLAUDE.md §Tests
 must justify their existence."""
 
 from __future__ import annotations
@@ -7,17 +7,20 @@ import json
 import socket
 
 
-# Contract: the daemon must appear at its socket and respond to a valid
-# request. Fails if socket setup breaks, if the handler doesn't parse,
-# or if the response shape drifts.
-def test_daemon_binds_socket_and_echoes(wsd):
-    response = wsd.call({"hello": "world"})
-    assert response == {"echo": {"hello": "world"}}
+# Contract: the daemon must expose the pinned health method over the
+# JSON-RPC response envelope. Fails if method dispatch, response shape,
+# or runtime metadata wiring drifts.
+def test_wsd_health_returns_ok(wsd):
+    response = wsd.call_rpc("wsd.health")
+    result = response["result"]
+    assert result["ok"] is True
+    assert isinstance(result["pid"], int) and result["pid"] > 0
+    assert result["version"] == "v2-slice1b"
 
 
-# Contract: malformed input must produce a structured `parse_error`,
-# not a crash, not an empty response, not a socket close. This is the
-# error-surface contract the V2 RPC design pins (v2-design-protocol.md §8).
+# Contract: malformed input must produce the JSON-RPC parse-error shape,
+# not a crash, not an empty response, not an unstructured payload. This
+# is the RPC error-surface contract the V2 design pins.
 def test_daemon_returns_parse_error_on_bad_json(wsd):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(5.0)
@@ -33,5 +36,39 @@ def test_daemon_returns_parse_error_on_bad_json(wsd):
     finally:
         s.close()
     response = json.loads(buf.decode("utf-8").strip())
-    assert response["error"] == "parse_error"
-    assert "message" in response
+    assert response["id"] is None
+    assert response["error"]["code"] == -32700
+    assert "message" in response["error"]
+
+
+# Contract: unknown methods must fail with method-not-found, otherwise
+# clients cannot reliably distinguish typoed calls from transport issues.
+def test_wsd_method_not_found_returns_32601(wsd):
+    response = wsd.call_rpc("wsd.nope")
+    assert response["error"]["code"] == -32601
+    assert "wsd.nope" in response["error"]["message"]
+
+
+# Contract: malformed envelopes missing required JSON-RPC fields must
+# fail as invalid requests instead of reaching handler dispatch.
+def test_wsd_invalid_request_missing_method(wsd):
+    response = wsd.call({"jsonrpc": "2.0", "id": 1})
+    assert response["error"]["code"] == -32600
+
+
+# Contract: notifications are valid JSON-RPC but produce no response.
+# Fails if a future refactor accidentally writes success/error envelopes
+# for id-less requests and breaks fire-and-forget callers.
+def test_wsd_notification_produces_no_response(wsd):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    s.connect(str(wsd.socket_path))
+    try:
+        s.sendall(b'{"jsonrpc":"2.0","method":"wsd.health"}\n')
+        try:
+            buf = s.recv(4096)
+        except socket.timeout:
+            buf = b""
+    finally:
+        s.close()
+    assert buf == b""
