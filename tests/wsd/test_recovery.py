@@ -208,6 +208,45 @@ def test_recovery_rolls_back_partial_workspace(tmp_path):
     assert task["status"] == "failed"
 
 
+def test_recovery_rolls_back_partial_spawn_child(tmp_path):
+    registry_path = tmp_path / "registry.db"
+    worktree_path = tmp_path / "worktrees" / "ws_child_partial"
+    worktree_path.mkdir(parents=True)
+    (worktree_path / "marker.txt").write_text("partial")
+
+    registry = Registry(db_path=registry_path)
+    try:
+        registry.create_workspace(
+            Workspace(
+                name="child-partial",
+                project="proj",
+                repo_path="/repos/proj",
+                branch="ws/child-partial",
+                state="provisioning",
+                worktree_path=str(worktree_path),
+            )
+        )
+        registry.update_workspace("child-partial", parent_desk_id="ws_parent")
+    finally:
+        registry.close()
+    _insert_task(
+        registry_path,
+        request_id="r-spawn",
+        method="SpawnChild",
+        spec={"project": "proj", "name": "child-partial"},
+    )
+
+    report = recover_in_progress(registry_path)
+
+    assert report == RecoveryReport(completed=0, rolled_back=1, unknown_method=0)
+    assert _workspace_row(registry_path, "child-partial") is None
+    assert not worktree_path.exists()
+    task = _task_row(registry_path, "r-spawn")
+    outcome = json.loads(task["outcome_json"])
+    assert task["status"] == "failed"
+    assert outcome["message"] == "crashed_during_create"
+
+
 def test_recovery_is_idempotent(tmp_path):
     registry_path = tmp_path / "registry.db"
     _make_workspace(

@@ -252,6 +252,54 @@ class Registry:
             return None
         return dict(row)
 
+    def load_desk_policy(self, desk_id: str) -> dict | None:
+        row = self._conn.execute(
+            """
+            SELECT delegatable_firewall_domains, delegatable_secrets, capabilities, config
+            FROM workspaces
+            WHERE id = ?
+            """,
+            (desk_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def update_desk_delegations(
+        self,
+        name: str,
+        *,
+        delegatable_firewall_domains: list[str] | None = None,
+        delegatable_secrets: list[str] | None = None,
+        capabilities: list[str] | None = None,
+    ) -> None:
+        fields: dict[str, str] = {}
+        if delegatable_firewall_domains is not None:
+            fields["delegatable_firewall_domains"] = json.dumps(delegatable_firewall_domains)
+        if delegatable_secrets is not None:
+            fields["delegatable_secrets"] = json.dumps(delegatable_secrets)
+        if capabilities is not None:
+            fields["capabilities"] = json.dumps(capabilities)
+        if not fields:
+            return
+        self.update_workspace(name, **fields)
+
+    def get_workspace_extra_mounts(self, name: str) -> list[str]:
+        row = self._conn.execute(
+            "SELECT config FROM workspaces WHERE name = ?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            return []
+        try:
+            config = json.loads(row["config"])
+        except (TypeError, json.JSONDecodeError):
+            return []
+        mounts = config.get("extra_mounts")
+        if not isinstance(mounts, list):
+            return []
+        return [value for value in mounts if isinstance(value, str)]
+
     def _row_to_workspace(self, row: sqlite3.Row) -> Workspace:
         d = dict(row)
         d["config"] = json.loads(d["config"])

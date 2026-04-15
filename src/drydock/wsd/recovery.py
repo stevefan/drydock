@@ -47,7 +47,7 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
         for row in rows:
             request_id = row["request_id"]
             method = row["method"]
-            if method != "CreateDesk":
+            if method not in {"CreateDesk", "SpawnChild"}:
                 outcome = {
                     "code": -32000,
                     "message": "unknown_method_during_recovery",
@@ -67,7 +67,7 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
             workspace = registry.get_workspace(workspace_name) if workspace_name else None
 
             if workspace is not None and workspace.state == "running" and workspace.container_id:
-                outcome = _desk_ref(workspace, spec)
+                outcome = _desk_ref(registry, workspace, spec)
                 _finish_task_log(registry, request_id, "completed", outcome)
                 completed += 1
                 logger.info(
@@ -140,13 +140,13 @@ def _workspace_id(workspace_name: str) -> str:
     return Workspace(name=workspace_name, project=workspace_name, repo_path="").id
 
 
-def _desk_ref(workspace: Workspace, spec: dict[str, object]) -> dict[str, object]:
+def _desk_ref(registry: Registry, workspace: Workspace, spec: dict[str, object]) -> dict[str, object]:
     branch = workspace.branch or f"ws/{workspace.name}"
     project = workspace.project
     spec_project = spec.get("project")
     if isinstance(spec_project, str) and spec_project:
         project = spec_project
-    return {
+    result = {
         "desk_id": workspace.id,
         "name": workspace.name,
         "project": project,
@@ -155,6 +155,10 @@ def _desk_ref(workspace: Workspace, spec: dict[str, object]) -> dict[str, object
         "container_id": workspace.container_id,
         "worktree_path": workspace.worktree_path,
     }
+    parent_desk_id = _workspace_parent_desk_id(registry, workspace.name)
+    if parent_desk_id:
+        result["parent_desk_id"] = parent_desk_id
+    return result
 
 
 def _rollback_partial_create(
@@ -185,6 +189,17 @@ def _rollback_partial_create(
 
     registry.delete_workspace(workspace.name)
     return f"workspace_partial_state:{workspace.state or 'unknown'}"
+
+
+def _workspace_parent_desk_id(registry: Registry, name: str) -> str | None:
+    row = registry._conn.execute(
+        "SELECT parent_desk_id FROM workspaces WHERE name = ?",
+        (name,),
+    ).fetchone()
+    if row is None:
+        return None
+    value = row["parent_desk_id"]
+    return value if isinstance(value, str) and value else None
 
 
 def _remove_worktree_best_effort(path: Path) -> None:
