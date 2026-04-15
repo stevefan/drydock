@@ -6,21 +6,31 @@ REMOTE_CONTROL_NAME="${REMOTE_CONTROL_NAME:-Claude Dev}"
 
 echo "Starting Claude Code remote-control server..." | tee "$LOG_FILE"
 
-# Claude remote-control requires claude.ai subscription auth. ANTHROPIC_API_KEY
-# (per-call API metering) does NOT satisfy the subscription check. The correct
-# credential is a long-lived subscription-backed token produced by
-# `claude setup-token`, consumed via CLAUDE_CODE_OAUTH_TOKEN. Store it as a
-# drydock secret (`ws secret set <ws> claude_code_token`) and push to the host.
+# Load CLAUDE_CODE_OAUTH_TOKEN from secret if present — useful for any non-
+# remote-control claude invocations in this desk (scripted claude --print,
+# interactive shells). IMPORTANT: Anthropic explicitly blocks long-lived
+# tokens from `claude remote-control` ("limited to inference-only for security
+# reasons") — the token does NOT satisfy the subscription check for server
+# mode. Remote-control requires an interactive `claude auth login` (device
+# flow), one-time per claude-code-config volume.
 if [ -e /run/secrets/claude_code_token ] && [ ! -r /run/secrets/claude_code_token ]; then
     echo "ERROR: /run/secrets/claude_code_token exists but is unreadable by $(whoami) (uid $(id -u))." | tee -a "$LOG_FILE"
-    echo "  Likely cause: secret file not chowned to container uid on this host." | tee -a "$LOG_FILE"
     echo "  Fix on host: chown 1000:1000 ~/.drydock/secrets/<ws_id>/claude_code_token" | tee -a "$LOG_FILE"
 fi
 if [ -r /run/secrets/claude_code_token ]; then
     export CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude_code_token)"
-    echo "Loaded CLAUDE_CODE_OAUTH_TOKEN from /run/secrets/claude_code_token" | tee -a "$LOG_FILE"
-else
-    echo "WARNING: /run/secrets/claude_code_token not present; remote-control will loop with \"must be logged in\" until the secret is set + pushed." | tee -a "$LOG_FILE"
+    echo "Loaded CLAUDE_CODE_OAUTH_TOKEN (inference scope — does not satisfy remote-control's full-scope check)" | tee -a "$LOG_FILE"
+fi
+
+# remote-control-specific credential check. If ~/.claude/.credentials.json
+# doesn't exist in the claude-code-config volume, the server mode will loop
+# forever. Surface the expected next step once per boot instead of silently
+# letting the supervisor spin.
+if [ ! -f "$HOME/.claude/.credentials.json" ]; then
+    echo "WARNING: $HOME/.claude/.credentials.json missing. remote-control requires" | tee -a "$LOG_FILE"
+    echo "  an interactive \`claude auth login\` (device flow) to populate it." | tee -a "$LOG_FILE"
+    echo "  One-time per claude-code-config volume (shared across desks on this host)." | tee -a "$LOG_FILE"
+    echo "  The supervisor loop below will keep failing until that login is done." | tee -a "$LOG_FILE"
 fi
 
 while true; do
