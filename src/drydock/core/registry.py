@@ -41,6 +41,58 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
+V2_WORKSPACE_COLUMNS = (
+    ("parent_desk_id", "TEXT DEFAULT NULL"),
+    ("delegatable_firewall_domains", "TEXT DEFAULT '[]'"),
+    ("delegatable_secrets", "TEXT DEFAULT '[]'"),
+    ("capabilities", "TEXT DEFAULT '[]'"),
+)
+
+V2_TABLES = """
+CREATE TABLE IF NOT EXISTS leases (
+    lease_id            TEXT PRIMARY KEY,
+    desk_id             TEXT NOT NULL,
+    type                TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    issued_at           TIMESTAMP NOT NULL,
+    expiry              TIMESTAMP NULL,
+    issuer              TEXT NOT NULL,
+    revoked             INTEGER NOT NULL DEFAULT 0,
+    revocation_reason   TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tokens (
+    desk_id             TEXT PRIMARY KEY,
+    token_sha256        TEXT NOT NULL,
+    issued_at           TIMESTAMP NOT NULL,
+    rotated_at          TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS task_log (
+    request_id          TEXT PRIMARY KEY,
+    method              TEXT NOT NULL,
+    spec_json           TEXT NOT NULL,
+    status              TEXT NOT NULL CHECK (status IN ('in_progress', 'completed', 'failed')),
+    outcome_json        TEXT NULL,
+    created_at          TIMESTAMP NOT NULL,
+    completed_at        TIMESTAMP NULL
+);
+"""
+
+
+def _migrate_to_v2(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info('workspaces')").fetchall()
+    }
+    for column_name, column_def in V2_WORKSPACE_COLUMNS:
+        if column_name in columns:
+            continue
+        conn.execute(
+            f"ALTER TABLE workspaces ADD COLUMN {column_name} {column_def}"
+        )
+    conn.executescript(V2_TABLES)
+
 
 class Registry:
     def __init__(self, db_path: Path | None = None):
@@ -57,6 +109,8 @@ class Registry:
 
     def _migrate(self):
         self._conn.executescript(SCHEMA)
+        _migrate_to_v2(self._conn)
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
