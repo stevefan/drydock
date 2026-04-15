@@ -18,6 +18,7 @@ This document scopes **V2: single-host daemon, desk-as-first-class, policy + nes
 - **Nested spawn via the daemon.** A desk-occupant asks the daemon to spawn a child; the daemon validates policy and dispatches.
 - **Audit log.** Every daemon action recorded with principal + operation + policy check result.
 - **Bearer-token auth over Tailscale.** Desks receive a token at creation; they present it when talking to the daemon.
+- **Tailnet identity lifecycle.** Daemon authoritatively cleans up the tailnet device record on `DestroyDesk` (closes a v1 gap where `tailscale logout` releases node-side auth but leaves the device record in the tailnet admin). Admin RPC `PruneStaleTailnetDevices` for batch cleanup of orphans. Daemon-level admin token, not a per-desk capability — see [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md).
 
 ## What V2 explicitly does *not* do (belongs in V3)
 
@@ -122,7 +123,9 @@ Before spawning a child, the daemon verifies:
 1. **Firewall narrowness.** `child.firewall_extra_domains ⊆ parent.delegatable_firewall_domains`. A child cannot reach a domain the parent cannot delegate.
 2. **Secret narrowness.** `child.secrets ⊆ parent.delegatable_secrets`. Parent declares which of its secrets it may delegate; children request a subset.
 3. **Capability narrowness.** `child.capabilities ⊆ parent.capabilities`. A parent that cannot spawn grandchildren cannot grant that authority either.
-4. **Resource limits.** Parent has a budget (child count, total CPU/memory); spawning debits it.
+4. **Mount narrowness.** `child.extra_mounts ⊆ parent.extra_mounts`. A child cannot receive a mount the parent itself doesn't have.
+
+*(Resource budgets — child count, CPU/memory caps debited on spawn — were sketched here originally but deferred to V3 per the design-pass trim. V2's forcing function is one monorepo with a handful of children; budget caps are premature. See `v2-design-capability-broker.md` §4.)*
 
 ## Capability primitive: uniform across spawn and occupant
 
