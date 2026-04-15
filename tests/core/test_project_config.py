@@ -63,6 +63,20 @@ class TestLoadProjectConfig:
         assert cfg is not None
         assert cfg.workspace_subdir == 42
 
+    def test_devcontainer_subpath_present(self, tmp_path):
+        (tmp_path / "variant.yaml").write_text(
+            'devcontainer_subpath: ".devcontainer/drydock"\n'
+        )
+        cfg = load_project_config("variant", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.devcontainer_subpath == ".devcontainer/drydock"
+
+    def test_devcontainer_subpath_missing_is_none(self, tmp_path):
+        (tmp_path / "variant.yaml").write_text("repo_path: /srv/code/app\n")
+        cfg = load_project_config("variant", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.devcontainer_subpath is None
+
     def test_secrets_source_rejected_as_unknown(self, tmp_path):
         (tmp_path / "sec.yaml").write_text("repo_path: /code/x\nsecrets_source: vault\n")
         with pytest.raises(WsError) as exc_info:

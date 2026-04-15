@@ -128,3 +128,69 @@ def test_create_propagates_daemon_rpc_error_without_fallback(wsd, monkeypatch):
 
     assert len(task_rows) == 2
     assert {row["status"] for row in task_rows} == {"completed", "failed"}
+
+
+@patch("drydock.cli.create.call_daemon")
+def test_create_only_sends_explicit_devcontainer_subpath_to_daemon(mock_call_daemon, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+
+    repo = tmp_path / "repo-subpath-route"
+    _init_repo(repo)
+
+    mock_call_daemon.return_value = {
+        "desk_id": "ws_desk_subpath_route",
+        "name": "desk-subpath-route",
+        "project": "proj",
+        "branch": "ws/desk-subpath-route",
+        "state": "running",
+        "container_id": "dry-run-1234",
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "create",
+            "proj",
+            "desk-subpath-route",
+            "--repo-path",
+            str(repo),
+            "--devcontainer-subpath",
+            ".devcontainer/drydock",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert mock_call_daemon.call_count == 1
+    assert mock_call_daemon.call_args.args[0] == "CreateDesk"
+    assert mock_call_daemon.call_args.args[1]["devcontainer_subpath"] == ".devcontainer/drydock"
+
+
+@patch("drydock.cli.create.call_daemon")
+def test_create_omits_default_devcontainer_subpath_from_daemon_request(mock_call_daemon, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+
+    repo = tmp_path / "repo-default-route"
+    _init_repo(repo)
+
+    mock_call_daemon.return_value = {
+        "desk_id": "ws_desk_default_route",
+        "name": "desk-default-route",
+        "project": "proj",
+        "branch": "ws/desk-default-route",
+        "state": "running",
+        "container_id": "dry-run-5678",
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "create", "proj", "desk-default-route", "--repo-path", str(repo)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert mock_call_daemon.call_count == 1
+    assert "devcontainer_subpath" not in mock_call_daemon.call_args.args[1]

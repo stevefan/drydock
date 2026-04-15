@@ -29,6 +29,7 @@ from drydock.wsd.server import _RpcError
 logger = logging.getLogger(__name__)
 
 _REQUIRED_PARAMS = ("project", "name")
+DEFAULT_DEVCONTAINER_SUBPATH = ".devcontainer"
 
 
 def create_desk(
@@ -207,6 +208,17 @@ def _validated_spec(params: dict | list | None) -> dict[str, str]:
     if not isinstance(owner, str):
         owner = ""
 
+    devcontainer_subpath = params.get("devcontainer_subpath")
+    if devcontainer_subpath is None:
+        devcontainer_subpath = DEFAULT_DEVCONTAINER_SUBPATH
+    elif not isinstance(devcontainer_subpath, str):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"field": "devcontainer_subpath"},
+        )
+    _validate_devcontainer_subpath(devcontainer_subpath)
+
     firewall_extra_domains = _validated_string_list(
         params.get("firewall_extra_domains"),
         field_name="firewall_extra_domains",
@@ -240,6 +252,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, str]:
         "base_ref": base_ref,
         "image": image,
         "owner": owner,
+        "devcontainer_subpath": devcontainer_subpath,
         "firewall_extra_domains": firewall_extra_domains,
         "secret_entitlements": secret_entitlements,
         "extra_mounts": extra_mounts,
@@ -428,6 +441,16 @@ def _failure(desk_id: str, step: str, error: Exception | str) -> dict[str, str]:
     return {"desk_id": desk_id, "step": step, "error": str(error)}
 
 
+def _validate_devcontainer_subpath(devcontainer_subpath: str) -> None:
+    subpath = Path(devcontainer_subpath)
+    if subpath.is_absolute() or ".." in subpath.parts:
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"reason": "devcontainer_subpath must be relative and contain no .."},
+        )
+
+
 def _perform_create(
     *,
     registry: Registry,
@@ -445,7 +468,10 @@ def _perform_create(
         base_ref=str(spec["base_ref"]),
         image=str(spec["image"]),
         owner=str(spec["owner"]),
-        config={"extra_mounts": list(spec["extra_mounts"])},
+        config={
+            "devcontainer_subpath": str(spec["devcontainer_subpath"]),
+            "extra_mounts": list(spec["extra_mounts"]),
+        },
     )
     ws = registry.create_workspace(ws)
     registry.update_desk_delegations(
@@ -461,13 +487,14 @@ def _perform_create(
     ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))
 
     workspace_folder = ws.worktree_path
-    devcontainer_json = Path(workspace_folder) / ".devcontainer" / "devcontainer.json"
+    devcontainer_subpath = str(spec["devcontainer_subpath"])
+    devcontainer_json = Path(workspace_folder) / devcontainer_subpath / "devcontainer.json"
     if not devcontainer_json.exists():
         registry.update_state(ws.name, "error")
         raise WsError(
             f"devcontainer.json not found at {devcontainer_json}",
             fix=(
-                f"Create {workspace_folder}/.devcontainer/devcontainer.json, "
+                f"Create {devcontainer_json}, "
                 "or use a repo that already has one"
             ),
         )
@@ -481,7 +508,11 @@ def _perform_create(
     )
     ws = registry.update_workspace(
         ws.name,
-        config={"overlay_path": str(overlay_path), "extra_mounts": list(spec["extra_mounts"])},
+        config={
+            "overlay_path": str(overlay_path),
+            "devcontainer_subpath": devcontainer_subpath,
+            "extra_mounts": list(spec["extra_mounts"]),
+        },
     )
 
     devc = DevcontainerCLI(dry_run=dry_run)

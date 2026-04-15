@@ -11,6 +11,7 @@ KNOWN_KEYS = {
     "repo_path",
     "image",
     "workspace_subdir",
+    "devcontainer_subpath",
     "tailscale_hostname",
     "tailscale_serve_port",
     "tailscale_authkey_env_var",
@@ -28,6 +29,7 @@ class ProjectConfig:
     repo_path: str | None = None
     image: str | None = None
     workspace_subdir: str | None = None
+    devcontainer_subpath: str | None = None
     tailscale_hostname: str | None = None
     tailscale_serve_port: int | None = None
     tailscale_authkey_env_var: str | None = None
@@ -78,6 +80,7 @@ def load_project_config(
         repo_path=raw.get("repo_path"),
         image=raw.get("image"),
         workspace_subdir=raw.get("workspace_subdir"),
+        devcontainer_subpath=raw.get("devcontainer_subpath"),
         tailscale_hostname=raw.get("tailscale_hostname"),
         tailscale_serve_port=raw.get("tailscale_serve_port"),
         tailscale_authkey_env_var=raw.get("tailscale_authkey_env_var"),

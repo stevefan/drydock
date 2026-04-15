@@ -143,6 +143,56 @@ def test_workspace_subdir_threads_to_workspace_folder(MockCLI, tmp_path, monkeyp
     assert workspace_folder.endswith("apps/frontend")
 
 
+@patch("drydock.cli.create.log_event")
+@patch("drydock.cli.create.write_overlay")
+@patch("drydock.cli.create.DevcontainerCLI")
+def test_devcontainer_subpath_selects_alternate_devcontainer_dir(MockCLI, mock_write_overlay, _mock_log_event, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = tmp_path / "repo"
+    _init_repo(repo, devcontainer=False)
+    devc_dir = repo / ".devcontainer" / "drydock"
+    devc_dir.mkdir(parents=True)
+    (devc_dir / "devcontainer.json").write_text("{}")
+
+    mock_devc = MockCLI.return_value
+    mock_devc.up.return_value = {"container_id": "ctr-subpath", "containerId": "ctr-subpath"}
+    overlay_path = tmp_path / ".drydock" / "overlays" / "ws-subpath.devcontainer.json"
+    mock_write_overlay.return_value = overlay_path
+
+    from drydock.core.checkout import create_checkout as real_create_checkout
+
+    def patched_create_checkout(ws, base_dir=None):
+        result = real_create_checkout(ws, base_dir=base_dir)
+        variant_dir = result / ".devcontainer" / "drydock"
+        variant_dir.mkdir(parents=True, exist_ok=True)
+        (variant_dir / "devcontainer.json").write_text("{}")
+        return result
+
+    monkeypatch.setattr("drydock.cli.create.create_checkout", patched_create_checkout)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "create",
+            "proj",
+            "ws-subpath",
+            "--repo-path",
+            str(repo),
+            "--devcontainer-subpath",
+            ".devcontainer/drydock",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    assert mock_write_overlay.call_count == 1
+    base_devcontainer_path = mock_write_overlay.call_args.kwargs["base_devcontainer_path"]
+    assert str(base_devcontainer_path).endswith(
+        "/.devcontainer/drydock/devcontainer.json"
+    )
+
+
 @patch("drydock.cli.create.DevcontainerCLI")
 def test_preflight_raises_when_devcontainer_json_missing(MockCLI, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))

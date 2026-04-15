@@ -16,6 +16,7 @@ from drydock.core.project_config import load_project_config
 from drydock.core.workspace import Workspace
 
 logger = logging.getLogger(__name__)
+DEFAULT_DEVCONTAINER_SUBPATH = ".devcontainer"
 
 
 def _ensure_gitconfig_stub() -> None:
@@ -41,10 +42,11 @@ def _ensure_gitconfig_stub() -> None:
 @click.option("--branch", default=None, help="Branch name (default: derived from name)")
 @click.option("--repo-path", default=None, help="Path to project repo")
 @click.option("--image", default=None, help="Container image override")
+@click.option("--devcontainer-subpath", default=None, help="Relative path to the devcontainer config directory")
 @click.option("--owner", default=None, help="Workspace owner (user profile name)")
 @click.option("--force", is_flag=True, help="Destroy existing container and rebuild fresh")
 @click.pass_context
-def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force):
+def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_subpath, owner, force):
     """Create a new workspace.
 
     PROJECT is the project name. NAME is an optional workspace name
@@ -75,6 +77,16 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
         image = (proj_cfg.image if proj_cfg and proj_cfg.image else "")
 
     workspace_subdir = (proj_cfg.workspace_subdir if proj_cfg and proj_cfg.workspace_subdir else "")
+    devcontainer_subpath = (
+        devcontainer_subpath
+        if devcontainer_subpath is not None
+        else (
+            proj_cfg.devcontainer_subpath
+            if proj_cfg and proj_cfg.devcontainer_subpath is not None
+            else DEFAULT_DEVCONTAINER_SUBPATH
+        )
+    )
+    _validate_devcontainer_subpath(devcontainer_subpath)
 
     if dry_run:
         existing = registry.get_workspace(name)
@@ -148,6 +160,8 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
         "image": image,
         "owner": owner or "",
     }
+    if ctx.get_parameter_source("devcontainer_subpath") != click.core.ParameterSource.DEFAULT:
+        daemon_params["devcontainer_subpath"] = devcontainer_subpath
     if force:
         try:
             logger.info("cli: routing via daemon")
@@ -266,12 +280,15 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
     )
 
     # Preflight: verify devcontainer.json exists before invoking devcontainer CLI
-    devcontainer_json = Path(workspace_folder) / ".devcontainer" / "devcontainer.json"
+    devcontainer_json = Path(workspace_folder) / devcontainer_subpath / "devcontainer.json"
     if not devcontainer_json.exists():
         registry.update_state(ws.name, "error")
         raise WsError(
             f"devcontainer.json not found at {devcontainer_json}",
-            fix=f"Create {workspace_folder}/.devcontainer/devcontainer.json, or set a different workspace_subdir in the project YAML",
+            fix=(
+                f"Create {devcontainer_json}, or set a different workspace_subdir "
+                "or devcontainer_subpath in the project YAML"
+            ),
         )
 
     # Generate composite devcontainer config (base + overlay merged)
@@ -345,6 +362,15 @@ def _overlay_from_project(proj_cfg) -> OverlayConfig:
     if proj_cfg.claude_profile is not None:
         kwargs["claude_profile"] = proj_cfg.claude_profile
     return OverlayConfig(**kwargs)
+
+
+def _validate_devcontainer_subpath(devcontainer_subpath: str) -> None:
+    subpath = Path(devcontainer_subpath)
+    if subpath.is_absolute() or ".." in subpath.parts:
+        raise WsError(
+            "devcontainer_subpath must be relative and contain no ..",
+            fix="Pass a relative path like '.devcontainer' or '.devcontainer/drydock'.",
+        )
 
 
 def _workspace_output(ws: Workspace) -> dict:

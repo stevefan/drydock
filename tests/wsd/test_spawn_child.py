@@ -21,6 +21,16 @@ def _init_repo(path: Path, *, with_devcontainer: bool = True) -> None:
     subprocess.run(["git", "commit", "-m", "initial"], cwd=path, capture_output=True, check=True)
 
 
+def _add_devcontainer_variant(path: Path, subpath: str) -> None:
+    variant_dir = path / subpath
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "devcontainer.json").write_text("{}")
+    # Must commit so create_checkout's clone picks it up — same gotcha
+    # surfaced by the asi repo's untracked .devcontainer/.
+    subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", f"add {subpath}"], cwd=path, capture_output=True, check=True)
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -235,3 +245,46 @@ def test_spawn_child_idempotent_by_request_id(wsd):
     assert task_count == 1
     assert task["method"] == "SpawnChild"
     assert json.loads(task["outcome_json"]) == first
+
+
+def test_spawn_child_with_devcontainer_subpath(wsd):
+    parent, token = _create_parent(
+        wsd,
+        name="parent-subpath",
+        request_id="parent-subpath",
+        capabilities=["spawn_children"],
+        domains=["example.com"],
+    )
+    del parent
+
+    child_repo = wsd.home / "repo-parent-subpath"
+    (child_repo / ".devcontainer" / "devcontainer.json").unlink()
+    _add_devcontainer_variant(child_repo, ".devcontainer/drydock")
+
+    response = wsd.call_rpc(
+        "SpawnChild",
+        params={
+            "project": "proj",
+            "name": "child-subpath",
+            "repo_path": str(child_repo),
+            "devcontainer_subpath": ".devcontainer/drydock",
+        },
+        request_id="spawn-subpath",
+        auth=token,
+    )
+    result = response["result"]
+
+    assert result["state"] == "running"
+
+    conn = _connect(wsd.registry_path)
+    workspace = conn.execute(
+        "SELECT config, worktree_path FROM workspaces WHERE name = ?",
+        ("child-subpath",),
+    ).fetchone()
+    conn.close()
+
+    assert workspace is not None
+    config = json.loads(workspace["config"])
+    assert config["devcontainer_subpath"] == ".devcontainer/drydock"
+    expected_path = Path(workspace["worktree_path"]) / ".devcontainer" / "drydock" / "devcontainer.json"
+    assert expected_path.exists()

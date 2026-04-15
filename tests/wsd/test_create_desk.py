@@ -21,6 +21,16 @@ def _init_repo(path: Path, *, with_devcontainer: bool = True) -> None:
     subprocess.run(["git", "commit", "-m", "initial"], cwd=path, capture_output=True, check=True)
 
 
+def _add_devcontainer_variant(path: Path, subpath: str) -> None:
+    variant_dir = path / subpath
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "devcontainer.json").write_text("{}")
+    # Must commit so create_checkout's clone picks it up — same gotcha
+    # surfaced by the asi repo's untracked .devcontainer/.
+    subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", f"add {subpath}"], cwd=path, capture_output=True, check=True)
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -136,3 +146,78 @@ def test_create_desk_persists_task_log_failure(wsd):
     assert cached_error["message"] == "create_desk_failed"
     assert "fix" in cached_error["data"]
     conn.close()
+
+
+def test_create_desk_with_devcontainer_subpath(wsd):
+    repo = wsd.home / "repo-subpath"
+    _init_repo(repo, with_devcontainer=False)
+    _add_devcontainer_variant(repo, ".devcontainer/drydock")
+
+    response = wsd.call_rpc(
+        "CreateDesk",
+        params={
+            "project": "proj",
+            "name": "desk-subpath",
+            "repo_path": str(repo),
+            "devcontainer_subpath": ".devcontainer/drydock",
+        },
+        request_id="req-subpath",
+    )
+    result = response["result"]
+
+    assert result["state"] == "running"
+
+    conn = _connect(wsd.registry_path)
+    workspace = conn.execute(
+        "SELECT config, worktree_path FROM workspaces WHERE name = ?",
+        ("desk-subpath",),
+    ).fetchone()
+    conn.close()
+
+    assert workspace is not None
+    config = json.loads(workspace["config"])
+    assert config["devcontainer_subpath"] == ".devcontainer/drydock"
+    expected_path = Path(workspace["worktree_path"]) / ".devcontainer" / "drydock" / "devcontainer.json"
+    assert expected_path.exists()
+
+
+def test_create_desk_rejects_absolute_devcontainer_subpath(wsd):
+    repo = wsd.home / "repo-absolute"
+    _init_repo(repo)
+
+    response = wsd.call_rpc(
+        "CreateDesk",
+        params={
+            "project": "proj",
+            "name": "desk-absolute",
+            "repo_path": str(repo),
+            "devcontainer_subpath": "/etc",
+        },
+        request_id="req-absolute",
+    )
+    error = response["error"]
+
+    assert error["code"] == -32602
+    assert error["message"] == "invalid_params"
+    assert error["data"]["reason"] == "devcontainer_subpath must be relative and contain no .."
+
+
+def test_create_desk_rejects_dotdot_in_devcontainer_subpath(wsd):
+    repo = wsd.home / "repo-dotdot"
+    _init_repo(repo)
+
+    response = wsd.call_rpc(
+        "CreateDesk",
+        params={
+            "project": "proj",
+            "name": "desk-dotdot",
+            "repo_path": str(repo),
+            "devcontainer_subpath": "../escape",
+        },
+        request_id="req-dotdot",
+    )
+    error = response["error"]
+
+    assert error["code"] == -32602
+    assert error["message"] == "invalid_params"
+    assert error["data"]["reason"] == "devcontainer_subpath must be relative and contain no .."
