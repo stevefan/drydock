@@ -10,8 +10,45 @@ from drydock.core import WsError
 from drydock.core.audit import log_event
 from drydock.core.overlay import remove_overlay
 from drydock.core.checkout import remove_checkout
+from drydock.core import tailnet as tailnet_api
 
 logger = logging.getLogger(__name__)
+
+
+def _delete_tailnet_device_best_effort(ws):
+    creds = tailnet_api.load_admin_credentials()
+    if creds is None:
+        logger.info("No tailscale admin token configured; skipping device delete for %s", ws.id)
+        return
+    token, tnet = creds
+    hostname = ws.config.get("tailscale_hostname") or ws.id
+    try:
+        devices = tailnet_api.find_devices(tnet, token)
+        device = tailnet_api.find_device_by_hostname(hostname, devices)
+        if device is None:
+            logger.info("No tailnet device matches hostname %s; nothing to delete", hostname)
+            return
+        device_id = device.get("id", "")
+        tailnet_api.delete_tailnet_device(device_id, token)
+        log_event(
+            "tailnet.device_deleted",
+            ws.id,
+            extra={"hostname": hostname, "device_id": device_id},
+        )
+    except WsError as e:
+        logger.warning("Tailnet device delete failed for %s: %s", ws.id, e.message)
+        log_event(
+            "tailnet.device_delete_failed",
+            ws.id,
+            extra={"hostname": hostname, "error": e.message},
+        )
+    except Exception as e:
+        logger.warning("Unexpected tailnet delete error for %s: %s", ws.id, e)
+        log_event(
+            "tailnet.device_delete_failed",
+            ws.id,
+            extra={"hostname": hostname, "error": str(e)},
+        )
 
 
 @click.command()
@@ -92,6 +129,12 @@ def destroy(ctx, name, force):
 
     log_event("workspace.destroyed", ws.id)
     registry.delete_workspace(name)
+
+    # Best-effort tailnet device-record cleanup. Failure here does not roll
+    # back destroy — workspace is gone from drydock's state regardless; an
+    # orphan tailnet record is recoverable via `ws tailnet prune --apply`.
+    # See docs/v2-design-tailnet-identity.md §5.1.
+    _delete_tailnet_device_best_effort(ws)
 
     out.success(
         {"destroyed": name},

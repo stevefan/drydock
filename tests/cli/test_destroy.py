@@ -163,3 +163,44 @@ class TestDestroyContainerStop:
         result = _invoke_destroy(env)
         assert result.exit_code == 0
         mock_devc.stop.assert_called_once_with(container_id="cid_abc")
+
+
+class TestDestroyTailnetDeviceDelete:
+    # Contract: when admin credentials are configured, destroy calls the
+    # tailnet API to remove the device record. This is the v1.x mechanism
+    # for reclaiming ghost hostnames (e.g. `auction-crawl`) — the whole
+    # reason this backport exists.
+    @patch("drydock.cli.destroy.tailnet_api")
+    def test_deletes_device_when_credentials_present(self, mock_tn, env):
+        mock_tn.load_admin_credentials.return_value = ("tok", "example.ts.net")
+        mock_tn.find_devices.return_value = [{"id": "dev-1", "hostname": "ws_test_ws"}]
+        mock_tn.find_device_by_hostname.return_value = {"id": "dev-1", "hostname": "ws_test_ws"}
+
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        mock_tn.delete_tailnet_device.assert_called_once_with("dev-1", "tok")
+
+    # Contract: absence of credentials is a silent no-op, not an error.
+    # This preserves v1 behavior for users who haven't opted into tailnet
+    # identity cleanup (design §4, §7 "no token configured" row).
+    @patch("drydock.cli.destroy.tailnet_api")
+    def test_skips_delete_when_credentials_absent(self, mock_tn, env):
+        mock_tn.load_admin_credentials.return_value = None
+
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        mock_tn.delete_tailnet_device.assert_not_called()
+        mock_tn.find_devices.assert_not_called()
+
+    # Contract: tailnet API failure must NOT roll back destroy. The
+    # workspace is already gone from drydock's registry; the orphan record
+    # is recoverable via `ws tailnet prune`. Audit captures the failure.
+    @patch("drydock.cli.destroy.tailnet_api")
+    def test_tailnet_failure_does_not_block_destroy(self, mock_tn, env):
+        from drydock.core import WsError
+        mock_tn.load_admin_credentials.return_value = ("tok", "example.ts.net")
+        mock_tn.find_devices.side_effect = WsError("API down", fix="retry")
+
+        result = _invoke_destroy(env)
+        assert result.exit_code == 0
+        assert env["registry"].get_workspace("test-ws") is None
