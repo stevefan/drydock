@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from drydock.core.registry import Registry
+from drydock.wsd.recovery import recover_in_progress
 
 logger = logging.getLogger(__name__)
 _JSON_RPC_VERSION = "2.0"
@@ -259,6 +260,18 @@ def serve(socket_path: Path, registry_path: Path | None, dry_run: bool) -> None:
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():
         socket_path.unlink()
+    if _REGISTRY_PATH is not None:
+        try:
+            report = recover_in_progress(_REGISTRY_PATH)
+        except Exception:
+            logger.exception("wsd: startup recovery failed for %s", _REGISTRY_PATH)
+            raise
+        logger.info(
+            "wsd: recovery report — completed=%d rolled_back=%d unknown_method=%d",
+            report.completed,
+            report.rolled_back,
+            report.unknown_method,
+        )
     with _Server(str(socket_path), _Handler) as server:
         logger.info("wsd: listening on %s", socket_path)
         try:
