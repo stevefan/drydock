@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     serve(
         Path(args.socket),
         Path(args.registry) if args.registry else None,
+        _secrets_root_from_env(),
         _env_truthy(os.environ.get("DRYDOCK_WSD_DRY_RUN")),
     )
     return 0
@@ -59,6 +60,13 @@ def _env_truthy(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _secrets_root_from_env() -> Path:
+    value = os.environ.get("DRYDOCK_SECRETS_ROOT")
+    if value:
+        return Path(value)
+    return Path.home() / ".drydock" / "secrets"
 
 
 if __name__ == "__main__":

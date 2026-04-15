@@ -21,11 +21,13 @@ from pathlib import Path
 from typing import Any
 
 from drydock.core.registry import Registry
+from drydock.wsd.auth import validate_token
 from drydock.wsd.recovery import recover_in_progress
 
 logger = logging.getLogger(__name__)
 _JSON_RPC_VERSION = "2.0"
 _REGISTRY_PATH: Path | None = None
+_SECRETS_ROOT: Path | None = None
 _DRY_RUN = False
 
 
@@ -35,14 +37,32 @@ class _RpcError(ValueError):
     message: str
     data: object | None = None
 
-def _health(params: dict | list | None, request_id: str | int | None) -> dict[str, object]:
+
+@dataclass(frozen=True)
+class MethodSpec:
+    handler: Callable[[dict | list | None, str | int | None, str | None], Any]
+    requires_auth: bool
+
+
+def _health(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
     del params
     del request_id
+    del caller_desk_id
     return {"ok": True, "pid": os.getpid(), "version": "v2-slice1b"}
 
 
-def _create_desk(params: dict | list | None, request_id: str | int | None) -> dict[str, object]:
+def _create_desk(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
     if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    if _SECRETS_ROOT is None:
         raise _RpcError(code=-32603, message="Internal error")
     if request_id is None:
         raise _RpcError(
@@ -50,6 +70,7 @@ def _create_desk(params: dict | list | None, request_id: str | int | None) -> di
             message="Invalid Request",
             data={"reason": "request_id_required"},
         )
+    del caller_desk_id
 
     request_key = str(request_id)
     registry = Registry(db_path=_REGISTRY_PATH)
@@ -86,7 +107,14 @@ def _create_desk(params: dict | list | None, request_id: str | int | None) -> di
 
         try:
             from drydock.wsd.handlers import create_desk
-            result = create_desk(params, registry_path=_REGISTRY_PATH, dry_run=_DRY_RUN)
+            result = create_desk(
+                params,
+                request_id,
+                None,
+                registry_path=_REGISTRY_PATH,
+                secrets_root=_SECRETS_ROOT,
+                dry_run=_DRY_RUN,
+            )
         except _RpcError as exc:
             error = {"code": exc.code, "message": exc.message}
             if exc.data is not None:
@@ -98,6 +126,16 @@ def _create_desk(params: dict | list | None, request_id: str | int | None) -> di
         return result
     finally:
         registry.close()
+
+
+def _whoami(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
+    from drydock.wsd.handlers import whoami
+
+    return whoami(params, request_id, caller_desk_id)
 
 
 def _finish_task_log(
@@ -140,9 +178,10 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-_METHODS: dict[str, Callable[[dict | list | None, str | int | None], Any]] = {
-    "CreateDesk": _create_desk,
-    "wsd.health": _health,
+_METHODS: dict[str, MethodSpec] = {
+    "CreateDesk": MethodSpec(handler=_create_desk, requires_auth=False),
+    "wsd.health": MethodSpec(handler=_health, requires_auth=False),
+    "wsd.whoami": MethodSpec(handler=_whoami, requires_auth=True),
 }
 
 
@@ -163,7 +202,9 @@ def _success_response(request_id: str | int | None, result: Any) -> dict[str, ob
     return {"jsonrpc": _JSON_RPC_VERSION, "id": request_id, "result": result}
 
 
-def _parse_request(payload: object) -> tuple[str, dict | list | None, str | int | None, bool]:
+def _parse_request(
+    payload: object,
+) -> tuple[str, dict | list | None, str | int | None, str | None, bool]:
     if not isinstance(payload, dict):
         raise _RpcError(code=-32600, message="Invalid Request")
 
@@ -179,8 +220,12 @@ def _parse_request(payload: object) -> tuple[str, dict | list | None, str | int 
     if params is not None and not isinstance(params, (dict, list)):
         raise _RpcError(code=-32600, message="Invalid Request")
 
+    auth = payload.get("auth")
+    if auth is not None and not isinstance(auth, str):
+        raise _RpcError(code=-32600, message="Invalid Request")
+
     is_notification = "id" not in payload
-    return method, params, request_id, is_notification
+    return method, params, request_id, auth, is_notification
 
 
 class _Handler(socketserver.StreamRequestHandler):
@@ -203,7 +248,7 @@ class _Handler(socketserver.StreamRequestHandler):
 
     def _dispatch(self, payload: object) -> dict[str, object] | None:
         try:
-            method_name, params, request_id, is_notification = _parse_request(payload)
+            method_name, params, request_id, auth, is_notification = _parse_request(payload)
         except _RpcError as exc:
             return _error_response(
                 None,
@@ -215,8 +260,8 @@ class _Handler(socketserver.StreamRequestHandler):
         if is_notification:
             return None
 
-        handler = _METHODS.get(method_name)
-        if handler is None:
+        spec = _METHODS.get(method_name)
+        if spec is None:
             return _error_response(
                 request_id,
                 code=-32601,
@@ -224,7 +269,8 @@ class _Handler(socketserver.StreamRequestHandler):
             )
 
         try:
-            result = handler(params, request_id)
+            caller_desk_id = self._resolve_caller(spec, auth)
+            result = spec.handler(params, request_id, caller_desk_id)
         except _RpcError as exc:
             return _error_response(
                 request_id,
@@ -241,21 +287,47 @@ class _Handler(socketserver.StreamRequestHandler):
             )
         return _success_response(request_id, result)
 
+    def _resolve_caller(self, spec: MethodSpec, auth: str | None) -> str | None:
+        if _REGISTRY_PATH is None:
+            raise _RpcError(code=-32603, message="Internal error")
+        if auth is None:
+            if spec.requires_auth:
+                raise _RpcError(
+                    code=-32004,
+                    message="unauthenticated",
+                    data={"reason": "no_token"},
+                )
+            return None
+
+        registry = Registry(db_path=_REGISTRY_PATH)
+        try:
+            caller_desk_id = validate_token(auth, registry)
+        finally:
+            registry.close()
+        if caller_desk_id is None and spec.requires_auth:
+            raise _RpcError(
+                code=-32004,
+                message="unauthenticated",
+                data={"reason": "invalid_token"},
+            )
+        return caller_desk_id
+
 
 class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
     allow_reuse_address = True
 
 
-def serve(socket_path: Path, registry_path: Path | None, dry_run: bool) -> None:
+def serve(socket_path: Path, registry_path: Path | None, secrets_root: Path, dry_run: bool) -> None:
     """Bind the Unix socket and serve until interrupted.
 
     Removes a stale socket file if one exists at `socket_path`. Creates
     parent directories if missing. Cleans up the socket file on exit.
     """
-    global _REGISTRY_PATH, _DRY_RUN
+    global _REGISTRY_PATH, _SECRETS_ROOT, _DRY_RUN
     socket_path = Path(socket_path)
     _REGISTRY_PATH = registry_path or (Path.home() / ".drydock" / "registry.db")
+    _SECRETS_ROOT = Path(secrets_root)
     _DRY_RUN = dry_run
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():

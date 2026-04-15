@@ -219,6 +219,39 @@ class Registry:
         )
         self._conn.commit()
 
+    def insert_token(self, desk_id: str, token_sha256: str, issued_at: datetime) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO tokens (desk_id, token_sha256, issued_at, rotated_at)
+            VALUES (?, ?, ?, NULL)
+            ON CONFLICT(desk_id) DO NOTHING
+            """,
+            (desk_id, token_sha256, issued_at.isoformat()),
+        )
+        self._conn.commit()
+
+    def find_desk_by_token_hash(self, token_sha256: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT desk_id FROM tokens WHERE token_sha256 = ?",
+            (token_sha256,),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["desk_id"])
+
+    def get_token_info(self, desk_id: str) -> dict | None:
+        row = self._conn.execute(
+            """
+            SELECT desk_id, token_sha256, issued_at, rotated_at
+            FROM tokens
+            WHERE desk_id = ?
+            """,
+            (desk_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
     def _row_to_workspace(self, row: sqlite3.Row) -> Workspace:
         d = dict(row)
         d["config"] = json.loads(d["config"])

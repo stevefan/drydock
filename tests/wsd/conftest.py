@@ -39,10 +39,11 @@ def _wait_for_socket(path: Path, proc: subprocess.Popen, timeout: float = 5.0) -
 class WsdClient:
     """Minimal blocking client for newline-delimited JSON over a Unix socket."""
 
-    def __init__(self, socket_path: Path, registry_path: Path, home: Path):
+    def __init__(self, socket_path: Path, registry_path: Path, home: Path, secrets_root: Path):
         self.socket_path = socket_path
         self.registry_path = registry_path
         self.home = home
+        self.secrets_root = secrets_root
 
     def call(self, payload: dict, timeout: float = 5.0) -> dict:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -65,12 +66,15 @@ class WsdClient:
         method: str,
         params: dict | list | None = None,
         request_id: str | int | None = "test-1",
+        auth: str | None = None,
     ) -> dict:
         payload: dict[str, object] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
         if request_id is not None:
             payload["id"] = request_id
+        if auth is not None:
+            payload["auth"] = auth
         response = self.call(payload)
         if "result" in response:
             return {"result": response["result"]}
@@ -86,9 +90,11 @@ def wsd():
     tmp = Path(tempfile.mkdtemp(prefix="wsd-", dir="/tmp"))
     sock = tmp / "s"  # 1-char filename keeps path well under limit
     registry = tmp / "r.db"
+    secrets_root = tmp / "secrets"
     Registry(db_path=registry).close()
     env = os.environ.copy()
     env["DRYDOCK_WSD_DRY_RUN"] = "1"
+    env["DRYDOCK_SECRETS_ROOT"] = str(secrets_root)
     env["HOME"] = str(tmp)
     proc = subprocess.Popen(
         [
@@ -106,7 +112,7 @@ def wsd():
     )
     try:
         _wait_for_socket(sock, proc, timeout=5.0)
-        yield WsdClient(sock, registry, tmp)
+        yield WsdClient(sock, registry, tmp, secrets_root)
     finally:
         proc.terminate()
         try:

@@ -12,6 +12,7 @@ from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.registry import Registry
 from drydock.core.workspace import Workspace
+from drydock.wsd.auth import issue_token_for_desk
 from drydock.wsd.server import _RpcError
 
 logger = logging.getLogger(__name__)
@@ -19,10 +20,15 @@ logger = logging.getLogger(__name__)
 _REQUIRED_PARAMS = ("project", "name")
 def create_desk(
     params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
     *,
     registry_path: Path,
+    secrets_root: Path,
     dry_run: bool,
 ) -> dict:
+    del request_id
+    del caller_desk_id
     spec = _validated_spec(params)
     registry = Registry(db_path=registry_path)
     try:
@@ -73,6 +79,7 @@ def create_desk(
         if not dry_run:
             devc.check_available()
 
+        issue_token_for_desk(ws.id, secrets_root=secrets_root, registry=registry)
         ws = registry.update_state(ws.name, "provisioning")
         try:
             up_result = devc.up(
@@ -105,6 +112,16 @@ def create_desk(
         raise _rpc_error_from_ws_error(exc) from exc
     finally:
         registry.close()
+
+
+def whoami(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, str | None]:
+    del params
+    del request_id
+    return {"desk_id": caller_desk_id}
 
 
 def _validated_spec(params: dict | list | None) -> dict[str, str]:
