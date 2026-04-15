@@ -1,11 +1,12 @@
 """Git checkout (standalone clone) for workspace isolation."""
 
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
-from . import WsError
+from . import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID, WsError
 from .workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,28 @@ def create_checkout(ws: Workspace, base_dir: Path | None = None) -> Path:
 
     _rewrite_origin(repo, dest)
 
+    _chown_to_container_user_if_root(dest)
+
     return dest
+
+
+def _chown_to_container_user_if_root(path: Path) -> None:
+    """Recursively chown the worktree to the container's remoteUser uid.
+
+    Only meaningful when ws runs as root on a Linux host: bind-mounts
+    preserve real uid/gid, so the container's `node` user (uid 1000) needs
+    to own the worktree to write inside it (e.g. pip editable install
+    creating .egg-info, npm installing into node_modules). When ws runs as
+    a normal user (typically macOS via Docker Desktop), uid translation
+    happens at the mount layer and chown would fail anyway — skip.
+    """
+    if os.geteuid() != 0:
+        return
+    for p in [path, *path.rglob("*")]:
+        try:
+            os.chown(p, CONTAINER_REMOTE_UID, CONTAINER_REMOTE_GID, follow_symlinks=False)
+        except OSError as exc:
+            logger.warning("chown failed for %s: %s", p, exc)
 
 
 def remove_checkout(repo_path: str, checkout_path: str) -> None:

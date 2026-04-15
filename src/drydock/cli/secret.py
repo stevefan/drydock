@@ -11,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from drydock.core import WsError
+from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID, WsError
 
 # ws_id flows into ssh/rsync remote-command strings; anything outside this
 # character set would enable command injection on the remote host.
@@ -64,6 +64,8 @@ def _write_secret_atomic(secret_dir: Path, key_name: str, value: bytes) -> Path:
             f.write(value)
         os.chmod(tmp_name, 0o400)
         os.rename(tmp_name, str(target))
+        if os.geteuid() == 0:
+            os.chown(target, CONTAINER_REMOTE_UID, CONTAINER_REMOTE_GID)
     except BaseException:
         try:
             os.unlink(tmp_name)
@@ -111,6 +113,8 @@ def secret_set(ctx, workspace, key_name):
     secret_dir = _ws_secret_dir(ws_id)
     secret_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(secret_dir, 0o700)
+    if os.geteuid() == 0:
+        os.chown(secret_dir, CONTAINER_REMOTE_UID, CONTAINER_REMOTE_GID)
 
     secret_path = _write_secret_atomic(secret_dir, key_name, value)
 
@@ -225,16 +229,24 @@ def secret_push(ctx, workspace, ssh_host):
     ]
 
     mkdir_cmd = ["ssh", ssh_host, f"mkdir -p -m 700 ~/.drydock/secrets/{ws_id}"]
+    # Receiver-side chown after rsync: rsync from a non-root sender can't set
+    # remote ownership, so we do it explicitly. Required on Linux receivers
+    # where bind-mounts preserve uid; harmless if the receiver is macOS.
+    chown_cmd = [
+        "ssh", ssh_host,
+        f"chown -R {CONTAINER_REMOTE_UID}:{CONTAINER_REMOTE_GID} ~/.drydock/secrets/{ws_id}",
+    ]
 
     if dry_run:
         out.success(
-            {"workspace": workspace, "ssh_host": ssh_host, "mkdir_cmd": mkdir_cmd, "rsync_cmd": cmd, "dry_run": True},
-            human_lines=[f"[dry-run] Would run:", f"  {' '.join(mkdir_cmd)}", f"  {' '.join(cmd)}"],
+            {"workspace": workspace, "ssh_host": ssh_host, "mkdir_cmd": mkdir_cmd, "rsync_cmd": cmd, "chown_cmd": chown_cmd, "dry_run": True},
+            human_lines=[f"[dry-run] Would run:", f"  {' '.join(mkdir_cmd)}", f"  {' '.join(cmd)}", f"  {' '.join(chown_cmd)}"],
         )
         return
 
     subprocess.run(mkdir_cmd, check=True)
     subprocess.run(cmd, check=True)
+    subprocess.run(chown_cmd, check=True)
 
     out.success(
         {"workspace": workspace, "ssh_host": ssh_host, "synced": True},

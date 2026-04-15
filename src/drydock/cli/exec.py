@@ -23,6 +23,12 @@ def _find_container_id(worktree_path: str) -> str:
     return container_id
 
 
+def _stdin_is_tty() -> bool:
+    """Indirection so tests can patch the TTY check without fighting Click's
+    stdin replacement during CliRunner invocations."""
+    return sys.stdin.isatty()
+
+
 def _read_workspace_folder(overlay_path: str) -> str:
     try:
         with open(overlay_path) as f:
@@ -85,5 +91,5 @@ def exec_cmd(ctx, name, cmd):
     # -i always (attach stdin); -t only when we actually have a TTY.
     # Non-TTY invocations (cron, ssh -T, pipes) must not request a TTY or
     # docker exec fails with "cannot attach stdin to a TTY-enabled container".
-    tty_flag = "-it" if sys.stdin.isatty() else "-i"
+    tty_flag = "-it" if _stdin_is_tty() else "-i"
     os.execvp("docker", ["docker", "exec", tty_flag, "-w", workdir, container_id] + command)

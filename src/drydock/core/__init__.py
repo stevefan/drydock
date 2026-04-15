@@ -2,6 +2,15 @@
 
 from dataclasses import dataclass, field
 
+# drydock-base's remoteUser is `node` (uid 1000). When `ws` runs as root on a
+# Linux host, bind-mounts preserve real uid/gid, so secrets and worktrees must
+# be owned by uid 1000 for the container's `node` user to read/write them. On
+# macOS, Docker Desktop's mount layer does uid translation transparently and
+# the host-side chown is unnecessary (and would fail when ws runs as a normal
+# user). Callers should gate chown calls on `os.geteuid() == 0`.
+CONTAINER_REMOTE_UID = 1000
+CONTAINER_REMOTE_GID = 1000
+
 
 @dataclass
 class WsError(Exception):

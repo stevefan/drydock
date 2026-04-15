@@ -17,6 +17,22 @@ from drydock.core.checkout import create_checkout
 from drydock.core.workspace import Workspace
 
 
+def _ensure_gitconfig_stub() -> None:
+    """Touch ~/.gitconfig if missing so the devcontainer bind-mount succeeds.
+
+    The base devcontainer.json bind-mounts ${HOME}/.gitconfig into the
+    container so in-container git inherits the user's name/email. On a
+    fresh host where git was never configured for this user (common on
+    Linux servers), the file may not exist, and `docker run` hard-fails
+    with "bind source path does not exist". An empty stub is enough to
+    satisfy the mount; users can populate later.
+    """
+    gitconfig = Path.home() / ".gitconfig"
+    if not gitconfig.exists():
+        gitconfig.touch(mode=0o644)
+        logger.info("Created empty %s for devcontainer bind-mount", gitconfig)
+
+
 @click.command()
 @click.argument("project")
 @click.argument("name", required=False, default=None)
@@ -39,6 +55,8 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
 
     if name is None:
         name = project
+
+    _ensure_gitconfig_stub()
 
     if branch is None:
         branch = f"ws/{name}"
