@@ -124,6 +124,14 @@ Before spawning a child, the daemon verifies:
 3. **Capability narrowness.** `child.capabilities ⊆ parent.capabilities`. A parent that cannot spawn grandchildren cannot grant that authority either.
 4. **Resource limits.** Parent has a budget (child count, total CPU/memory); spawning debits it.
 
+## Capability primitive: uniform across spawn and occupant
+
+The narrowness validator above describes one case — parent desk granting a child desk a subset of its authority. The same primitive applies to a second case: a desk granting its *occupant* a narrowed subset for a single operation or session.
+
+Concrete example: a scheduled "smart operator" agent inside a scraper desk may be permitted to edit `sites/` (adapt to site-layout changes) but not `firewall-extras.yaml`, not `secrets/`, not `git push`. That's exactly a narrowness grant — holder = desk's full authority, requester = the occupant's bounded action set.
+
+Parameterize the validator over `holder` and `requester` rather than hardcoding `parent → child desk`. Both cases then use the same code path, the same audit records, and the same reasoning about narrowness. The alternative — a separate in-desk scoping mechanism bolted on later — accumulates divergent edge-case behavior and a muddier audit story.
+
 ## Registry schema additions
 
 New columns on `workspaces`:
