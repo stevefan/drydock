@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 
 import click
 
@@ -65,7 +66,12 @@ def exec_cmd(ctx, name, cmd):
     else:
         workdir = "/workspace"
 
-    container_id = _find_container_id(ws.worktree_path)
+    effective_folder = (
+        os.path.join(ws.worktree_path, ws.workspace_subdir)
+        if ws.workspace_subdir
+        else ws.worktree_path
+    )
+    container_id = _find_container_id(effective_folder)
     if not container_id:
         out.error(
             WsError(
@@ -76,4 +82,8 @@ def exec_cmd(ctx, name, cmd):
         return
 
     command = list(cmd) if cmd else ["bash"]
-    os.execvp("docker", ["docker", "exec", "-it", "-w", workdir, container_id] + command)
+    # -i always (attach stdin); -t only when we actually have a TTY.
+    # Non-TTY invocations (cron, ssh -T, pipes) must not request a TTY or
+    # docker exec fails with "cannot attach stdin to a TTY-enabled container".
+    tty_flag = "-it" if sys.stdin.isatty() else "-i"
+    os.execvp("docker", ["docker", "exec", tty_flag, "-w", workdir, container_id] + command)
