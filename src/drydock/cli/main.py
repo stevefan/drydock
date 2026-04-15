@@ -38,6 +38,7 @@ from drydock.cli.exec import exec_cmd  # noqa: E402
 from drydock.cli.status import status  # noqa: E402
 from drydock.cli.secret import secret  # noqa: E402
 from drydock.cli.tailnet import tailnet  # noqa: E402
+from drydock.cli.host import host  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(list_cmd, name="list")
@@ -49,3 +50,4 @@ cli.add_command(exec_cmd, name="exec")
 cli.add_command(status)
 cli.add_command(secret)
 cli.add_command(tailnet)
+cli.add_command(host)
