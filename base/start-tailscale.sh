@@ -40,14 +40,28 @@ if [ -z "${TAILSCALE_AUTHKEY:-}" ]; then
     done
 fi
 
+# Optional tag advertisement. Set TAILSCALE_ADVERTISE_TAGS=tag:server (or
+# similar) in the project YAML or host env to target a specific ACL rule
+# class. Example: a tailnet with a "ssh accept for tag:server" rule avoids
+# the "check" web-approval prompt that `autogroup:self` rules usually trigger
+# for personal tenants. Note: the tag only sticks if either the auth key
+# was generated with that tag pre-assigned, or the tailnet's tagOwners ACL
+# permits this device's identity to self-advertise it. See
+# ops-personal/tech/Tenant Security Tradeoffs.md for the full story.
+TS_ADVERTISE_TAGS_ARG=""
+if [ -n "${TAILSCALE_ADVERTISE_TAGS:-}" ]; then
+    TS_ADVERTISE_TAGS_ARG="--advertise-tags=${TAILSCALE_ADVERTISE_TAGS}"
+    echo "Advertising tailnet tags: ${TAILSCALE_ADVERTISE_TAGS}" | tee -a "$LOG_FILE"
+fi
+
 # Tailscale failures (invalid key, network hiccup) must not cascade and kill
 # the postStartCommand chain — downstream supervisors (remote-control) still
 # need to launch. Log and continue.
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
-    sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" --authkey="$TAILSCALE_AUTHKEY" 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing without tailnet join" | tee -a "$LOG_FILE"
+    sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" --authkey="$TAILSCALE_AUTHKEY" $TS_ADVERTISE_TAGS_ARG 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing without tailnet join" | tee -a "$LOG_FILE"
 else
     echo "WARNING: No TAILSCALE_AUTHKEY set. You'll need to authenticate manually via the URL below." | tee -a "$LOG_FILE"
-    sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing" | tee -a "$LOG_FILE"
+    sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" $TS_ADVERTISE_TAGS_ARG 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing" | tee -a "$LOG_FILE"
 fi
 
 # Serve the dev server on the tailnet (only meaningful if tailscale up succeeded)

@@ -34,6 +34,7 @@ class OverlayConfig:
     tailscale_hostname: str = ""
     tailscale_authkey: str = ""
     tailscale_serve_port: int = 3000
+    tailscale_advertise_tags: list[str] = field(default_factory=list)
     remote_control_name: str = ""
     extra_env: dict[str, str] = field(default_factory=dict)
     extra_mounts: list[str] = field(default_factory=list)
@@ -151,6 +152,9 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
         env["TAILSCALE_AUTHKEY"] = config.tailscale_authkey
 
     env["TAILSCALE_SERVE_PORT"] = str(config.tailscale_serve_port)
+
+    if config.tailscale_advertise_tags:
+        env["TAILSCALE_ADVERTISE_TAGS"] = ",".join(config.tailscale_advertise_tags)
 
     env["REMOTE_CONTROL_NAME"] = config.remote_control_name or _default_identity(ws)
 

@@ -108,16 +108,30 @@ BASE_DOMAINS=(
     "controlplane.tailscale.com"
     "login.tailscale.com"
     "log.tailscale.io"
-    "derp1.tailscale.com"
-    "derp2.tailscale.com"
-    "derp3.tailscale.com"
-    "derp4.tailscale.com"
-    "derp5.tailscale.com"
+    # Tailscale DERP relays — each region has a primary (numeric) + one or
+    # more letter-suffixed redundant servers that tailscaled rotates through.
+    # In userspace-networking mode, tailscaled reaches DERPs via HTTPS:443, so
+    # the firewall must allow their IPs. Discovered 2026-04-15 that the old
+    # numeric-only list caused inbound tailscale-ssh to hang: the DERP
+    # negotiated for Mac↔container was one of the letter-suffixed ones,
+    # whose IP wasn't whitelisted.
+    # Authoritative map: https://login.tailscale.com/derpmap/default
+    "derp1.tailscale.com"   "derp1a.tailscale.com"
+    "derp2.tailscale.com"   "derp2b.tailscale.com"
+    "derp3.tailscale.com"   "derp3d.tailscale.com"  "derp3e.tailscale.com"  "derp3f.tailscale.com"
+    "derp4.tailscale.com"   "derp4e.tailscale.com"  "derp4f.tailscale.com"
+    "derp5.tailscale.com"   "derp5e.tailscale.com"  "derp5g.tailscale.com"
     "derp6.tailscale.com"
     "derp7.tailscale.com"
     "derp8.tailscale.com"
-    "derp9.tailscale.com"
-    "derp10.tailscale.com"
+    "derp9.tailscale.com"   "derp9d.tailscale.com"
+    "derp10.tailscale.com"  "derp10c.tailscale.com" "derp10d.tailscale.com"
+    "derp11b.tailscale.com" "derp12b.tailscale.com" "derp13b.tailscale.com"
+    "derp14b.tailscale.com" "derp15b.tailscale.com" "derp16d.tailscale.com"
+    "derp17b.tailscale.com" "derp18b.tailscale.com" "derp19b.tailscale.com"
+    "derp20b.tailscale.com" "derp21d.tailscale.com" "derp22a.tailscale.com"
+    "derp23a.tailscale.com" "derp24a.tailscale.com" "derp25a.tailscale.com"
+    "derp26a.tailscale.com" "derp27d.tailscale.com"
 )
 
 # Merge base + project-specific domains
