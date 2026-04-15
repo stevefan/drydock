@@ -158,6 +158,18 @@ class Registry:
             return None
         return self._row_to_workspace(row)
 
+    def get_children(self, parent_desk_id: str) -> list[Workspace]:
+        rows = self._conn.execute(
+            """
+            SELECT *
+            FROM workspaces
+            WHERE parent_desk_id = ?
+            ORDER BY name ASC
+            """,
+            (parent_desk_id,),
+        ).fetchall()
+        return [self._row_to_workspace(row) for row in rows]
+
     def list_workspaces(
         self,
         project: str | None = None,
@@ -251,6 +263,10 @@ class Registry:
         if row is None:
             return None
         return dict(row)
+
+    def delete_token(self, desk_id: str) -> None:
+        self._conn.execute("DELETE FROM tokens WHERE desk_id = ?", (desk_id,))
+        self._conn.commit()
 
     def load_desk_policy(self, desk_id: str) -> dict | None:
         row = self._conn.execute(

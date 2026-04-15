@@ -47,7 +47,7 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
         for row in rows:
             request_id = row["request_id"]
             method = row["method"]
-            if method not in {"CreateDesk", "SpawnChild"}:
+            if method not in {"CreateDesk", "DestroyDesk", "SpawnChild"}:
                 outcome = {
                     "code": -32000,
                     "message": "unknown_method_during_recovery",
@@ -64,6 +64,59 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
 
             spec = _load_spec(row["spec_json"])
             workspace_name = _expected_workspace_name(spec)
+            if method == "DestroyDesk":
+                from drydock.wsd.handlers import _destroy_tree
+
+                workspace = _expected_destroy_workspace(registry, spec)
+                if workspace is None:
+                    outcome = {
+                        "destroyed": True,
+                        "desk_id": _expected_destroy_desk_id(spec),
+                        "recovered": True,
+                    }
+                    _finish_task_log(registry, request_id, "completed", outcome)
+                    completed += 1
+                    logger.info(
+                        "wsd: recovered request_id=%s method=%s status=completed workspace=%s",
+                        request_id,
+                        method,
+                        _expected_destroy_desk_id(spec),
+                    )
+                    continue
+
+                cascaded: list[str] = []
+                partial_failures = _destroy_tree(
+                    workspace,
+                    registry=registry,
+                    secrets_root=Path.home() / ".drydock" / "secrets",
+                    dry_run=False,
+                    cascaded=cascaded,
+                    visited=set(),
+                )
+                outcome = {
+                    "destroyed": True,
+                    "desk_id": workspace.id,
+                    "cascaded": cascaded,
+                    "recovered": True,
+                }
+                status = "completed"
+                if partial_failures:
+                    outcome["partial_failures"] = partial_failures
+                    status = "failed"
+                _finish_task_log(registry, request_id, status, outcome)
+                if status == "completed":
+                    completed += 1
+                else:
+                    rolled_back += 1
+                logger.info(
+                    "wsd: recovered request_id=%s method=%s status=%s workspace=%s",
+                    request_id,
+                    method,
+                    status,
+                    workspace.name,
+                )
+                continue
+
             workspace = registry.get_workspace(workspace_name) if workspace_name else None
 
             if workspace is not None and workspace.state == "running" and workspace.container_id:
@@ -134,6 +187,33 @@ def _expected_workspace_name(spec: dict[str, object]) -> str:
     if isinstance(project, str) and project:
         return project
     return ""
+
+
+def _expected_destroy_desk_id(spec: dict[str, object]) -> str:
+    name = spec.get("name")
+    if isinstance(name, str) and name:
+        return Workspace(name=name, project=name, repo_path="").id
+    desk_id = spec.get("desk_id")
+    if isinstance(desk_id, str) and desk_id:
+        return desk_id
+    return ""
+
+
+def _expected_destroy_workspace(registry: Registry, spec: dict[str, object]) -> Workspace | None:
+    name = spec.get("name")
+    if isinstance(name, str) and name:
+        return registry.get_workspace(name)
+
+    desk_id = spec.get("desk_id")
+    if not isinstance(desk_id, str) or not desk_id:
+        return None
+    row = registry._conn.execute(
+        "SELECT * FROM workspaces WHERE id = ?",
+        (desk_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return registry._row_to_workspace(row)
 
 
 def _workspace_id(workspace_name: str) -> str:

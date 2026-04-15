@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
 from drydock.core import WsError
 from drydock.core.checkout import create_checkout
 from drydock.core.devcontainer import DevcontainerCLI
-from drydock.core.overlay import OverlayConfig, write_overlay
+from drydock.core.overlay import OverlayConfig, remove_overlay, write_overlay
 from drydock.core.policy import (
     CapabilityKind,
     DeskPolicy,
@@ -71,6 +72,51 @@ def whoami(
     del params
     del request_id
     return {"desk_id": caller_desk_id}
+
+
+def destroy_desk(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+    *,
+    registry_path: Path,
+    secrets_root: Path,
+    dry_run: bool,
+) -> dict[str, object]:
+    del request_id
+    logger.info("wsd: DestroyDesk requested caller_desk_id=%s", caller_desk_id)
+    target_name, target_hint = _validated_destroy_target(params)
+
+    registry = Registry(db_path=registry_path)
+    try:
+        workspace = _lookup_destroy_target(registry, target_name=target_name, target_hint=target_hint)
+        if workspace is None:
+            raise _RpcError(
+                code=-32001,
+                message="desk_not_found",
+                data={"desk_id": target_hint},
+            )
+
+        cascaded: list[str] = []
+        partial_failures = _destroy_tree(
+            workspace,
+            registry=registry,
+            secrets_root=secrets_root,
+            dry_run=dry_run,
+            cascaded=cascaded,
+            visited=set(),
+        )
+
+        result: dict[str, object] = {
+            "destroyed": True,
+            "desk_id": workspace.id,
+            "cascaded": cascaded,
+        }
+        if partial_failures:
+            result["partial_failures"] = partial_failures
+        return result
+    finally:
+        registry.close()
 
 
 def spawn_child(
@@ -203,6 +249,29 @@ def _validated_spec(params: dict | list | None) -> dict[str, str]:
     }
 
 
+def _validated_destroy_target(params: dict | list | None) -> tuple[str | None, str]:
+    if not isinstance(params, dict):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"missing": ["desk_id"]},
+        )
+
+    name = params.get("name")
+    if isinstance(name, str) and name:
+        return name, Workspace(name=name, project=name, repo_path="").id
+
+    desk_id = params.get("desk_id")
+    if isinstance(desk_id, str) and desk_id:
+        return None, desk_id
+
+    raise _RpcError(
+        code=-32602,
+        message="invalid_params",
+        data={"missing": ["desk_id"]},
+    )
+
+
 def _validated_string_list(value: object, *, field_name: str) -> list[str]:
     if value is None:
         return []
@@ -213,6 +282,150 @@ def _validated_string_list(value: object, *, field_name: str) -> list[str]:
             data={"field": field_name},
         )
     return value
+
+
+def _lookup_destroy_target(
+    registry: Registry,
+    *,
+    target_name: str | None,
+    target_hint: str,
+) -> Workspace | None:
+    if target_name is not None:
+        return registry.get_workspace(target_name)
+
+    row = registry._conn.execute(
+        "SELECT * FROM workspaces WHERE id = ?",
+        (target_hint,),
+    ).fetchone()
+    if row is None:
+        return None
+    return registry._row_to_workspace(row)
+
+
+def _destroy_tree(
+    workspace: Workspace,
+    *,
+    registry: Registry,
+    secrets_root: Path,
+    dry_run: bool,
+    cascaded: list[str],
+    visited: set[str],
+) -> list[dict[str, str]]:
+    if workspace.id in visited:
+        raise _RpcError(
+            code=-32603,
+            message="destroy_cycle_detected",
+            data={"desk_id": workspace.id},
+        )
+    visited.add(workspace.id)
+
+    partial_failures: list[dict[str, str]] = []
+    for child in registry.get_children(workspace.id):
+        cascaded.append(child.id)
+        partial_failures.extend(
+            _destroy_tree(
+                child,
+                registry=registry,
+                secrets_root=secrets_root,
+                dry_run=dry_run,
+                cascaded=cascaded,
+                visited=visited,
+            )
+        )
+
+    partial_failures.extend(
+        _destroy_one(
+            workspace,
+            registry=registry,
+            secrets_root=secrets_root,
+            dry_run=dry_run,
+        )
+    )
+    visited.remove(workspace.id)
+    return partial_failures
+
+
+def _destroy_one(
+    workspace: Workspace,
+    registry: Registry,
+    secrets_root: Path,
+    dry_run: bool,
+) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    devc = DevcontainerCLI(dry_run=dry_run)
+    logger.info("wsd: destroy container desk_id=%s container_id=%s", workspace.id, workspace.container_id)
+    if workspace.container_id:
+        try:
+            devc.stop(workspace.container_id)
+            logger.info("wsd: container stopped desk_id=%s", workspace.id)
+        except Exception as exc:
+            logger.warning("wsd: failed to stop container for %s: %s", workspace.id, exc)
+            failures.append(_failure(workspace.id, "container_stop", exc))
+        try:
+            devc.remove(workspace.container_id)
+            logger.info("wsd: container removed desk_id=%s", workspace.id)
+        except Exception as exc:
+            logger.warning("wsd: failed to remove container for %s: %s", workspace.id, exc)
+            failures.append(_failure(workspace.id, "container_remove", exc))
+
+    secret_dir = Path(secrets_root) / workspace.id
+    token_path = secret_dir / "drydock-token"
+    logger.info("wsd: revoke token desk_id=%s", workspace.id)
+    try:
+        registry.delete_token(workspace.id)
+        logger.info("wsd: token row removed desk_id=%s", workspace.id)
+    except Exception as exc:
+        logger.warning("wsd: failed to delete token row for %s: %s", workspace.id, exc)
+        failures.append(_failure(workspace.id, "token_delete", exc))
+    try:
+        token_path.unlink(missing_ok=True)
+        logger.info("wsd: token file removed desk_id=%s path=%s", workspace.id, token_path)
+    except Exception as exc:
+        logger.warning("wsd: failed to remove token file for %s: %s", workspace.id, exc)
+        failures.append(_failure(workspace.id, "token_file_remove", exc))
+    shutil.rmtree(secret_dir, ignore_errors=True)
+    if secret_dir.exists():
+        logger.warning("wsd: failed to remove secret dir for %s: %s", workspace.id, secret_dir)
+        failures.append(_failure(workspace.id, "secret_dir_remove", "directory still exists"))
+    else:
+        logger.info("wsd: secret dir removed desk_id=%s path=%s", workspace.id, secret_dir)
+
+    logger.info("wsd: remove worktree desk_id=%s path=%s", workspace.id, workspace.worktree_path)
+    worktree_path = Path(workspace.worktree_path) if workspace.worktree_path else None
+    if worktree_path is not None:
+        shutil.rmtree(worktree_path, ignore_errors=True)
+        if worktree_path.exists():
+            logger.warning("wsd: failed to remove worktree for %s: %s", workspace.id, worktree_path)
+            failures.append(_failure(workspace.id, "worktree_remove", "directory still exists"))
+        else:
+            logger.info("wsd: worktree removed desk_id=%s", workspace.id)
+
+    overlay_path = workspace.config.get("overlay_path")
+    if not isinstance(overlay_path, str) or not overlay_path:
+        overlay_path = str(Path.home() / ".drydock" / "overlays" / f"{workspace.id}.devcontainer.json")
+    logger.info("wsd: remove overlay desk_id=%s path=%s", workspace.id, overlay_path)
+    try:
+        remove_overlay(overlay_path)
+        logger.info("wsd: overlay removed desk_id=%s", workspace.id)
+    except FileNotFoundError:
+        logger.info("wsd: overlay already absent desk_id=%s", workspace.id)
+    except Exception as exc:
+        logger.warning("wsd: failed to remove overlay for %s: %s", workspace.id, exc)
+        failures.append(_failure(workspace.id, "overlay_remove", exc))
+
+    logger.info("wsd: delete workspace row desk_id=%s name=%s", workspace.id, workspace.name)
+    try:
+        registry.delete_workspace(workspace.name)
+        logger.info("wsd: workspace row removed desk_id=%s", workspace.id)
+    except Exception as exc:
+        logger.warning("wsd: failed to delete workspace row for %s: %s", workspace.id, exc)
+        failures.append(_failure(workspace.id, "workspace_delete", exc))
+
+    return failures
+
+
+def _failure(desk_id: str, step: str, error: Exception | str) -> dict[str, str]:
+    return {"desk_id": desk_id, "step": step, "error": str(error)}
 
 
 def _perform_create(

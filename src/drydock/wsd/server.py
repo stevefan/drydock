@@ -200,6 +200,79 @@ def _spawn_child(
         registry.close()
 
 
+def _destroy_desk(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    if _SECRETS_ROOT is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    if request_id is None:
+        raise _RpcError(
+            code=-32600,
+            message="Invalid Request",
+            data={"reason": "request_id_required"},
+        )
+
+    request_key = str(request_id)
+    registry = Registry(db_path=_REGISTRY_PATH)
+    try:
+        cached = registry._conn.execute(
+            """
+            SELECT status, outcome_json
+            FROM task_log
+            WHERE request_id = ?
+            """,
+            (request_key,),
+        ).fetchone()
+        if cached is not None:
+            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
+
+        created_at = _utc_now()
+        registry._conn.execute(
+            """
+            INSERT INTO task_log
+                (request_id, method, spec_json, status, outcome_json, created_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request_key,
+                "DestroyDesk",
+                json.dumps(params),
+                "in_progress",
+                None,
+                created_at,
+                None,
+            ),
+        )
+        registry._conn.commit()
+
+        try:
+            from drydock.wsd.handlers import destroy_desk
+            result = destroy_desk(
+                params,
+                request_id,
+                caller_desk_id,
+                registry_path=_REGISTRY_PATH,
+                secrets_root=_SECRETS_ROOT,
+                dry_run=_DRY_RUN,
+            )
+        except _RpcError as exc:
+            error = {"code": exc.code, "message": exc.message}
+            if exc.data is not None:
+                error["data"] = exc.data
+            _finish_task_log(registry, request_key, "failed", error)
+            raise
+
+        status = "failed" if result.get("partial_failures") else "completed"
+        _finish_task_log(registry, request_key, status, result)
+        return result
+    finally:
+        registry.close()
+
+
 def _whoami(
     params: dict | list | None,
     request_id: str | int | None,
@@ -237,6 +310,8 @@ def _replay_cached_outcome(request_id: str, status: str, outcome_json: str | Non
     outcome = json.loads(outcome_json) if outcome_json else None
     if status == "completed":
         return outcome
+    if status == "failed" and isinstance(outcome, dict) and outcome.get("destroyed") is True:
+        return outcome
     if status == "failed" and isinstance(outcome, dict):
         raise _RpcError(
             code=outcome["code"],
@@ -252,6 +327,7 @@ def _utc_now() -> str:
 
 _METHODS: dict[str, MethodSpec] = {
     "CreateDesk": MethodSpec(handler=_create_desk, requires_auth=False),
+    "DestroyDesk": MethodSpec(handler=_destroy_desk, requires_auth=False),
     "SpawnChild": MethodSpec(handler=_spawn_child, requires_auth=True),
     "wsd.health": MethodSpec(handler=_health, requires_auth=False),
     "wsd.whoami": MethodSpec(handler=_whoami, requires_auth=True),

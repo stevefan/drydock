@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from drydock.core.registry import Registry
@@ -296,6 +297,61 @@ def test_recovery_handles_unknown_method(tmp_path):
     assert outcome["message"] == "unknown_method_during_recovery"
     assert outcome["data"]["method"] == "SomeFutureMethod"
     assert _workspace_row(registry_path, "untouched") is not None
+
+
+def test_recovery_completes_in_progress_destroy(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    registry_path = tmp_path / "registry.db"
+    worktree_path = tmp_path / "worktrees" / "ws_destroy_me"
+    worktree_path.mkdir(parents=True)
+    overlay_path = tmp_path / ".drydock" / "overlays" / "ws_destroy_me.devcontainer.json"
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    overlay_path.write_text("{}")
+    secrets_dir = tmp_path / ".drydock" / "secrets" / "ws_destroy_me"
+    secrets_dir.mkdir(parents=True, exist_ok=True)
+    (secrets_dir / "drydock-token").write_text("secret")
+
+    registry = Registry(db_path=registry_path)
+    try:
+        registry.create_workspace(
+            Workspace(
+                name="destroy-me",
+                project="proj",
+                repo_path="/repos/proj",
+                branch="ws/destroy-me",
+                state="running",
+                worktree_path=str(worktree_path),
+                config={"overlay_path": str(overlay_path)},
+            )
+        )
+        registry.insert_token(
+            desk_id="ws_destroy_me",
+            token_sha256="deadbeef",
+            issued_at=datetime.now(timezone.utc),
+        )
+    finally:
+        registry.close()
+
+    _insert_task(
+        registry_path,
+        request_id="r-destroy",
+        method="DestroyDesk",
+        spec={"name": "destroy-me"},
+    )
+
+    report = recover_in_progress(registry_path)
+
+    assert report == RecoveryReport(completed=1, rolled_back=0, unknown_method=0)
+    assert _workspace_row(registry_path, "destroy-me") is None
+    assert not worktree_path.exists()
+    assert not overlay_path.exists()
+    assert not secrets_dir.exists()
+    task = _task_row(registry_path, "r-destroy")
+    outcome = json.loads(task["outcome_json"])
+    assert task["status"] == "completed"
+    assert outcome["destroyed"] is True
+    assert outcome["desk_id"] == "ws_destroy_me"
+    assert outcome["recovered"] is True
 
 
 def test_daemon_startup_invokes_recovery_and_then_serves():
