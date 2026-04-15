@@ -4,33 +4,46 @@ set -euo pipefail
 LOG_FILE="/tmp/claude-remote-control.log"
 REMOTE_CONTROL_NAME="${REMOTE_CONTROL_NAME:-Claude Dev}"
 
+# Sync Claude auth state from drydock secrets into ~/.claude/ if the secrets
+# are present. No-op if not. Done here (rather than in postStartCommand) so
+# downstream projects don't have to update their devcontainer.json to pick
+# up this behavior — they just inherit via drydock-base.
+if [ -x /usr/local/bin/sync-claude-auth.sh ]; then
+    /usr/local/bin/sync-claude-auth.sh || echo "WARNING: sync-claude-auth.sh failed; see /tmp/claude-auth-sync.log" | tee -a "$LOG_FILE"
+fi
+
 echo "Starting Claude Code remote-control server..." | tee "$LOG_FILE"
 
-# Load CLAUDE_CODE_OAUTH_TOKEN from secret if present — useful for any non-
-# remote-control claude invocations in this desk (scripted claude --print,
-# interactive shells). IMPORTANT: Anthropic explicitly blocks long-lived
-# tokens from `claude remote-control` ("limited to inference-only for security
-# reasons") — the token does NOT satisfy the subscription check for server
-# mode. Remote-control requires an interactive `claude auth login` (device
-# flow), one-time per claude-code-config volume.
+# Claude Code auth precedence for remote-control:
+#   1. If ~/.claude/.credentials.json exists (full-scope OAuth state, from
+#      claude auth login or our sync-claude-auth.sh secret transplant),
+#      USE IT. Do NOT set CLAUDE_CODE_OAUTH_TOKEN — claude prefers the env
+#      var and the setup-token it represents is explicitly rejected by
+#      remote-control ("limited to inference-only for security reasons").
+#   2. Otherwise, if /run/secrets/claude_code_token is present, export it
+#      for any non-remote-control claude invocations (scripted --print,
+#      interactive shells) that might run inside the desk — even though
+#      remote-control itself will still fail in this path.
 if [ -e /run/secrets/claude_code_token ] && [ ! -r /run/secrets/claude_code_token ]; then
     echo "ERROR: /run/secrets/claude_code_token exists but is unreadable by $(whoami) (uid $(id -u))." | tee -a "$LOG_FILE"
     echo "  Fix on host: chown 1000:1000 ~/.drydock/secrets/<ws_id>/claude_code_token" | tee -a "$LOG_FILE"
 fi
-if [ -r /run/secrets/claude_code_token ]; then
+if [ -f "$HOME/.claude/.credentials.json" ]; then
+    echo "Using $HOME/.claude/.credentials.json for auth (full OAuth scope)." | tee -a "$LOG_FILE"
+    unset CLAUDE_CODE_OAUTH_TOKEN  # paranoid — ensure it doesn't leak from a parent env
+elif [ -r /run/secrets/claude_code_token ]; then
     export CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude_code_token)"
-    echo "Loaded CLAUDE_CODE_OAUTH_TOKEN (inference scope — does not satisfy remote-control's full-scope check)" | tee -a "$LOG_FILE"
+    echo "Loaded CLAUDE_CODE_OAUTH_TOKEN (inference scope — does NOT satisfy remote-control)." | tee -a "$LOG_FILE"
 fi
 
-# remote-control-specific credential check. If ~/.claude/.credentials.json
-# doesn't exist in the claude-code-config volume, the server mode will loop
-# forever. Surface the expected next step once per boot instead of silently
-# letting the supervisor spin.
+# remote-control-specific credential check
 if [ ! -f "$HOME/.claude/.credentials.json" ]; then
-    echo "WARNING: $HOME/.claude/.credentials.json missing. remote-control requires" | tee -a "$LOG_FILE"
-    echo "  an interactive \`claude auth login\` (device flow) to populate it." | tee -a "$LOG_FILE"
-    echo "  One-time per claude-code-config volume (shared across desks on this host)." | tee -a "$LOG_FILE"
-    echo "  The supervisor loop below will keep failing until that login is done." | tee -a "$LOG_FILE"
+    echo "WARNING: $HOME/.claude/.credentials.json missing. remote-control will loop." | tee -a "$LOG_FILE"
+    echo "  Fix: on an authenticated machine (e.g. your Mac after \`claude auth login\`):" | tee -a "$LOG_FILE"
+    echo "    ws secret set <desk> claude_credentials    < ~/.claude/.credentials.json" | tee -a "$LOG_FILE"
+    echo "    ws secret set <desk> claude_account_state  < ~/.claude.json" | tee -a "$LOG_FILE"
+    echo "    ws secret push <desk> --to <host>" | tee -a "$LOG_FILE"
+    echo "  Then ws create --force (or restart the container) so sync-claude-auth.sh runs." | tee -a "$LOG_FILE"
 fi
 
 while true; do

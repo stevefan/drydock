@@ -47,6 +47,27 @@ docker exec -u node <container-id-of-any-desk> claude /login
 
 Why three separate logins: Tailscale, GitHub, and Anthropic are independent identity providers. Claude on Mac auto-shares its keychain credentials with you locally; on a remote box each gets a fresh device-flow auth.
 
+## Optional: Claude Code auth (for claude remote-control = Remote Sessions UI)
+
+The `claude remote-control` server (what surfaces a desk in your claude.ai Remote Sessions sidebar) requires **full-scope claude.ai OAuth state**. `ANTHROPIC_API_KEY` doesn't satisfy it; `claude setup-token` tokens (inference-only) don't either. The only way to produce that state is running `claude auth login` on some machine with a TTY.
+
+Good news: once you've done that on any machine (e.g. your Mac), you can **transplant the auth state to any drydock host** via two drydock secrets. `sync-claude-auth.sh` (in drydock-base v1.0.6+) picks them up at container startup, materializes them in the `claude-code-config` shared volume, and marks `/workspace` as trusted.
+
+**One-time per host (and re-run whenever your token refreshes):**
+
+```bash
+# On the machine where you're logged in to Claude Code (e.g. your Mac):
+ws secret set <desk> claude_credentials   < ~/.claude/.credentials.json
+ws secret set <desk> claude_account_state < ~/.claude.json
+ws secret push <desk> --to root@<host>
+```
+
+After the first container restart (or `ws create --force`) the desk registers with claude.ai. The `claude-code-config` volume is shared across all desks on a host, so any sibling desk gets the auth for free.
+
+**Per-desk?** Technically the secrets are per-desk in drydock's store, but the materialized auth lives in the host-shared `claude-code-config` volume. So you only *need* to do it once per host — on any desk — and all desks on that host share the login. Putting it on the first desk you create each host is the simplest mental model.
+
+**Without this:** `claude remote-control` loops with "must be logged in." Other claude usage inside the desk (scripted `claude --print`, smart operator via `--bare`) still works via `ANTHROPIC_API_KEY` independently.
+
 ## Optional: Tailscale admin API token
 
 For `ws tailnet prune` (cleanup of orphan tailnet device records) and the eventual v2 daemon-side device cleanup on `ws destroy`:
