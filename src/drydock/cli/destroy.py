@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 
+from drydock.cli._wsd_client import DaemonRpcError, DaemonUnavailable, call_daemon
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core import WsError
 from drydock.core.audit import log_event
@@ -64,17 +65,16 @@ def destroy(ctx, name, force):
     registry = ctx.obj["registry"]
     dry_run = ctx.obj["dry_run"]
 
-    ws = registry.get_workspace(name)
-    if not ws:
-        out.error(
-            WsError(
-                f"Workspace '{name}' not found",
-                fix="Run 'ws list' to see available workspaces",
-            )
-        )
-        return
-
     if dry_run:
+        ws = registry.get_workspace(name)
+        if not ws:
+            out.error(
+                WsError(
+                    f"Workspace '{name}' not found",
+                    fix="Run 'ws list' to see available workspaces",
+                )
+            )
+            return
         out.success(
             {"dry_run": True, "action": "destroy", "workspace": ws.to_dict()},
             human_lines=[
@@ -91,6 +91,30 @@ def destroy(ctx, name, force):
             WsError(
                 f"Refusing to destroy '{name}' without --force",
                 fix=f"Run: ws destroy {name} --force",
+            )
+        )
+        return
+
+    try:
+        logger.info("cli: routing via daemon")
+        call_daemon("DestroyDesk", {"name": name, "force": force})
+    except DaemonUnavailable:
+        logger.info("cli.destroy: daemon unavailable, falling back to direct")
+    except DaemonRpcError as exc:
+        out.error(_ws_error_from_daemon_error(exc))
+    else:
+        out.success(
+            {"destroyed": name},
+            human_lines=[f"workspace '{name}' destroyed"],
+        )
+        return
+
+    ws = registry.get_workspace(name)
+    if not ws:
+        out.error(
+            WsError(
+                f"Workspace '{name}' not found",
+                fix="Run 'ws list' to see available workspaces",
             )
         )
         return
@@ -139,4 +163,20 @@ def destroy(ctx, name, force):
     out.success(
         {"destroyed": name},
         human_lines=[f"workspace '{name}' destroyed"],
+    )
+
+
+def _ws_error_from_daemon_error(err: DaemonRpcError) -> WsError:
+    fix = None
+    context = {}
+    if err.data:
+        fix_value = err.data.get("fix")
+        if isinstance(fix_value, str):
+            fix = fix_value
+        context = {key: value for key, value in err.data.items() if key != "fix"}
+    return WsError(
+        err.message,
+        fix=fix,
+        context=context,
+        code=err.message,
     )

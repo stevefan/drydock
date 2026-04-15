@@ -6,15 +6,16 @@ from pathlib import Path
 
 import click
 
-logger = logging.getLogger(__name__)
-
-from drydock.core.devcontainer import DevcontainerCLI
+from drydock.cli._wsd_client import DaemonRpcError, DaemonUnavailable, call_daemon
 from drydock.core import WsError
 from drydock.core.audit import log_event
+from drydock.core.checkout import create_checkout
+from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.project_config import load_project_config
-from drydock.core.checkout import create_checkout
 from drydock.core.workspace import Workspace
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_gitconfig_stub() -> None:
@@ -74,6 +75,104 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
         image = (proj_cfg.image if proj_cfg and proj_cfg.image else "")
 
     workspace_subdir = (proj_cfg.workspace_subdir if proj_cfg and proj_cfg.workspace_subdir else "")
+
+    if dry_run:
+        existing = registry.get_workspace(name)
+
+        if existing and existing.state == "running" and not force:
+            out.error(
+                WsError(
+                    f"Workspace '{name}' is already running",
+                    fix=f"ws create {name} --force",
+                    code="workspace_already_running",
+                )
+            )
+            return
+
+        if existing and existing.state == "error" and not force:
+            out.error(
+                WsError(
+                    f"Workspace '{name}' is in state 'error'",
+                    fix=f"Rebuild from clean state: ws create {project} {name} --force",
+                    code="workspace_in_error_state",
+                )
+            )
+            return
+
+        if existing and existing.state == "provisioning":
+            out.error(
+                WsError(
+                    f"Workspace '{name}' is currently provisioning",
+                    fix=f"Wait for the in-flight operation, or investigate: ws inspect {name}",
+                    code="workspace_provisioning",
+                )
+            )
+            return
+
+        if existing and existing.state in ("suspended", "defined"):
+            ws = existing
+            out.success(
+                {"dry_run": True, "action": "resume", "workspace": ws.to_dict()},
+                human_lines=[f"Would resume workspace '{name}'"],
+            )
+            return
+
+        ws = Workspace(
+            name=name,
+            project=project,
+            repo_path=repo_path,
+            branch=branch,
+            base_ref=base_ref,
+            image=image,
+            workspace_subdir=workspace_subdir,
+            owner=owner or "",
+        )
+        out.success(
+            {"dry_run": True, "workspace": ws.to_dict()},
+            human_lines=[
+                f"Would create workspace '{name}':",
+                f"  project:  {project}",
+                f"  branch:   {branch}",
+                f"  base_ref: {base_ref}",
+                f"  repo:     {repo_path}",
+            ],
+        )
+        return
+
+    daemon_params = {
+        "project": project,
+        "name": name,
+        "base_ref": base_ref,
+        "branch": branch,
+        "repo_path": repo_path,
+        "image": image,
+        "owner": owner or "",
+    }
+    if force:
+        try:
+            logger.info("cli: routing via daemon")
+            call_daemon("DestroyDesk", {"name": name, "force": True})
+        except DaemonUnavailable:
+            logger.info("cli.create: daemon unavailable, falling back to direct")
+        except DaemonRpcError as exc:
+            if exc.message != "desk_not_found":
+                out.error(_ws_error_from_daemon_error(exc))
+    try:
+        logger.info("cli: routing via daemon")
+        daemon_result = call_daemon("CreateDesk", daemon_params)
+    except DaemonUnavailable:
+        logger.info("cli.create: daemon unavailable, falling back to direct")
+    except DaemonRpcError as exc:
+        out.error(_ws_error_from_daemon_error(exc))
+        return
+    else:
+        # Daemon is the source of truth in the routing case. The DeskRef in
+        # `daemon_result` is what the host CLI returns to the user. We do NOT
+        # re-query a local Registry — the daemon may be using a different
+        # registry path (for V2 it shares ~/.drydock/registry.db by default,
+        # but tests and ops setups can configure otherwise via --registry).
+        out.success(daemon_result, human_lines=_daemon_result_human_lines(daemon_result))
+        return
 
     existing = registry.get_workspace(name)
 
@@ -147,19 +246,6 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
             owner=owner or "",
         )
 
-        if dry_run:
-            out.success(
-                {"dry_run": True, "workspace": ws.to_dict()},
-                human_lines=[
-                    f"Would create workspace '{name}':",
-                    f"  project:  {project}",
-                    f"  branch:   {branch}",
-                    f"  base_ref: {base_ref}",
-                    f"  repo:     {repo_path}",
-                ],
-            )
-            return
-
         try:
             ws = registry.create_workspace(ws)
             log_event("workspace.created", ws.id)
@@ -172,13 +258,6 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
             ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))
         except WsError as e:
             out.error(e)
-
-    if dry_run:
-        out.success(
-            {"dry_run": True, "action": "resume", "workspace": ws.to_dict()},
-            human_lines=[f"Would resume workspace '{name}'"],
-        )
-        return
 
     workspace_folder = (
         os.path.join(ws.worktree_path, ws.workspace_subdir)
@@ -238,18 +317,11 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, owner, force)
         log_event("workspace.error", ws.id)
         raise
 
-    human_lines = [
-        f"workspace '{ws.name}' created",
-        f"  id:           {ws.id}",
-        f"  project:      {ws.project}",
-        f"  branch:       {ws.branch}",
-        f"  state:        {ws.state}",
-        f"  container_id: {ws.container_id}",
-    ]
+    human_lines = _workspace_human_lines(ws)
     if lifecycle_warning:
         human_lines.append(f"  WARNING: {lifecycle_warning}")
 
-    out.success(ws.to_dict(), human_lines=human_lines)
+    out.success(_workspace_output(ws), human_lines=human_lines)
 
 
 def _overlay_from_project(proj_cfg) -> OverlayConfig:
@@ -273,3 +345,48 @@ def _overlay_from_project(proj_cfg) -> OverlayConfig:
     if proj_cfg.claude_profile is not None:
         kwargs["claude_profile"] = proj_cfg.claude_profile
     return OverlayConfig(**kwargs)
+
+
+def _workspace_output(ws: Workspace) -> dict:
+    return ws.to_dict()
+
+
+def _workspace_human_lines(ws: Workspace) -> list[str]:
+    return [
+        f"workspace '{ws.name}' created",
+        f"  id:           {ws.id}",
+        f"  project:      {ws.project}",
+        f"  branch:       {ws.branch}",
+        f"  state:        {ws.state}",
+        f"  container_id: {ws.container_id}",
+    ]
+
+
+def _daemon_result_human_lines(result: dict) -> list[str]:
+    """Format a daemon CreateDesk DeskRef for human output. Mirrors
+    _workspace_human_lines so the user sees the same shape regardless of
+    which path produced the result."""
+    return [
+        f"workspace '{result.get('name', '?')}' created (via daemon)",
+        f"  id:           {result.get('desk_id', '?')}",
+        f"  project:      {result.get('project', '?')}",
+        f"  branch:       {result.get('branch', '?')}",
+        f"  state:        {result.get('state', '?')}",
+        f"  container_id: {result.get('container_id', '?')}",
+    ]
+
+
+def _ws_error_from_daemon_error(err: DaemonRpcError) -> WsError:
+    fix = None
+    context = {}
+    if err.data:
+        fix_value = err.data.get("fix")
+        if isinstance(fix_value, str):
+            fix = fix_value
+        context = {key: value for key, value in err.data.items() if key != "fix"}
+    return WsError(
+        err.message,
+        fix=fix,
+        context=context,
+        code=err.message,
+    )
