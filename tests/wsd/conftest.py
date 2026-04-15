@@ -8,6 +8,7 @@ in docs/v2-design-state.md §7.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -17,6 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
+from drydock.core.registry import Registry
 
 
 def _wait_for_socket(path: Path, proc: subprocess.Popen, timeout: float = 5.0) -> None:
@@ -37,8 +39,10 @@ def _wait_for_socket(path: Path, proc: subprocess.Popen, timeout: float = 5.0) -
 class WsdClient:
     """Minimal blocking client for newline-delimited JSON over a Unix socket."""
 
-    def __init__(self, socket_path: Path):
+    def __init__(self, socket_path: Path, registry_path: Path, home: Path):
         self.socket_path = socket_path
+        self.registry_path = registry_path
+        self.home = home
 
     def call(self, payload: dict, timeout: float = 5.0) -> dict:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -82,6 +86,10 @@ def wsd():
     tmp = Path(tempfile.mkdtemp(prefix="wsd-", dir="/tmp"))
     sock = tmp / "s"  # 1-char filename keeps path well under limit
     registry = tmp / "r.db"
+    Registry(db_path=registry).close()
+    env = os.environ.copy()
+    env["DRYDOCK_WSD_DRY_RUN"] = "1"
+    env["HOME"] = str(tmp)
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -92,12 +100,13 @@ def wsd():
             "--registry",
             str(registry),
         ],
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     try:
         _wait_for_socket(sock, proc, timeout=5.0)
-        yield WsdClient(sock)
+        yield WsdClient(sock, registry, tmp)
     finally:
         proc.terminate()
         try:

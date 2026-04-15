@@ -16,11 +16,16 @@ import os
 import socketserver
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+from drydock.core.registry import Registry
 
 logger = logging.getLogger(__name__)
 _JSON_RPC_VERSION = "2.0"
+_REGISTRY_PATH: Path | None = None
+_DRY_RUN = False
 
 
 @dataclass(frozen=True)
@@ -29,13 +34,113 @@ class _RpcError(ValueError):
     message: str
     data: object | None = None
 
-
-def _health(params: dict | list | None) -> dict[str, object]:
+def _health(params: dict | list | None, request_id: str | int | None) -> dict[str, object]:
     del params
+    del request_id
     return {"ok": True, "pid": os.getpid(), "version": "v2-slice1b"}
 
 
-_METHODS: dict[str, Callable[[dict | list | None], Any]] = {
+def _create_desk(params: dict | list | None, request_id: str | int | None) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    if request_id is None:
+        raise _RpcError(
+            code=-32600,
+            message="Invalid Request",
+            data={"reason": "request_id_required"},
+        )
+
+    request_key = str(request_id)
+    registry = Registry(db_path=_REGISTRY_PATH)
+    try:
+        cached = registry._conn.execute(
+            """
+            SELECT status, outcome_json
+            FROM task_log
+            WHERE request_id = ?
+            """,
+            (request_key,),
+        ).fetchone()
+        if cached is not None:
+            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
+
+        created_at = _utc_now()
+        registry._conn.execute(
+            """
+            INSERT INTO task_log
+                (request_id, method, spec_json, status, outcome_json, created_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request_key,
+                "CreateDesk",
+                json.dumps(params),
+                "in_progress",
+                None,
+                created_at,
+                None,
+            ),
+        )
+        registry._conn.commit()
+
+        try:
+            from drydock.wsd.handlers import create_desk
+            result = create_desk(params, registry_path=_REGISTRY_PATH, dry_run=_DRY_RUN)
+        except _RpcError as exc:
+            error = {"code": exc.code, "message": exc.message}
+            if exc.data is not None:
+                error["data"] = exc.data
+            _finish_task_log(registry, request_key, "failed", error)
+            raise
+
+        _finish_task_log(registry, request_key, "completed", result)
+        return result
+    finally:
+        registry.close()
+
+
+def _finish_task_log(
+    registry: Registry,
+    request_id: str,
+    status: str,
+    outcome: object,
+) -> None:
+    registry._conn.execute(
+        """
+        UPDATE task_log
+        SET status = ?, outcome_json = ?, completed_at = ?
+        WHERE request_id = ?
+        """,
+        (status, json.dumps(outcome), _utc_now(), request_id),
+    )
+    registry._conn.commit()
+
+
+def _replay_cached_outcome(request_id: str, status: str, outcome_json: str | None) -> dict[str, object]:
+    if status == "in_progress":
+        raise _RpcError(
+            code=-32002,
+            message="request_in_progress",
+            data={"request_id": request_id},
+        )
+    outcome = json.loads(outcome_json) if outcome_json else None
+    if status == "completed":
+        return outcome
+    if status == "failed" and isinstance(outcome, dict):
+        raise _RpcError(
+            code=outcome["code"],
+            message=outcome["message"],
+            data=outcome.get("data"),
+        )
+    raise _RpcError(code=-32603, message="Internal error")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+_METHODS: dict[str, Callable[[dict | list | None, str | int | None], Any]] = {
+    "CreateDesk": _create_desk,
     "wsd.health": _health,
 }
 
@@ -118,7 +223,7 @@ class _Handler(socketserver.StreamRequestHandler):
             )
 
         try:
-            result = handler(params)
+            result = handler(params, request_id)
         except _RpcError as exc:
             return _error_response(
                 request_id,
@@ -141,13 +246,16 @@ class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     allow_reuse_address = True
 
 
-def serve(socket_path: Path) -> None:
+def serve(socket_path: Path, registry_path: Path | None, dry_run: bool) -> None:
     """Bind the Unix socket and serve until interrupted.
 
     Removes a stale socket file if one exists at `socket_path`. Creates
     parent directories if missing. Cleans up the socket file on exit.
     """
+    global _REGISTRY_PATH, _DRY_RUN
     socket_path = Path(socket_path)
+    _REGISTRY_PATH = registry_path or (Path.home() / ".drydock" / "registry.db")
+    _DRY_RUN = dry_run
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():
         socket_path.unlink()

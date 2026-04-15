@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -46,8 +47,18 @@ def main(argv: list[str] | None = None) -> int:
         stream=sys.stderr,
     )
     _install_signal_handlers()
-    serve(Path(args.socket))
+    serve(
+        Path(args.socket),
+        Path(args.registry) if args.registry else None,
+        _env_truthy(os.environ.get("DRYDOCK_WSD_DRY_RUN")),
+    )
     return 0
+
+
+def _env_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 if __name__ == "__main__":
