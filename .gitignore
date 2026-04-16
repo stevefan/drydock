@@ -19,3 +19,4 @@ drydock/projects/
 
 # Agent state (private; skills/ stays tracked)
 .claude/projects/
+.claude/scheduled_tasks.lock
