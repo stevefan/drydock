@@ -8,6 +8,8 @@ from pathlib import Path
 
 import click
 
+from drydock.core import WsError
+from drydock.core.compliance import days_until_review, load_compliance
 from drydock.core.devcontainer import DevcontainerCLI
 
 
@@ -286,6 +288,25 @@ def _probe_base_image(ws, container_id: str = "") -> str | None:
     return _parse_dockerfile_from(dockerfile_path)
 
 
+def _probe_compliance(ws) -> str | None:
+    if not ws.worktree_path:
+        return None
+    try:
+        cfg = load_compliance(Path(ws.worktree_path))
+    except WsError as exc:
+        return f"error: {exc.message}"
+    if cfg is None:
+        return None
+    if cfg.last_reviewed is None or cfg.review_cadence_days is None:
+        return "incomplete"
+    days = days_until_review(cfg)
+    if days is None:
+        return "incomplete"
+    if days < 0:
+        return f"stale ({-days} days overdue)"
+    return "ok"
+
+
 def _probe_workspace(ws) -> dict:
     row = {
         "name": ws.name,
@@ -298,6 +319,7 @@ def _probe_workspace(ws) -> dict:
         "ipset": None,
         "trust_accepted": None,
         "base_image": None,
+        "compliance": _probe_compliance(ws),
     }
 
     if not ws.worktree_path:
@@ -347,5 +369,6 @@ def status(ctx):
             "ipset",
             "trust_accepted",
             "base_image",
+            "compliance",
         ],
     )

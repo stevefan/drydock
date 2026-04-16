@@ -8,6 +8,7 @@ from click.testing import CliRunner
 
 from drydock.cli.status import (
     _probe_base_image,
+    _probe_compliance,
     _probe_ipset,
     _probe_refresh_supervisor,
     _probe_trust_accepted,
@@ -234,3 +235,20 @@ def test_status_multiple_workspaces(
     ]
     result = _invoke(registry)
     assert result.exit_code == 0
+
+
+def test_probe_compliance_returns_none_when_file_missing(tmp_path):
+    ws = _make_ws(worktree_path=str(tmp_path))
+    assert _probe_compliance(ws) is None
+
+
+def test_probe_compliance_flags_overdue_review(tmp_path):
+    (tmp_path / "compliance.yaml").write_text(
+        "last_reviewed: 2020-01-01\n"
+        "review_cadence_days: 30\n"
+    )
+    ws = _make_ws(worktree_path=str(tmp_path))
+    result = _probe_compliance(ws)
+    assert result is not None
+    assert result.startswith("stale (")
+    assert "days overdue" in result
