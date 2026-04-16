@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import WsError
+from .capability import CapabilityLease, CapabilityType
 from .workspace import Workspace
 
 # Schema drops hostname and labels columns as of this revision.  Existing
@@ -300,6 +301,101 @@ class Registry:
             return
         self.update_workspace(name, **fields)
 
+    # ----- Capability leases (Slice 3b) -----
+
+    def insert_lease(self, lease: CapabilityLease) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO leases
+                (lease_id, desk_id, type, scope, issued_at, expiry,
+                 issuer, revoked, revocation_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                lease.lease_id,
+                lease.desk_id,
+                lease.type.value,
+                json.dumps(lease.scope),
+                lease.issued_at.isoformat(),
+                lease.expiry.isoformat() if lease.expiry else None,
+                lease.issuer,
+                int(lease.revoked),
+                lease.revocation_reason,
+            ),
+        )
+        self._conn.commit()
+
+    def get_lease(self, lease_id: str) -> CapabilityLease | None:
+        row = self._conn.execute(
+            """
+            SELECT lease_id, desk_id, type, scope, issued_at, expiry,
+                   issuer, revoked, revocation_reason
+            FROM leases
+            WHERE lease_id = ?
+            """,
+            (lease_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _row_to_lease(row)
+
+    def revoke_lease(self, lease_id: str, reason: str) -> bool:
+        """Mark a single lease revoked. Returns True if a row was changed.
+
+        Idempotent: revoking an already-revoked lease returns False without
+        clobbering the original reason.
+        """
+        cur = self._conn.execute(
+            """
+            UPDATE leases
+            SET revoked = 1, revocation_reason = ?
+            WHERE lease_id = ? AND revoked = 0
+            """,
+            (reason, lease_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def revoke_leases_for_desk(self, desk_id: str, reason: str) -> int:
+        """Revoke every active lease belonging to a desk. Returns count."""
+        cur = self._conn.execute(
+            """
+            UPDATE leases
+            SET revoked = 1, revocation_reason = ?
+            WHERE desk_id = ? AND revoked = 0
+            """,
+            (reason, desk_id),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def list_active_leases_for_desk(self, desk_id: str) -> list[CapabilityLease]:
+        rows = self._conn.execute(
+            """
+            SELECT lease_id, desk_id, type, scope, issued_at, expiry,
+                   issuer, revoked, revocation_reason
+            FROM leases
+            WHERE desk_id = ? AND revoked = 0
+            ORDER BY issued_at
+            """,
+            (desk_id,),
+        ).fetchall()
+        return [_row_to_lease(row) for row in rows]
+
+    def find_active_secret_lease(
+        self, desk_id: str, secret_name: str
+    ) -> CapabilityLease | None:
+        """Return any active lease for (desk_id, secret_name) or None.
+
+        Used by the daemon when releasing a lease to decide whether the
+        materialized file at /run/secrets/<name> should also be removed
+        (only when no other active lease still grants the same secret).
+        """
+        for lease in self.list_active_leases_for_desk(desk_id):
+            if lease.type == CapabilityType.SECRET and lease.scope.get("secret_name") == secret_name:
+                return lease
+        return None
+
     def get_workspace_extra_mounts(self, name: str) -> list[str]:
         row = self._conn.execute(
             "SELECT config FROM workspaces WHERE name = ?",
@@ -325,3 +421,17 @@ class Registry:
         allowed = Workspace.__dataclass_fields__.keys()
         d = {k: v for k, v in d.items() if k in allowed}
         return Workspace(**d)
+
+
+def _row_to_lease(row: sqlite3.Row) -> CapabilityLease:
+    return CapabilityLease(
+        lease_id=str(row["lease_id"]),
+        desk_id=str(row["desk_id"]),
+        type=CapabilityType(row["type"]),
+        scope=json.loads(row["scope"]),
+        issued_at=datetime.fromisoformat(row["issued_at"]),
+        expiry=datetime.fromisoformat(row["expiry"]) if row["expiry"] else None,
+        issuer=str(row["issuer"]),
+        revoked=bool(row["revoked"]),
+        revocation_reason=row["revocation_reason"],
+    )
