@@ -39,6 +39,15 @@ RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudo
   echo "node ALL=(root) NOPASSWD: /usr/sbin/ipset" >> /etc/sudoers.d/node-drydock && \
   chmod 0440 /etc/sudoers.d/node-drydock
 
+# git safe.directory = * system-wide. Inside a drydock desk, the container
+# itself is the trust boundary — individual paths within /workspace or
+# /root/.drydock don't need per-path ownership validation. Host-bind-mount
+# uid mismatches (worktree owned by root-on-host with container running as
+# node:1000) would otherwise trip git's "dubious ownership" guard, which
+# blocked the auction-crawl smart operator from committing to ws/operator-*
+# branches on 2026-04-15 (had to extract the patch via host stash instead).
+RUN git config --system safe.directory '*'
+
 # Pre-create target directories for named-volume mounts with node:node
 # ownership so the volumes inherit correct perms on first mount.
 # Without this, docker creates empty named volumes owned by root.
