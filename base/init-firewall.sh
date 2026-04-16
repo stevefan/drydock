@@ -4,7 +4,31 @@ IFS=$'\n\t'       # Stricter word splitting
 
 LOG="/tmp/firewall.log"
 DOMAINS_FILE="/tmp/firewall-domains.txt"
-exec > >(tee -a "$LOG") 2>&1
+
+# Direct file append — NO process substitution.
+#
+# The previous pattern (`exec > >(tee -a "$LOG") 2>&1`) silently lost the
+# last few bytes when the parent shell exited and the tee subprocess
+# received SIGPIPE before flushing its buffer. Observed 2026-04-16 on the
+# ASI workspace at boot: /tmp/firewall.log ended literally at "Verifying
+# firewall rules..." with no error message and no completion line, even
+# though `set -euo pipefail` should have raised something on any failure.
+#
+# Direct `exec >> "$LOG" 2>&1` guarantees every byte hits the file before
+# any process exit. We lose real-time tee-to-stdout, but the postStart
+# context already redirects script stdout to its own log; the canonical
+# diagnostic location is this file.
+exec >> "$LOG" 2>&1
+
+# Forensic traps — silent exits are impossible by construction now.
+# ERR fires on any failed command under `set -e`, capturing the exact
+# line + command. EXIT fires unconditionally and prints rc; success path
+# also writes the bottom-of-script "completed successfully" message
+# below, so an EXIT trap with rc=0 + missing completion line tells you
+# the script was killed by an external signal (SIGTERM/SIGKILL).
+trap 'rc=$?; echo "!!! init-firewall ERR line=$LINENO rc=$rc cmd=[${BASH_COMMAND}]" >&2' ERR
+trap 'rc=$?; echo "=== init-firewall EXIT rc=$rc at $(date) ===" >&2' EXIT
+
 echo "=== Firewall init started at $(date) ==="
 
 # If a previous refresh loop is running, kill it — we're about to destroy
@@ -218,32 +242,65 @@ fi
 ip6tables -P INPUT DROP 2>/dev/null || true
 ip6tables -P OUTPUT DROP 2>/dev/null || true
 
-# 7. Verification
+# 7. Verification — defensive block.
+#
+# Wrapped in a function so:
+# - explicit exit-status capture per check (no `set -e` cascade
+#   surprises if a `curl` exits with a status the outer if-condition
+#   doesn't catch the way I expect)
+# - parameter expansion `${FIREWALL_EXTRA_DOMAINS%% *}` instead of the
+#   previous `EXTRA[0]` array reference, which under `set -u` could
+#   trigger an unbound-variable abort if the EXTRA array hadn't been
+#   populated for any reason (e.g. sudoers env_keep not configured for
+#   FIREWALL_EXTRA_DOMAINS, leaving it empty at the EARLIER block but
+#   somehow non-empty at this LATER block — a path that should be
+#   impossible but the array indirection made debugging it impossible)
+# - error messages always print BEFORE the function returns, so the
+#   ERR trap above shows them in the log even on partial flush
 echo "Firewall configuration complete"
 echo "Verifying firewall rules..."
-if curl --connect-timeout 5 https://example.com >/dev/null 2>&1; then
-    echo "ERROR: Firewall verification failed - was able to reach https://example.com"
-    exit 1
-else
-    echo "Firewall verification passed - unable to reach https://example.com as expected"
-fi
 
-if ! curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1; then
-    echo "ERROR: Firewall verification failed - unable to reach https://api.github.com"
-    exit 1
-else
-    echo "Firewall verification passed - able to reach https://api.github.com as expected"
-fi
+verify_firewall() {
+    local rc=0
 
-# Verify project-specific domains if configured
-if [ -n "$FIREWALL_EXTRA_DOMAINS" ]; then
-    first_extra="${EXTRA[0]}"
-    if ! curl -s --connect-timeout 5 -o /dev/null -w '%{http_code}' "https://$first_extra" | grep -qE '^[2-4][0-9][0-9]$'; then
-        echo "ERROR: Firewall verification failed - unable to reach $first_extra"
-        exit 1
+    # Check 1: an arbitrary domain NOT in the allowlist must be unreachable.
+    if curl --connect-timeout 5 -o /dev/null -s https://example.com 2>/dev/null; then
+        echo "ERROR: Firewall verification failed - was able to reach https://example.com" >&2
+        rc=1
     else
-        echo "Firewall verification passed - able to reach $first_extra as expected"
+        echo "Firewall verification passed - unable to reach https://example.com as expected"
     fi
+
+    # Check 2: a known-allowlisted domain (GitHub) must be reachable.
+    if curl --connect-timeout 5 -o /dev/null -s https://api.github.com/zen 2>/dev/null; then
+        echo "Firewall verification passed - able to reach https://api.github.com as expected"
+    else
+        echo "ERROR: Firewall verification failed - unable to reach https://api.github.com" >&2
+        rc=1
+    fi
+
+    # Check 3: first FIREWALL_EXTRA_DOMAINS entry, if configured.
+    # Use parameter expansion (no array indirection) so set -u can't
+    # trip even on weird env-state. ${var:-} guards against unbound.
+    local extra="${FIREWALL_EXTRA_DOMAINS:-}"
+    if [ -n "$extra" ]; then
+        local first_extra="${extra%% *}"
+        local code
+        code=$(curl -s --connect-timeout 5 -o /dev/null -w '%{http_code}' "https://$first_extra" 2>/dev/null || echo "000")
+        if [[ "$code" =~ ^[2-4][0-9][0-9]$ ]]; then
+            echo "Firewall verification passed - able to reach $first_extra (HTTP $code)"
+        else
+            echo "ERROR: Firewall verification failed - unable to reach $first_extra (curl=$code)" >&2
+            rc=1
+        fi
+    fi
+
+    return $rc
+}
+
+if ! verify_firewall; then
+    echo "=== Firewall init FAILED verification at $(date) ==="
+    exit 1
 fi
 
 echo "=== Firewall init completed successfully at $(date) ==="
