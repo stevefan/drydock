@@ -152,7 +152,16 @@ class SecretsBackend(Protocol):
     name: str
 
     def fetch(self, secret_name: str, desk_id: str) -> bytes | None:
-        """Return secret bytes, or None if not found."""
+        """Return secret bytes, or None if not found.
+
+        Sync-first: V2 ships only the file-backed backend, where fetch is
+        a stat + read with no I/O wait. Network-sourced backends (1Password
+        via `op` CLI, Vault, cloud SMs) should add `async def fetch_async`
+        as an additive method when they ship; the daemon will prefer
+        `fetch_async` when present and fall back to `fetch` otherwise.
+        Wrapping a sync `fetch` in `run_in_executor` works as a transition
+        but adds latency and noisier error semantics — not a long-term answer.
+        """
 
     def supports_rotation(self) -> bool: ...
     def rotate(self, secret_name: str) -> bytes | None: ...
@@ -167,6 +176,8 @@ secrets_source: "op://Private/myapp"
 Default `file`. Unknown backend: `ws create` rejects with `unknown_secrets_backend`.
 
 Lease semantics are backend-independent: `RequestCapability(type=SECRET, ...)` returns the same `CapabilityLease` shape regardless of backend.
+
+**Threat-model note for file-backed.** The "personal-fleet scale" framing of the V2.0 secrets-backend decision (see status block in `v2-design-overview.md`, 2026-04-16 entry) is right for backend choice but undersells secret density per host. The drydock-employee pattern (see `project_drydock_employee_pattern.md`) means N permissioned long-running agents per host, each holding its own entitlement set — `~/.drydock/secrets/` grows in agents × secrets, not in hosts. 0400 perms + OS-level disk encryption (FileVault on Mac, LUKS on Linux) are the load-bearing controls; daemon-level encryption-at-rest is defense-in-depth against root processes only. Worth restating in any future explicit threat-model doc.
 
 ## 8. Reversibility audit
 
