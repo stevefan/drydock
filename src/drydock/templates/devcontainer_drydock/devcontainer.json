@@ -1,0 +1,28 @@
+{
+  "name": "{{ project_name }}",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "TZ": "${localEnv:TZ:America/Los_Angeles}"
+    }
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW"
+  ],
+  "remoteUser": "node",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+    "TAILSCALE_AUTHKEY": "${localEnv:TAILSCALE_AUTHKEY:}",
+    "TAILSCALE_HOSTNAME": "${localEnv:TAILSCALE_HOSTNAME:{{ project_name }}-dev}",
+    "TAILSCALE_SERVE_PORT": "${localEnv:TAILSCALE_SERVE_PORT:3000}",
+    "REMOTE_CONTROL_NAME": "${localEnv:REMOTE_CONTROL_NAME:{{ project_name }}}",
+    "FIREWALL_EXTRA_DOMAINS": "${localEnv:FIREWALL_EXTRA_DOMAINS:}",
+    "FIREWALL_IPV6_HOSTS": "${localEnv:FIREWALL_IPV6_HOSTS:}"
+  },
+  "forwardPorts": [3000],
+  "postStartCommand": "test -f /workspace/.env.devcontainer && set -a && . /workspace/.env.devcontainer && set +a; sudo /usr/local/bin/init-firewall.sh && /usr/local/bin/start-tailscale.sh && nohup /usr/local/bin/start-remote-control.sh &",
+  "waitFor": "postStartCommand"
+}

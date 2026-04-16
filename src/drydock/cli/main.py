@@ -41,9 +41,11 @@ from drydock.cli.tailnet import tailnet  # noqa: E402
 from drydock.cli.host import host  # noqa: E402
 from drydock.cli.daemon import daemon  # noqa: E402
 from drydock.cli.upgrade import upgrade  # noqa: E402
+from drydock.cli.new import new  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(upgrade)
+cli.add_command(new)
 cli.add_command(list_cmd, name="list")
 cli.add_command(inspect_cmd, name="inspect")
 cli.add_command(stop)
