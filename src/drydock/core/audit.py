@@ -45,12 +45,27 @@ V2_EVENTS = frozenset({
 })
 
 
+def _resolve_log_path(log_path: Path | None) -> Path:
+    """Look up DEFAULT_LOG_PATH at call time.
+
+    Tests monkeypatch the module attribute after import; resolving the
+    default here (instead of in the function signature) makes the patch
+    take effect.
+    """
+    if log_path is not None:
+        return log_path
+    # Module-level lookup so test monkeypatching of audit.DEFAULT_LOG_PATH
+    # propagates to every caller without needing to re-import.
+    import drydock.core.audit as _self
+    return _self.DEFAULT_LOG_PATH
+
+
 def log_event(
     event: str,
     workspace_id: str,
     extra: dict | None = None,
     *,
-    log_path: Path = DEFAULT_LOG_PATH,
+    log_path: Path | None = None,
 ) -> None:
     """v1 audit emitter — host CLI commands.
 
@@ -64,7 +79,7 @@ def log_event(
     }
     if extra:
         entry.update(extra)
-    _append(log_path, entry)
+    _append(_resolve_log_path(log_path), entry)
 
 
 def emit_audit(
@@ -75,7 +90,7 @@ def emit_audit(
     method: str,
     result: Literal["ok", "error"],
     details: dict | None = None,
-    log_path: Path = DEFAULT_LOG_PATH,
+    log_path: Path | None = None,
     now: datetime | None = None,
 ) -> dict:
     """V2 daemon audit emitter (docs/v2-design-state.md §1a).
@@ -101,7 +116,7 @@ def emit_audit(
         "result": result,
         "details": details or {},
     }
-    _append(log_path, entry)
+    _append(_resolve_log_path(log_path), entry)
     return entry
 
 

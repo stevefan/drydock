@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from drydock.core import WsError
+from drydock.core.audit import emit_audit
 from drydock.core.checkout import create_checkout
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.overlay import OverlayConfig, remove_overlay, write_overlay
@@ -52,7 +53,6 @@ def create_desk(
     secrets_root: Path,
     dry_run: bool,
 ) -> dict:
-    del request_id
     del caller_desk_id
     spec = _validated_spec(params)
     registry = Registry(db_path=registry_path)
@@ -64,12 +64,25 @@ def create_desk(
                 message="workspace_already_running",
                 data={"fix": f"ws create {spec['name']} --force"},
             )
-        return _perform_create(
+        result = _perform_create(
             registry=registry,
             spec=spec,
             secrets_root=secrets_root,
             dry_run=dry_run,
         )
+        emit_audit(
+            "desk.created",
+            principal=None,
+            request_id=request_id,
+            method="CreateDesk",
+            result="ok",
+            details={
+                "desk_id": result.get("desk_id"),
+                "project": result.get("project"),
+                "parent_desk_id": None,
+            },
+        )
+        return result
     except WsError as exc:
         raise _rpc_error_from_ws_error(exc) from exc
     finally:
@@ -95,7 +108,6 @@ def destroy_desk(
     secrets_root: Path,
     dry_run: bool,
 ) -> dict[str, object]:
-    del request_id
     logger.info("wsd: DestroyDesk requested caller_desk_id=%s", caller_desk_id)
     target_name, target_hint = _validated_destroy_target(params)
 
@@ -110,6 +122,7 @@ def destroy_desk(
             )
 
         cascaded: list[str] = []
+        target_desk_id = workspace.id
         partial_failures = _destroy_tree(
             workspace,
             registry=registry,
@@ -121,11 +134,22 @@ def destroy_desk(
 
         result: dict[str, object] = {
             "destroyed": True,
-            "desk_id": workspace.id,
+            "desk_id": target_desk_id,
             "cascaded": cascaded,
         }
         if partial_failures:
             result["partial_failures"] = partial_failures
+        emit_audit(
+            "desk.destroyed",
+            principal=caller_desk_id,
+            request_id=request_id,
+            method="DestroyDesk",
+            result="error" if partial_failures else "ok",
+            details={
+                "desk_id": target_desk_id,
+                "cascaded_children": cascaded,
+            },
+        )
         return result
     finally:
         registry.close()
@@ -140,7 +164,6 @@ def spawn_child(
     secrets_root: Path,
     dry_run: bool,
 ) -> dict:
-    del request_id
     if caller_desk_id is None:
         raise _RpcError(code=-32004, message="unauthenticated")
 
@@ -159,13 +182,27 @@ def spawn_child(
         child_spec = _build_child_spec(spec)
         verdict = validate_spawn(parent_policy, child_spec)
         if isinstance(verdict, Reject):
+            emit_audit(
+                "desk.spawn_rejected",
+                principal=caller_desk_id,
+                request_id=request_id,
+                method="SpawnChild",
+                result="error",
+                details={
+                    "parent_desk_id": caller_desk_id,
+                    "reject": {
+                        "rule": verdict.rule,
+                        "offending_item": str(verdict.offending_item),
+                    },
+                },
+            )
             raise _RpcError(
                 code=-32001,
                 message="narrowness_violated",
                 data={"reject": _serialize_reject(verdict)},
             )
 
-        return _perform_create(
+        result = _perform_create(
             registry=registry,
             spec=spec,
             secrets_root=secrets_root,
@@ -173,6 +210,19 @@ def spawn_child(
             parent_desk_id=caller_desk_id,
             result_parent_desk_id=caller_desk_id,
         )
+        emit_audit(
+            "desk.spawned",
+            principal=caller_desk_id,
+            request_id=request_id,
+            method="SpawnChild",
+            result="ok",
+            details={
+                "desk_id": result.get("desk_id"),
+                "parent_desk_id": caller_desk_id,
+                "narrowness_check": "allow",
+            },
+        )
+        return result
     except WsError as exc:
         raise _RpcError(
             code=-32000,
@@ -516,11 +566,21 @@ def _destroy_one(
     # in-flight RequestCapability sees `desk_destroyed` rather than a
     # phantom lease against a soon-to-be-gone desk.
     try:
+        active_leases = registry.list_active_leases_for_desk(workspace.id)
         revoked = registry.revoke_leases_for_desk(workspace.id, "desk_destroyed")
         if revoked:
             logger.info(
                 "wsd: revoked %d active leases for desk_id=%s",
                 revoked, workspace.id,
+            )
+        for lease in active_leases:
+            emit_audit(
+                "lease.released",
+                principal=workspace.id,
+                request_id=None,
+                method="DestroyDesk",
+                result="ok",
+                details={"lease_id": lease.lease_id, "reason": "desk_destroyed"},
             )
     except Exception as exc:
         logger.warning("wsd: failed to revoke leases for %s: %s", workspace.id, exc)
@@ -531,6 +591,14 @@ def _destroy_one(
     logger.info("wsd: revoke token desk_id=%s", workspace.id)
     try:
         registry.delete_token(workspace.id)
+        emit_audit(
+            "token.revoked",
+            principal=workspace.id,
+            request_id=None,
+            method="DestroyDesk",
+            result="ok",
+            details={"desk_id": workspace.id},
+        )
         logger.info("wsd: token row removed desk_id=%s", workspace.id)
     except Exception as exc:
         logger.warning("wsd: failed to delete token row for %s: %s", workspace.id, exc)
@@ -669,6 +737,14 @@ def _perform_create(
         devc.check_available()
 
     issue_token_for_desk(ws.id, secrets_root=secrets_root, registry=registry)
+    emit_audit(
+        "token.issued",
+        principal=ws.id,
+        request_id=None,
+        method="CreateDesk" if parent_desk_id is None else "SpawnChild",
+        result="ok",
+        details={"desk_id": ws.id, "rotation_reason": None},
+    )
     ws = registry.update_state(ws.name, "provisioning")
     try:
         up_result = devc.up(

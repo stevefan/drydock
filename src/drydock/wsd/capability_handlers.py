@@ -25,6 +25,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID
+from drydock.core.audit import emit_audit
 from drydock.core.capability import CapabilityLease, CapabilityType
 from drydock.core.policy import CapabilityKind
 from drydock.core.registry import Registry
@@ -59,7 +60,6 @@ def request_capability(
     backend_name: str = "file",
     backend: SecretsBackend | None = None,
 ) -> dict:
-    del request_id
     if caller_desk_id is None:
         # The dispatcher should have rejected this already (requires_auth=True),
         # but defense-in-depth: handler must not run without a subject.
@@ -146,6 +146,20 @@ def request_capability(
             "wsd: capability lease issued lease_id=%s desk_id=%s secret=%s",
             lease.lease_id, caller_desk_id, spec["secret_name"],
         )
+        emit_audit(
+            "lease.issued",
+            principal=caller_desk_id,
+            request_id=request_id,
+            method="RequestCapability",
+            result="ok",
+            details={
+                "lease_id": lease.lease_id,
+                "desk_id": caller_desk_id,
+                "type": lease.type.value,
+                "scope": dict(lease.scope),
+                "expiry": None,
+            },
+        )
         return lease.to_wire()
     finally:
         registry.close()
@@ -159,7 +173,7 @@ def release_capability(
     registry_path: Path,
     secrets_root: Path,
 ) -> dict:
-    del request_id, secrets_root
+    del secrets_root
     if caller_desk_id is None:
         raise _RpcError(code=-32004, message="unauthenticated", data={"reason": "no_caller"})
 
@@ -196,6 +210,15 @@ def release_capability(
                     if workspace is not None and workspace.container_id:
                         _remove_materialized_secret(workspace.container_id, secret_name)
 
+        if revoked:
+            emit_audit(
+                "lease.released",
+                principal=caller_desk_id,
+                request_id=request_id,
+                method="ReleaseCapability",
+                result="ok",
+                details={"lease_id": lease_id, "reason": "client_release"},
+            )
         return {"lease_id": lease_id, "revoked": revoked}
     finally:
         registry.close()
