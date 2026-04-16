@@ -54,6 +54,12 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
         "name": ws.name,
     }
 
+    # Pin the container hostname to the tailscale/desk identity so surfaces
+    # that read hostname (like the Claude mobile "Choose environment" picker)
+    # show a descriptive name instead of Docker's default container-id prefix.
+    hostname = config.tailscale_hostname or _default_identity(ws)
+    overlay["runArgs"] = [f"--hostname={hostname}"]
+
     container_env = _build_container_env(ws, config)
     if container_env:
         overlay["containerEnv"] = container_env
@@ -116,6 +122,11 @@ def merge_into_base(base_path: Path, overlay: dict) -> dict:
                     seen.add(port)
                     merged.append(port)
             composite["forwardPorts"] = merged
+        elif key == "runArgs":
+            # Concatenate, not replace — base often has required flags like
+            # --cap-add=NET_ADMIN, --device=/dev/net/tun. Overlay appends its
+            # own (--hostname=...) without dropping the base's.
+            composite["runArgs"] = list(composite.get("runArgs", [])) + list(value)
         else:
             composite[key] = value
 
