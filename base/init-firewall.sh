@@ -3,8 +3,14 @@ set -euo pipefail  # Exit on error, undefined vars, and pipeline failures
 IFS=$'\n\t'       # Stricter word splitting
 
 LOG="/tmp/firewall.log"
+DOMAINS_FILE="/tmp/firewall-domains.txt"
 exec > >(tee -a "$LOG") 2>&1
 echo "=== Firewall init started at $(date) ==="
+
+# If a previous refresh loop is running, kill it — we're about to destroy
+# the ipset and rebuild, and the refresh loop would race against that.
+# A fresh refresh loop gets relaunched at the end of this script.
+pkill -f refresh-firewall-allowlist.sh 2>/dev/null || true
 
 # Project-specific domains to whitelist (space-separated, passed via env)
 FIREWALL_EXTRA_DOMAINS="${FIREWALL_EXTRA_DOMAINS:-}"
@@ -144,6 +150,11 @@ if [ -n "$FIREWALL_EXTRA_DOMAINS" ]; then
     ( IFS=' '; echo "Extra project domains: ${EXTRA[*]}" )
 fi
 
+# Persist the effective domain list for the refresh supervisor to consume.
+# Written before the resolution loop so refresh and initial resolution see
+# the same source of truth.
+printf '%s\n' "${ALL_DOMAINS[@]}" > "$DOMAINS_FILE"
+
 # Resolve and add all allowed domains
 # Unresolvable domains WARN but don't abort — a stale allowlist entry
 # (Tailscale DERP rotations, domains renamed / deprecated upstream)
@@ -236,3 +247,14 @@ if [ -n "$FIREWALL_EXTRA_DOMAINS" ]; then
 fi
 
 echo "=== Firewall init completed successfully at $(date) ==="
+
+# 8. Launch the background refresh supervisor. It re-resolves every domain
+#    in $DOMAINS_FILE every FIREWALL_REFRESH_INTERVAL seconds (default 900)
+#    and additively adds any new IPs to the allowed-domains ipset. Handles
+#    CDN IP rotation (Akamai, Cloudflare, etc.) that otherwise makes the
+#    ipset go stale over a container's lifetime.
+if [ -x /usr/local/bin/refresh-firewall-allowlist.sh ]; then
+    nohup /usr/local/bin/refresh-firewall-allowlist.sh >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    echo "Background refresh supervisor launched (PID $!)"
+fi
