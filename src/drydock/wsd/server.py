@@ -613,6 +613,15 @@ def serve(
             report.rolled_back,
             report.unknown_method,
         )
+        # Per docs/v2-design-protocol.md §3: bounded task log. One sweep
+        # at boot; in-progress rows are never evicted.
+        registry = Registry(db_path=_REGISTRY_PATH)
+        try:
+            evicted = registry.evict_old_task_log()
+            if evicted:
+                logger.info("wsd: evicted %d old task_log entries", evicted)
+        finally:
+            registry.close()
     with _Server(str(socket_path), _Handler) as server:
         logger.info("wsd: listening on %s", socket_path)
         try:

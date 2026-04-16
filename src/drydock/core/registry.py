@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import WsError
@@ -300,6 +300,37 @@ class Registry:
         if not fields:
             return
         self.update_workspace(name, **fields)
+
+    # ----- Task log maintenance (gotcha #1) -----
+
+    def evict_old_task_log(
+        self,
+        *,
+        older_than_hours: int = 24,
+        now: datetime | None = None,
+    ) -> int:
+        """Delete completed/failed task_log rows older than the cutoff.
+
+        Per docs/v2-design-protocol.md §3: bounded LRU — evict entries
+        that are BOTH older than 24h AND in a terminal state. In-progress
+        rows are preserved regardless of age (they may still be reconciled
+        by the recovery sweeper).
+
+        `now` is settable for deterministic testing; production passes None.
+        """
+        cutoff = (now or datetime.now(timezone.utc)) - timedelta(hours=older_than_hours)
+        cutoff_iso = cutoff.isoformat()
+        cur = self._conn.execute(
+            """
+            DELETE FROM task_log
+            WHERE status IN ('completed', 'failed')
+              AND completed_at IS NOT NULL
+              AND completed_at < ?
+            """,
+            (cutoff_iso,),
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     # ----- Capability leases (Slice 3b) -----
 
