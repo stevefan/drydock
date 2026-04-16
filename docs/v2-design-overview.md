@@ -8,6 +8,8 @@
 
 **Tailnet identity lifecycle ADDED to V2 (2026-04-15, Steven sign-off).** Daemon authoritatively cleans up tailnet device records on `DestroyDesk` and exposes `PruneStaleTailnetDevices` for orphan cleanup. Justified by the same "forcing function surfaced" criterion the trim line uses — auction-crawl Mac→Hetzner deployment 2026-04-14 broke identity continuity (canonical hostname `auction-crawl` held by an offline ghost; new desk took `auction-crawl-1`). Bounded scope: one new admin RPC, two audit events, daemon-level admin token (NOT a per-desk capability — see design doc §3 for why). See [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md). Steven explicitly signed off on inclusion in V2 over a v1.x backport.
 
+**Secrets backend default CONFIRMED: file-backed (2026-04-16, Steven sign-off).** V2.0 ships with `FileBackend` as the only concrete `SecretsBackend` implementation, per `v2-design-capability-broker.md` §7. Plugin protocol reserved; 1Password, Vault, cloud secret managers are additive future backends, no RPC changes required. Rationale: personal-fleet scale doesn't yet demand centralized rotation; 1P would require bootstrapping a service-account token per host (new secret-to-transport chicken-and-egg); file-backed inherits Phase 1 conventions that already work. `wsd.toml` should accept `[secrets] backend = "file"` (default) with future values rejected as `unknown_secrets_backend` until they ship. Drydock-employee patterns that need centralized rotation are V2.1+ (via additional backend) or cross-desk capability delegation in V3 — not a V2.0 blocker.
+
 ## Reading order
 
 Read in this order; each doc assumes the ones before it.
