@@ -511,6 +511,21 @@ def _destroy_one(
             logger.warning("wsd: failed to remove container for %s: %s", workspace.id, exc)
             failures.append(_failure(workspace.id, "container_remove", exc))
 
+    # Capability-broker.md §6a: outstanding leases for the desk are
+    # marked revoked before token + container teardown, so a racing
+    # in-flight RequestCapability sees `desk_destroyed` rather than a
+    # phantom lease against a soon-to-be-gone desk.
+    try:
+        revoked = registry.revoke_leases_for_desk(workspace.id, "desk_destroyed")
+        if revoked:
+            logger.info(
+                "wsd: revoked %d active leases for desk_id=%s",
+                revoked, workspace.id,
+            )
+    except Exception as exc:
+        logger.warning("wsd: failed to revoke leases for %s: %s", workspace.id, exc)
+        failures.append(_failure(workspace.id, "lease_revoke", exc))
+
     secret_dir = Path(secrets_root) / workspace.id
     token_path = secret_dir / "drydock-token"
     logger.info("wsd: revoke token desk_id=%s", workspace.id)

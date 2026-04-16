@@ -255,3 +255,47 @@ def test_destroy_desk_replayed_request_after_target_gone(tmp_path, monkeypatch):
     assert [row["status"] for row in tasks] == ["completed", "completed"]
     assert json.loads(tasks[0]["outcome_json"]) == destroy1
     assert json.loads(tasks[1]["outcome_json"]) == destroy2
+
+
+def test_destroy_desk_revokes_active_capability_leases(tmp_path, monkeypatch):
+    """Capability-broker.md §6a: outstanding leases must be revoked on
+    desk destroy so a racing in-flight RequestCapability sees a clear
+    `desk_destroyed` signal rather than a phantom grant.
+    """
+    from datetime import datetime, timezone
+    from drydock.core.capability import CapabilityLease, CapabilityType
+
+    registry_path, secrets_root = _setup_env(tmp_path, monkeypatch)
+    desk, _ = _create_desk(tmp_path, registry_path, secrets_root, name="desk-leased", request_id="create-leased")
+
+    reg = Registry(db_path=registry_path)
+    try:
+        reg.insert_lease(CapabilityLease(
+            lease_id="ls_active",
+            desk_id=desk["desk_id"],
+            type=CapabilityType.SECRET,
+            scope={"secret_name": "anthropic_api_key"},
+            issued_at=datetime.now(timezone.utc),
+            expiry=None,
+            issuer="wsd",
+        ))
+    finally:
+        reg.close()
+
+    _call_destroy(
+        "destroy-leased",
+        params={"name": "desk-leased"},
+        registry_path=registry_path,
+        secrets_root=secrets_root,
+        monkeypatch=monkeypatch,
+    )
+
+    reg = Registry(db_path=registry_path)
+    try:
+        lease = reg.get_lease("ls_active")
+    finally:
+        reg.close()
+
+    assert lease is not None
+    assert lease.revoked is True
+    assert lease.revocation_reason == "desk_destroyed"
