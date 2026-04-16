@@ -209,7 +209,9 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
                 )
             else:
                 logger.info("cli: routing via daemon")
-            call_daemon("DestroyDesk", {"name": name, "force": True})
+            # DestroyDesk can stop+remove a large container and cascade; give
+            # it a 2-min budget (default 30s too short for real teardown).
+            call_daemon("DestroyDesk", {"name": name, "force": True}, timeout=120.0)
         except DaemonUnavailable:
             logger.info("cli.create: daemon unavailable, falling back to direct")
         except DaemonRpcError as exc:
@@ -223,7 +225,13 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
             )
         else:
             logger.info("cli: routing via daemon")
-        daemon_result = call_daemon("CreateDesk", daemon_params)
+        # Fresh devcontainer builds can take several minutes (apt installs,
+        # multi-stage compiles). 30s default is too short; fall-through
+        # timeouts leave the daemon doing work nobody's waiting on, and the
+        # user sees "timed out" on a call that would have succeeded. 15min
+        # accommodates realistic first-builds; cached rebuilds finish in
+        # seconds either way.
+        daemon_result = call_daemon("CreateDesk", daemon_params, timeout=900.0)
     except DaemonUnavailable:
         logger.info("cli.create: daemon unavailable, falling back to direct")
     except DaemonRpcError as exc:
