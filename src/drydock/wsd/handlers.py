@@ -673,6 +673,12 @@ def _perform_create(
         container_id=container_id or "",
         state="running",
     )
+
+    if container_id and not dry_run:
+        from drydock.core.trust import _read_workspace_folder_from_overlay, seed_workspace_trust
+        in_container_folder = _read_workspace_folder_from_overlay(str(overlay_path))
+        seed_workspace_trust(container_id, in_container_folder)
+
     result = {
         "desk_id": ws.id,
         "name": ws.name,

@@ -13,6 +13,7 @@ from drydock.core.checkout import create_checkout
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.project_config import ProjectConfig, load_project_config
+from drydock.core.trust import _read_workspace_folder_from_overlay, seed_workspace_trust
 from drydock.core.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -391,6 +392,10 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         registry.update_state(ws.name, "error")
         log_event("workspace.error", ws.id)
         raise
+
+    if container_id and not dry_run:
+        in_container_folder = _read_workspace_folder_from_overlay(str(overlay_path))
+        seed_workspace_trust(container_id, in_container_folder)
 
     human_lines = _workspace_human_lines(ws)
     if lifecycle_warning:
