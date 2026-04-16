@@ -119,6 +119,21 @@ def merge_into_base(base_path: Path, overlay: dict) -> dict:
         else:
             composite[key] = value
 
+    # Rewrite relative build.dockerfile + build.context to absolute paths
+    # anchored at the source devcontainer.json's directory. Necessary when the
+    # source devcontainer.json is NOT at the conventional .devcontainer/
+    # location (e.g., .devcontainer/drydock/ via devcontainer_subpath), because
+    # devcontainer CLI resolves relative build paths against a synthetic
+    # <workspace>/.devcontainer/ regardless of where the override-config sits.
+    build = composite.get("build")
+    if isinstance(build, dict):
+        dockerfile = build.get("dockerfile")
+        if isinstance(dockerfile, str) and not Path(dockerfile).is_absolute():
+            build["dockerfile"] = str((base_path.parent / dockerfile).resolve())
+        context = build.get("context")
+        if isinstance(context, str) and not Path(context).is_absolute():
+            build["context"] = str((base_path.parent / context).resolve())
+
     return composite
 
 

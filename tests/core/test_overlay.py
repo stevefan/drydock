@@ -178,7 +178,10 @@ class TestMergeIntoBase:
             "mounts": ["source=/a,target=/b,type=bind"],
         }
         composite = merge_into_base(base_path, overlay)
-        assert composite["build"] == {"dockerfile": "Dockerfile"}
+        # merge_into_base rewrites relative build.dockerfile to absolute so
+        # devcontainer CLI resolves it correctly when the source devcontainer.json
+        # lives at a non-default subpath (e.g. .devcontainer/drydock/).
+        assert composite["build"]["dockerfile"] == str((base_path.parent / "Dockerfile").resolve())
         assert composite["containerEnv"]["EXISTING"] == "yes"
         assert composite["containerEnv"]["NEW_VAR"] == "val"
         assert composite["mounts"] == ["source=/a,target=/b,type=bind"]
@@ -263,7 +266,7 @@ class TestWriteOverlay:
         path = write_overlay(ws, out, base_devcontainer_path=base)
         data = json.loads(path.read_text())
         assert data["name"] == ws.name
-        assert data["build"] == {"dockerfile": "Dockerfile"}
+        assert data["build"]["dockerfile"] == str((base.parent / "Dockerfile").resolve())
 
     def test_config_passed_through(self, ws, tmp_path):
         base = self._make_base(tmp_path)
