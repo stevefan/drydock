@@ -145,12 +145,19 @@ if [ -n "$FIREWALL_EXTRA_DOMAINS" ]; then
 fi
 
 # Resolve and add all allowed domains
+# Unresolvable domains WARN but don't abort — a stale allowlist entry
+# (Tailscale DERP rotations, domains renamed / deprecated upstream)
+# shouldn't kill the whole firewall init. The desk comes up without
+# that domain in the ipset; access via that specific hostname fails
+# at traffic time, which is the right failure mode. Invalid IP format
+# from DNS is still fatal — that indicates something upstream is
+# returning garbage.
 for domain in "${ALL_DOMAINS[@]}"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
-        exit 1
+        echo "WARNING: Failed to resolve $domain (continuing)"
+        continue
     fi
 
     while read -r ip; do
