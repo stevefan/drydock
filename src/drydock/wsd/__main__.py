@@ -14,6 +14,7 @@ import signal
 import sys
 from pathlib import Path
 
+from drydock.wsd.config import ConfigError, load_wsd_config
 from drydock.wsd.server import serve
 
 
@@ -39,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
+    parser.add_argument(
+        "--config",
+        default=str(Path.home() / ".drydock" / "wsd.toml"),
+        help="Path to wsd.toml (default: ~/.drydock/wsd.toml; missing file = defaults)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -46,12 +52,20 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+
+    try:
+        config = load_wsd_config(Path(args.config))
+    except ConfigError as exc:
+        logging.error("wsd: configuration error: %s", exc)
+        return 2
+
     _install_signal_handlers()
     serve(
         Path(args.socket),
         Path(args.registry) if args.registry else None,
         _secrets_root_from_env(),
         _env_truthy(os.environ.get("DRYDOCK_WSD_DRY_RUN")),
+        secrets_backend=config.secrets_backend,
     )
     return 0
 
