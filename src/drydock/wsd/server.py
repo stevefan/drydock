@@ -371,6 +371,23 @@ def _release_capability(
     )
 
 
+def _get_audit(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
+    # Read-only introspection per protocol §2; no task_log idempotency
+    # needed. Reads the audit.log file directly. requires_auth=False.
+    from drydock.core.audit import DEFAULT_LOG_PATH
+    from drydock.wsd.audit_handlers import get_audit
+    return get_audit(
+        params,
+        request_id,
+        caller_desk_id,
+        log_path=DEFAULT_LOG_PATH,
+    )
+
+
 def _finish_task_log(
     registry: Registry,
     request_id: str,
@@ -419,6 +436,7 @@ _METHODS: dict[str, MethodSpec] = {
     "SpawnChild": MethodSpec(handler=_spawn_child, requires_auth=True),
     "RequestCapability": MethodSpec(handler=_request_capability, requires_auth=True),
     "ReleaseCapability": MethodSpec(handler=_release_capability, requires_auth=True),
+    "GetAudit": MethodSpec(handler=_get_audit, requires_auth=False),
     "wsd.health": MethodSpec(handler=_health, requires_auth=False),
     "wsd.whoami": MethodSpec(handler=_whoami, requires_auth=True),
 }
