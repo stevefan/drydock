@@ -327,3 +327,57 @@ def test_spawn_child_with_devcontainer_subpath(wsd):
     assert config["devcontainer_subpath"] == ".devcontainer/drydock"
     expected_path = Path(workspace["worktree_path"]) / ".devcontainer" / "drydock" / "devcontainer.json"
     assert expected_path.exists()
+
+
+def test_spawn_child_rate_limited_when_too_many_provisioning(wsd):
+    """Gotcha #2: soft per-parent cap on concurrent SpawnChild.
+
+    A parent with >= SPAWN_CHILD_INFLIGHT_MAX children in 'provisioning'
+    state must be rejected with rate_limited. The cap prevents a runaway
+    parent from queuing unbounded container builds.
+    """
+    parent, token = _create_parent(
+        wsd,
+        name="parent-rate",
+        request_id="parent-rate",
+        capabilities=["spawn_children"],
+        domains=["a.com"],
+    )
+
+    # Inject provisioning-state children directly into the registry to
+    # simulate in-flight SpawnChild calls without actually building
+    # containers. SPAWN_CHILD_INFLIGHT_MAX defaults to 5; we inject 5.
+    conn = _connect(wsd.registry_path)
+    for i in range(5):
+        child_id = f"ws_fake_child_{i}"
+        conn.execute(
+            """INSERT INTO workspaces
+               (id, name, project, repo_path, branch, state,
+                created_at, updated_at, config, parent_desk_id)
+               VALUES (?, ?, ?, ?, ?, 'provisioning', datetime('now'),
+                       datetime('now'), '{}', ?)""",
+            (child_id, f"fake-child-{i}", "proj",
+             str(wsd.home / "repo-parent-rate"), f"ws/fake-child-{i}",
+             parent["desk_id"]),
+        )
+    conn.commit()
+    conn.close()
+
+    response = wsd.call_rpc(
+        "SpawnChild",
+        params={
+            "project": "proj",
+            "name": "child-rate-blocked",
+            "repo_path": str(wsd.home / "repo-parent-rate"),
+            "firewall_extra_domains": ["a.com"],
+            "capabilities": ["spawn_children"],
+        },
+        request_id="spawn-rate-blocked",
+        auth=token,
+    )
+
+    error = response["error"]
+    assert error["code"] == -32014
+    assert error["message"] == "rate_limited"
+    assert error["data"]["in_flight"] == 5
+    assert error["data"]["max"] == 5

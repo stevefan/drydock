@@ -32,6 +32,15 @@ logger = logging.getLogger(__name__)
 
 _REQUIRED_PARAMS = ("project", "name")
 DEFAULT_DEVCONTAINER_SUBPATH = ".devcontainer"
+
+# Soft cap on concurrent SpawnChild calls per parent desk. Belt for the
+# DevcontainerCLI bottleneck — a runaway parent calling SpawnChild in a
+# loop would otherwise queue N container builds against the same `docker
+# build` host. Resource budgets per capability-broker doc §4 are deferred
+# to V3; this cap is a safety floor not a quota system. Override via env
+# for ops who genuinely need wider concurrency.
+import os as _os
+SPAWN_CHILD_INFLIGHT_MAX = int(_os.environ.get("DRYDOCK_SPAWN_CHILD_INFLIGHT_MAX", "5"))
 _OVERLAY_PARAM_FIELDS = (
     "tailscale_hostname",
     "tailscale_serve_port",
@@ -176,6 +185,23 @@ def spawn_child(
                 code=-32001,
                 message="workspace_already_running",
                 data={"fix": f"ws create {spec['name']} --force"},
+            )
+
+        # Per-parent in-flight cap. Counts children already in
+        # 'provisioning' state (the window between create_workspace
+        # and the container reaching 'running'). Cheaper than parsing
+        # task_log; reuses an existing column.
+        in_flight = _count_provisioning_children(registry, caller_desk_id)
+        if in_flight >= SPAWN_CHILD_INFLIGHT_MAX:
+            raise _RpcError(
+                code=-32014,
+                message="rate_limited",
+                data={
+                    "in_flight": in_flight,
+                    "max": SPAWN_CHILD_INFLIGHT_MAX,
+                    "fix": "wait for in-flight spawns to complete or "
+                           "raise DRYDOCK_SPAWN_CHILD_INFLIGHT_MAX",
+                },
             )
 
         parent_policy = _load_parent_policy(registry, caller_desk_id)
@@ -652,6 +678,23 @@ def _destroy_one(
 
 def _failure(desk_id: str, step: str, error: Exception | str) -> dict[str, str]:
     return {"desk_id": desk_id, "step": step, "error": str(error)}
+
+
+def _count_provisioning_children(registry: Registry, parent_desk_id: str) -> int:
+    """Count children of `parent_desk_id` currently in 'provisioning' state.
+
+    Used by SpawnChild to enforce the per-parent in-flight cap. Cheap
+    SQL count; no row materialization. Uses the existing parent_desk_id
+    column added in the V2 schema migration.
+    """
+    row = registry._conn.execute(
+        """
+        SELECT COUNT(*) AS n FROM workspaces
+        WHERE parent_desk_id = ? AND state = 'provisioning'
+        """,
+        (parent_desk_id,),
+    ).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def _validate_devcontainer_subpath(devcontainer_subpath: str) -> None:
