@@ -10,6 +10,26 @@
 
 **Secrets backend default CONFIRMED: file-backed (2026-04-16, Steven sign-off).** V2.0 ships with `FileBackend` as the only concrete `SecretsBackend` implementation, per `v2-design-capability-broker.md` §7. Plugin protocol reserved; 1Password, Vault, cloud secret managers are additive future backends, no RPC changes required. Rationale: personal-fleet scale doesn't yet demand centralized rotation; 1P would require bootstrapping a service-account token per host (new secret-to-transport chicken-and-egg); file-backed inherits Phase 1 conventions that already work. `wsd.toml` should accept `[secrets] backend = "file"` (default) with future values rejected as `unknown_secrets_backend` until they ship. Drydock-employee patterns that need centralized rotation are V2.1+ (via additional backend) or cross-desk capability delegation in V3 — not a V2.0 blocker.
 
+---
+
+**Session handoff note (2026-04-16, opus session).** Parallel session reviewed the V2 daemon corpus shipped since `6456daf`. Verdict: **Slices 1a–2c genuinely work end-to-end**; no design drift; tests are real contracts (not mock theater); new concepts (`compliance.yaml`, `ws new`, `ws upgrade`, workspace-trust auto-seed) are orthogonal or load-bearing, not scope creep. Workspace-trust auto-seed specifically resolves a papercut the auction-crawl deployment hit manually. Good work.
+
+**Things I didn't touch** (so you know it's still yours to ship): RequestCapability handler, FileBackend concrete class, GetAudit emitter/streaming, `wsd.toml` `[secrets]` config loader. Secrets backend decision is now locked to file (above entry); you have clearance to implement straight.
+
+**Gotchas I surfaced during review worth addressing when convenient** (not blocking V2.0 ship, but on the docket):
+
+1. **Task-log LRU eviction not implemented** per protocol §3. Small pressure today; will grow with traffic. A cleanup pass on boot (drop entries older than 24h AND in terminal state) would handle it.
+2. **No rate-limit on `SpawnChild`**. A parent desk calling it 1000 times bottlenecks on DevcontainerCLI. Resource-budget rules deferred to V3 per capability-broker doc §4, but ops would benefit from a soft cap (N in-flight per parent) as a belt.
+3. **Nested spawn from desk-mode has no E2E test.** Socket is bind-mounted, token is readable; path exists but the smoke test only exercises host CLI. First real nested spawn attempt may surface socket-side issues (timeout tuning, error propagation). Low severity; design sound.
+4. **Uniform capability primitive** (per `project_v2_capability_primitive.md`): validator currently takes `(parent, child)`. Future occupant/session scoping (per `project_drydock_employee_pattern.md`) wants `(holder, requester)`. Adding the third case later has medium reversibility cost — worth parameterizing soon if you're touching the validator signature for other reasons.
+
+**New pattern notes worth reading** (landed in `~/.claude/projects/.../memory/` and indexed in `MEMORY.md`):
+
+- `project_drydock_employee_pattern.md` — names what V2 is actually *for* operationally beyond nested-spawn. Articulates the tier between "interactive Claude on laptop" and "deterministic cron script." First concrete instance: a fleet-auth desk holding claude.ai OAuth + refreshing in place, serving via capability broker. V2.1+ practical target.
+- `project_secrets_backend_decision.md` — full rationale for today's file-backed commit + what the decision locks in for Slice 3 handler code (bytes-not-path contract, error taxonomy, DI shape).
+
+**Session side-effects outside drydock** (FYI, won't affect your work): auction-crawl desk force-recreated on `drydock-base:v1.0.7`; volume mount that silently unmounted over 28h is re-live; operator's govdeals challenge-page patch landed on microfoundry main; adaptive-cadence wrapper for smart operator installed on a 12h cron; remote-control currently 401-failing because the transplanted Mac `.credentials.json` expired (Mac uses keychain, not the file). Fix is `tailscale ssh node@auction-crawl-1` → `claude auth login` — Linux-native OAuth state will self-refresh from then on.
+
 ## Reading order
 
 Read in this order; each doc assumes the ones before it.
