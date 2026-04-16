@@ -73,6 +73,68 @@ def test_create_desk_happy_path(wsd):
     conn.close()
 
 
+def test_create_desk_applies_overlay_fields(wsd):
+    repo = wsd.home / "repo-overlay"
+    _init_repo(repo)
+
+    response = wsd.call_rpc(
+        "CreateDesk",
+        params={
+            "project": "proj",
+            "name": "desk-overlay",
+            "repo_path": str(repo),
+            "tailscale_hostname": "test-ws-hostname",
+            "remote_control_name": "Test Display",
+            "firewall_extra_domains": ["example.com"],
+        },
+        request_id="req-overlay",
+    )
+    result = response["result"]
+
+    conn = _connect(wsd.registry_path)
+    workspace = conn.execute(
+        "SELECT config FROM workspaces WHERE name = ?",
+        ("desk-overlay",),
+    ).fetchone()
+    conn.close()
+
+    assert workspace is not None
+    config = json.loads(workspace["config"])
+    assert config["tailscale_hostname"] == "test-ws-hostname"
+    assert config["remote_control_name"] == "Test Display"
+    assert config["firewall_extra_domains"] == ["example.com"]
+
+    overlay_path = Path(config["overlay_path"])
+    overlay = json.loads(overlay_path.read_text())
+
+    assert result["state"] == "running"
+    assert overlay["containerEnv"]["TAILSCALE_HOSTNAME"] == "test-ws-hostname"
+    assert overlay["containerEnv"]["REMOTE_CONTROL_NAME"] == "Test Display"
+    assert "example.com" in overlay["containerEnv"]["FIREWALL_EXTRA_DOMAINS"].split()
+
+
+def test_create_desk_rejects_bad_overlay_field_type(wsd):
+    repo = wsd.home / "repo-overlay-bad-type"
+    _init_repo(repo)
+
+    response = wsd.call_rpc(
+        "CreateDesk",
+        params={
+            "project": "proj",
+            "name": "desk-overlay-bad-type",
+            "repo_path": str(repo),
+            "firewall_extra_domains": "not-a-list",
+        },
+        request_id="req-overlay-bad-type",
+    )
+    error = response["error"]
+
+    assert error["code"] == -32602
+    assert error["message"] == "invalid_params"
+    assert error["data"]["field"] == "firewall_extra_domains"
+    assert error["data"]["reason"] == "expected list[str]"
+
+
 def test_create_desk_idempotent_by_request_id(wsd):
     repo = wsd.home / "repo-idempotent"
     _init_repo(repo)

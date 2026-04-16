@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -30,6 +31,16 @@ logger = logging.getLogger(__name__)
 
 _REQUIRED_PARAMS = ("project", "name")
 DEFAULT_DEVCONTAINER_SUBPATH = ".devcontainer"
+_OVERLAY_PARAM_FIELDS = (
+    "tailscale_hostname",
+    "tailscale_serve_port",
+    "tailscale_authkey_env_var",
+    "remote_control_name",
+    "firewall_extra_domains",
+    "firewall_ipv6_hosts",
+    "forward_ports",
+    "claude_profile",
+)
 
 
 def create_desk(
@@ -172,7 +183,7 @@ def spawn_child(
         registry.close()
 
 
-def _validated_spec(params: dict | list | None) -> dict[str, str]:
+def _validated_spec(params: dict | list | None) -> dict[str, object]:
     missing = list(_REQUIRED_PARAMS)
     if isinstance(params, dict):
         missing = [
@@ -223,6 +234,10 @@ def _validated_spec(params: dict | list | None) -> dict[str, str]:
         params.get("firewall_extra_domains"),
         field_name="firewall_extra_domains",
     )
+    firewall_ipv6_hosts = _validated_string_list(
+        params.get("firewall_ipv6_hosts"),
+        field_name="firewall_ipv6_hosts",
+    )
     secret_entitlements = _validated_string_list(
         params.get("secret_entitlements"),
         field_name="secret_entitlements",
@@ -243,6 +258,30 @@ def _validated_spec(params: dict | list | None) -> dict[str, str]:
         params.get("capabilities"),
         field_name="capabilities",
     )
+    tailscale_hostname = _validated_optional_string(
+        params.get("tailscale_hostname"),
+        field_name="tailscale_hostname",
+    )
+    tailscale_serve_port = _validated_optional_int(
+        params.get("tailscale_serve_port"),
+        field_name="tailscale_serve_port",
+    )
+    tailscale_authkey_env_var = _validated_optional_string(
+        params.get("tailscale_authkey_env_var"),
+        field_name="tailscale_authkey_env_var",
+    )
+    remote_control_name = _validated_optional_string(
+        params.get("remote_control_name"),
+        field_name="remote_control_name",
+    )
+    forward_ports = _validated_int_list(
+        params.get("forward_ports"),
+        field_name="forward_ports",
+    )
+    claude_profile = _validated_optional_string(
+        params.get("claude_profile"),
+        field_name="claude_profile",
+    )
 
     return {
         "project": project,
@@ -253,7 +292,14 @@ def _validated_spec(params: dict | list | None) -> dict[str, str]:
         "image": image,
         "owner": owner,
         "devcontainer_subpath": devcontainer_subpath,
+        "tailscale_hostname": tailscale_hostname,
+        "tailscale_serve_port": tailscale_serve_port,
+        "tailscale_authkey_env_var": tailscale_authkey_env_var,
+        "remote_control_name": remote_control_name,
         "firewall_extra_domains": firewall_extra_domains,
+        "firewall_ipv6_hosts": firewall_ipv6_hosts,
+        "forward_ports": forward_ports,
+        "claude_profile": claude_profile,
         "secret_entitlements": secret_entitlements,
         "extra_mounts": extra_mounts,
         "delegatable_firewall_domains": delegatable_firewall_domains,
@@ -292,9 +338,93 @@ def _validated_string_list(value: object, *, field_name: str) -> list[str]:
         raise _RpcError(
             code=-32602,
             message="invalid_params",
-            data={"field": field_name},
+            data={"field": field_name, "reason": "expected list[str]"},
         )
     return value
+
+
+def _validated_int_list(value: object, *, field_name: str) -> list[int]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, int) for item in value):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"field": field_name, "reason": "expected list[int]"},
+        )
+    return value
+
+
+def _validated_optional_string(value: object, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"field": field_name, "reason": "expected str"},
+        )
+    return value
+
+
+def _validated_optional_int(value: object, *, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"field": field_name, "reason": "expected int"},
+        )
+    return value
+
+
+def _overlay_from_spec(spec: dict[str, object]) -> OverlayConfig:
+    kwargs: dict[str, object] = {}
+
+    tailscale_hostname = spec.get("tailscale_hostname")
+    if isinstance(tailscale_hostname, str):
+        kwargs["tailscale_hostname"] = tailscale_hostname
+
+    tailscale_serve_port = spec.get("tailscale_serve_port")
+    if isinstance(tailscale_serve_port, int):
+        kwargs["tailscale_serve_port"] = tailscale_serve_port
+
+    tailscale_authkey_env_var = spec.get("tailscale_authkey_env_var")
+    if isinstance(tailscale_authkey_env_var, str):
+        authkey = os.getenv(tailscale_authkey_env_var, "")
+        if authkey:
+            kwargs["tailscale_authkey"] = authkey
+
+    remote_control_name = spec.get("remote_control_name")
+    if isinstance(remote_control_name, str):
+        kwargs["remote_control_name"] = remote_control_name
+
+    firewall_extra_domains = spec.get("firewall_extra_domains")
+    if isinstance(firewall_extra_domains, list) and firewall_extra_domains:
+        kwargs["firewall_extra_domains"] = firewall_extra_domains
+
+    firewall_ipv6_hosts = spec.get("firewall_ipv6_hosts")
+    if isinstance(firewall_ipv6_hosts, list) and firewall_ipv6_hosts:
+        kwargs["firewall_ipv6_hosts"] = firewall_ipv6_hosts
+
+    forward_ports = spec.get("forward_ports")
+    if isinstance(forward_ports, list) and forward_ports:
+        kwargs["forward_ports"] = forward_ports
+
+    claude_profile = spec.get("claude_profile")
+    if isinstance(claude_profile, str):
+        kwargs["claude_profile"] = claude_profile
+
+    return OverlayConfig(**kwargs)
+
+
+def _overlay_config_data(spec: dict[str, object]) -> dict[str, object]:
+    return {
+        field: spec[field]
+        for field in _OVERLAY_PARAM_FIELDS
+        if field in spec and spec[field] is not None and spec[field] != []
+    }
 
 
 def _lookup_destroy_target(
@@ -460,6 +590,8 @@ def _perform_create(
     parent_desk_id: str | None = None,
     result_parent_desk_id: str | None = None,
 ) -> dict[str, object]:
+    overlay_config = _overlay_from_spec(spec)
+    overlay_config_data = _overlay_config_data(spec)
     ws = Workspace(
         name=str(spec["name"]),
         project=str(spec["project"]),
@@ -471,6 +603,7 @@ def _perform_create(
         config={
             "devcontainer_subpath": str(spec["devcontainer_subpath"]),
             "extra_mounts": list(spec["extra_mounts"]),
+            **overlay_config_data,
         },
     )
     ws = registry.create_workspace(ws)
@@ -503,7 +636,7 @@ def _perform_create(
     overlay_path = write_overlay(
         ws,
         Path.home() / ".drydock" / "overlays",
-        OverlayConfig(),
+        overlay_config,
         base_devcontainer_path=devcontainer_json,
     )
     ws = registry.update_workspace(
@@ -512,6 +645,7 @@ def _perform_create(
             "overlay_path": str(overlay_path),
             "devcontainer_subpath": devcontainer_subpath,
             "extra_mounts": list(spec["extra_mounts"]),
+            **overlay_config_data,
         },
     )
 

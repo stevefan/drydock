@@ -12,7 +12,7 @@ from drydock.core.audit import log_event
 from drydock.core.checkout import create_checkout
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.overlay import OverlayConfig, write_overlay
-from drydock.core.project_config import load_project_config
+from drydock.core.project_config import ProjectConfig, load_project_config
 from drydock.core.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,30 @@ def _ensure_gitconfig_stub() -> None:
     if not gitconfig.exists():
         gitconfig.touch(mode=0o644)
         logger.info("Created empty %s for devcontainer bind-mount", gitconfig)
+
+
+def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
+    if proj_cfg is None:
+        return {}
+
+    params: dict[str, object] = {}
+    if proj_cfg.tailscale_hostname is not None:
+        params["tailscale_hostname"] = proj_cfg.tailscale_hostname
+    if proj_cfg.tailscale_serve_port is not None:
+        params["tailscale_serve_port"] = proj_cfg.tailscale_serve_port
+    if proj_cfg.tailscale_authkey_env_var is not None:
+        params["tailscale_authkey_env_var"] = proj_cfg.tailscale_authkey_env_var
+    if proj_cfg.remote_control_name is not None:
+        params["remote_control_name"] = proj_cfg.remote_control_name
+    if proj_cfg.firewall_extra_domains:
+        params["firewall_extra_domains"] = proj_cfg.firewall_extra_domains
+    if proj_cfg.firewall_ipv6_hosts:
+        params["firewall_ipv6_hosts"] = proj_cfg.firewall_ipv6_hosts
+    if proj_cfg.forward_ports:
+        params["forward_ports"] = proj_cfg.forward_ports
+    if proj_cfg.claude_profile is not None:
+        params["claude_profile"] = proj_cfg.claude_profile
+    return params
 
 
 @click.command()
@@ -65,7 +89,15 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         branch = f"ws/{name}"
 
     try:
-        proj_cfg = load_project_config(project)
+        try:
+            proj_cfg = load_project_config(
+                project,
+                base_dir=Path.home() / ".drydock" / "projects",
+            )
+        except TypeError as exc:
+            if "unexpected keyword argument 'base_dir'" not in str(exc):
+                raise
+            proj_cfg = load_project_config(project)
     except WsError as e:
         out.error(e)
         return
@@ -160,11 +192,23 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         "image": image,
         "owner": owner or "",
     }
-    if ctx.get_parameter_source("devcontainer_subpath") != click.core.ParameterSource.DEFAULT:
+    overlay_params = _daemon_overlay_params(proj_cfg)
+    daemon_params.update(overlay_params)
+    # Send devcontainer_subpath to the daemon whenever it's been overridden
+    # from the default (via CLI flag OR project YAML). Previously this only
+    # checked the CLI source, which meant a project YAML setting was silently
+    # dropped on the daemon path.
+    if devcontainer_subpath != DEFAULT_DEVCONTAINER_SUBPATH:
         daemon_params["devcontainer_subpath"] = devcontainer_subpath
     if force:
         try:
-            logger.info("cli: routing via daemon")
+            if overlay_params:
+                logger.info(
+                    "cli: routing via daemon with overlay fields: %s",
+                    sorted(overlay_params),
+                )
+            else:
+                logger.info("cli: routing via daemon")
             call_daemon("DestroyDesk", {"name": name, "force": True})
         except DaemonUnavailable:
             logger.info("cli.create: daemon unavailable, falling back to direct")
@@ -172,7 +216,13 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
             if exc.message != "desk_not_found":
                 out.error(_ws_error_from_daemon_error(exc))
     try:
-        logger.info("cli: routing via daemon")
+        if overlay_params:
+            logger.info(
+                "cli: routing via daemon with overlay fields: %s",
+                sorted(overlay_params),
+            )
+        else:
+            logger.info("cli: routing via daemon")
         daemon_result = call_daemon("CreateDesk", daemon_params)
     except DaemonUnavailable:
         logger.info("cli.create: daemon unavailable, falling back to direct")
@@ -349,6 +399,8 @@ def _overlay_from_project(proj_cfg) -> OverlayConfig:
         kwargs["tailscale_hostname"] = proj_cfg.tailscale_hostname
     if proj_cfg.tailscale_serve_port is not None:
         kwargs["tailscale_serve_port"] = proj_cfg.tailscale_serve_port
+    if proj_cfg.tailscale_authkey_env_var is not None:
+        kwargs["tailscale_authkey"] = os.getenv(proj_cfg.tailscale_authkey_env_var, "")
     if proj_cfg.remote_control_name is not None:
         kwargs["remote_control_name"] = proj_cfg.remote_control_name
     if proj_cfg.firewall_extra_domains:

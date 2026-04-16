@@ -247,6 +247,45 @@ def test_spawn_child_idempotent_by_request_id(wsd):
     assert json.loads(task["outcome_json"]) == first
 
 
+def test_spawn_child_applies_overlay_fields(wsd):
+    parent, token = _create_parent(
+        wsd,
+        name="parent-overlay",
+        request_id="parent-overlay",
+        capabilities=["spawn_children"],
+        domains=["example.com"],
+    )
+    del parent
+
+    response = wsd.call_rpc(
+        "SpawnChild",
+        params={
+            "project": "proj",
+            "name": "child-overlay",
+            "repo_path": str(wsd.home / "repo-parent-overlay"),
+            "remote_control_name": "Child Agent",
+        },
+        request_id="spawn-overlay",
+        auth=token,
+    )
+    result = response["result"]
+
+    conn = _connect(wsd.registry_path)
+    workspace = conn.execute(
+        "SELECT config FROM workspaces WHERE name = ?",
+        ("child-overlay",),
+    ).fetchone()
+    conn.close()
+
+    assert workspace is not None
+    config = json.loads(workspace["config"])
+    overlay = json.loads(Path(config["overlay_path"]).read_text())
+
+    assert result["state"] == "running"
+    assert config["remote_control_name"] == "Child Agent"
+    assert overlay["containerEnv"]["REMOTE_CONTROL_NAME"] == "Child Agent"
+
+
 def test_spawn_child_with_devcontainer_subpath(wsd):
     parent, token = _create_parent(
         wsd,

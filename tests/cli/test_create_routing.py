@@ -194,3 +194,82 @@ def test_create_omits_default_devcontainer_subpath_from_daemon_request(mock_call
     assert result.exit_code == 0, result.output
     assert mock_call_daemon.call_count == 1
     assert "devcontainer_subpath" not in mock_call_daemon.call_args.args[1]
+
+
+@patch("drydock.cli.create.call_daemon")
+def test_create_forwards_project_yaml_overlay_fields_to_daemon(mock_call_daemon, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+
+    repo = tmp_path / "repo-overlay-route"
+    _init_repo(repo)
+    projects_dir = tmp_path / ".drydock" / "projects"
+    projects_dir.mkdir(parents=True)
+    (projects_dir / "myproject.yaml").write_text(
+        f"repo_path: {repo}\n"
+        "tailscale_hostname: my-custom-host\n"
+        "firewall_extra_domains:\n"
+        "  - foo.com\n"
+        "  - bar.com\n"
+    )
+
+    mock_call_daemon.return_value = {
+        "desk_id": "ws_myproject",
+        "name": "myproject",
+        "project": "myproject",
+        "branch": "ws/myproject",
+        "state": "running",
+        "container_id": "dry-run-overlay",
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "create", "myproject"],
+    )
+
+    assert result.exit_code == 0, result.output
+    params = mock_call_daemon.call_args.args[1]
+    assert params["tailscale_hostname"] == "my-custom-host"
+    assert params["firewall_extra_domains"] == ["foo.com", "bar.com"]
+
+
+@patch("drydock.cli.create.call_daemon")
+def test_create_omits_default_overlay_fields_from_daemon_request(mock_call_daemon, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+
+    repo = tmp_path / "repo-no-overlay-route"
+    _init_repo(repo)
+    projects_dir = tmp_path / ".drydock" / "projects"
+    projects_dir.mkdir(parents=True)
+    (projects_dir / "plainproject.yaml").write_text(f"repo_path: {repo}\n")
+
+    mock_call_daemon.return_value = {
+        "desk_id": "ws_plainproject",
+        "name": "plainproject",
+        "project": "plainproject",
+        "branch": "ws/plainproject",
+        "state": "running",
+        "container_id": "dry-run-plain",
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "create", "plainproject"],
+    )
+
+    assert result.exit_code == 0, result.output
+    params = mock_call_daemon.call_args.args[1]
+    for field in (
+        "tailscale_hostname",
+        "tailscale_serve_port",
+        "tailscale_authkey_env_var",
+        "remote_control_name",
+        "firewall_extra_domains",
+        "firewall_ipv6_hosts",
+        "forward_ports",
+        "claude_profile",
+    ):
+        assert field not in params
