@@ -141,13 +141,16 @@ def _health_call(socket_path: Path, timeout: float = HEALTH_TIMEOUT_SECONDS) -> 
 def _daemon_status(socket_path: Path, log_path: Path) -> dict[str, object]:
     pid_path = _pid_path()
     pid = _read_pid(pid_path)
-    running = _process_alive(pid)
-    if not running and pid_path.exists():
+    proc_alive = _process_alive(pid)
+    if not proc_alive and pid_path.exists():
         _remove_file(pid_path)
         pid = None
 
     socket_present = socket_path.exists()
-    health_responsive = running and socket_present and _health_call(socket_path)
+    health_responsive = socket_present and _health_call(socket_path)
+    # A daemon launched by systemd/launchd has no PID file under ~/.drydock.
+    # Treat "serving on the socket" as running regardless of PID-file mode.
+    running = proc_alive or health_responsive
     last_log_line = None
     lines = _last_lines(log_path, 1)
     if lines:
@@ -155,7 +158,7 @@ def _daemon_status(socket_path: Path, log_path: Path) -> dict[str, object]:
 
     return {
         "running": running,
-        "pid": pid if running else None,
+        "pid": pid if proc_alive else None,
         "socket_present": socket_present,
         "socket_path": str(socket_path),
         "health_responsive": health_responsive,
