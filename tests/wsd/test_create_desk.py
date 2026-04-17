@@ -175,6 +175,34 @@ def test_create_desk_already_running(wsd):
     assert "--force" in error["data"]["fix"]
 
 
+# Regression: host reboot -> StopDesk -> CreateDesk must resume, not reject.
+# Without this, every reboot would require --force (which destroys worktree).
+def test_create_desk_resumes_suspended(wsd):
+    repo = wsd.home / "repo-resume"
+    _init_repo(repo)
+
+    params = {"project": "proj", "name": "resume-me", "repo_path": str(repo)}
+    first = wsd.call_rpc("CreateDesk", params=params, request_id="req-create").get("result")
+    assert first is not None
+    first_container = first["container_id"]
+
+    stopped = wsd.call_rpc("StopDesk", params={"name": "resume-me"}, request_id="req-stop")
+    assert stopped["result"]["state"] == "suspended"
+
+    resumed = wsd.call_rpc("CreateDesk", params=params, request_id="req-resume")
+    result = resumed["result"]
+    assert result["state"] == "running"
+    assert result["desk_id"] == first["desk_id"]
+    assert result["worktree_path"] == first["worktree_path"]
+    # New container incarnation (not the stopped-and-removed original).
+    assert result["container_id"] != first_container
+
+    conn = _connect(wsd.registry_path)
+    rows = conn.execute("SELECT COUNT(*) AS n FROM workspaces WHERE name = ?", ("resume-me",)).fetchone()
+    assert rows["n"] == 1
+    conn.close()
+
+
 def test_create_desk_invalid_params(wsd):
     response = wsd.call_rpc("CreateDesk", params=None, request_id="req-invalid")
     error = response["error"]

@@ -68,6 +68,20 @@ def create_desk(
     try:
         existing = registry.get_workspace(spec["name"])
         if existing is not None:
+            if existing.state in ("suspended", "defined"):
+                result = _resume_desk(existing, registry=registry, dry_run=dry_run)
+                emit_audit(
+                    "desk.resumed",
+                    principal=None,
+                    request_id=request_id,
+                    method="CreateDesk",
+                    result="ok",
+                    details={
+                        "desk_id": result.get("desk_id"),
+                        "project": result.get("project"),
+                    },
+                )
+                return result
             raise _RpcError(
                 code=-32001,
                 message="workspace_already_running",
@@ -705,6 +719,72 @@ def _validate_devcontainer_subpath(devcontainer_subpath: str) -> None:
             message="invalid_params",
             data={"reason": "devcontainer_subpath must be relative and contain no .."},
         )
+
+
+def _resume_desk(
+    existing: Workspace,
+    *,
+    registry: Registry,
+    dry_run: bool,
+) -> dict[str, object]:
+    """Re-up the container for a suspended/defined desk.
+
+    Worktree, overlay, token, and named volumes are reused. Container is fresh.
+    """
+    config = existing.config or {}
+    overlay_path = config.get("overlay_path") if isinstance(config, dict) else None
+    if not overlay_path or not Path(overlay_path).exists():
+        registry.update_state(existing.name, "error")
+        raise WsError(
+            f"Cannot resume desk '{existing.name}': overlay missing at {overlay_path or '(unset)'}",
+            fix=f"Rebuild from clean state: ws create {existing.project} {existing.name} --force",
+        )
+    workspace_folder = existing.worktree_path
+    if not workspace_folder or not Path(workspace_folder).exists():
+        registry.update_state(existing.name, "error")
+        raise WsError(
+            f"Cannot resume desk '{existing.name}': worktree missing at {workspace_folder or '(unset)'}",
+            fix=f"Rebuild from clean state: ws create {existing.project} {existing.name} --force",
+        )
+
+    devc = DevcontainerCLI(dry_run=dry_run)
+    if not dry_run:
+        devc.check_available()
+
+    registry.update_state(existing.name, "provisioning")
+    try:
+        up_result = devc.up(
+            workspace_folder=workspace_folder,
+            override_config=overlay_path,
+        )
+    except WsError:
+        registry.update_state(existing.name, "error")
+        raise
+
+    container_id = up_result.get("container_id") or up_result.get("containerId")
+    if dry_run and not container_id:
+        container_id = f"dry-run-{uuid4().hex[:8]}"
+
+    ws = registry.update_workspace(
+        existing.name,
+        container_id=container_id or "",
+        state="running",
+    )
+
+    if container_id and not dry_run:
+        from drydock.core.trust import _read_workspace_folder_from_overlay, seed_workspace_trust
+        in_container_folder = _read_workspace_folder_from_overlay(str(overlay_path))
+        seed_workspace_trust(container_id, in_container_folder)
+
+    return {
+        "desk_id": ws.id,
+        "name": ws.name,
+        "project": ws.project,
+        "branch": ws.branch or f"ws/{ws.name}",
+        "state": "running",
+        "container_id": ws.container_id,
+        "worktree_path": ws.worktree_path,
+    }
 
 
 def _perform_create(
