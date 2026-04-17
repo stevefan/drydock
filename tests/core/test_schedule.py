@@ -158,3 +158,48 @@ def test_render_launchd_plist_no_log():
     data = plistlib.loads(render_launchd_plist("d", job))
     assert "StandardOutPath" not in data
     assert "StandardErrorPath" not in data
+
+
+# --- Security edge cases (found during review 2026-04-16) ---
+
+def test_render_cron_file_log_path_shell_quoted():
+    """Log paths must be shell-quoted to prevent command injection.
+
+    Regression: a malicious schedule.yaml with `log: "/tmp/x; rm -rf /"` must
+    not produce an executable shell fragment in the cron line.
+    """
+    job = ScheduleJob(name="j", cron="0 13 * * *", command="bash run.sh",
+                      log="/tmp/x; rm -rf /; echo")
+    content = render_cron_file("desk", [job])
+    # The log path must be single-quoted by shlex.quote
+    assert "'/tmp/x; rm -rf /; echo'" in content
+    # The UNQUOTED injection string must NOT appear
+    assert ">> /tmp/x; rm -rf /" not in content
+
+
+def test_load_schedule_rejects_invalid_job_name(tmp_path):
+    """Job names with path traversal characters must be rejected."""
+    schedule = tmp_path / "schedule.yaml"
+    schedule.write_text(
+        "jobs:\n"
+        "  ../../etc/passwd:\n"
+        "    cron: '0 13 * * *'\n"
+        "    command: echo pwned\n"
+    )
+    with pytest.raises(WsError) as exc_info:
+        load_schedule(schedule)
+    assert "Invalid job name" in exc_info.value.message
+
+
+def test_load_schedule_rejects_job_name_with_spaces(tmp_path):
+    """Job names with spaces would break cron and launchd labels."""
+    schedule = tmp_path / "schedule.yaml"
+    schedule.write_text(
+        "jobs:\n"
+        "  'my job':\n"
+        "    cron: '0 13 * * *'\n"
+        "    command: echo hi\n"
+    )
+    with pytest.raises(WsError) as exc_info:
+        load_schedule(schedule)
+    assert "Invalid job name" in exc_info.value.message

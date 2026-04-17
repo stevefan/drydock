@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import plistlib
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,8 @@ import yaml
 from . import WsError
 
 KNOWN_JOB_KEYS = {"cron", "command", "log"}
+# Job names land in filesystem paths and launchd labels. Restrict to safe characters.
+_JOB_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 @dataclass
@@ -55,6 +58,12 @@ def load_schedule(schedule_path: Path) -> list[ScheduleJob]:
 
     jobs: list[ScheduleJob] = []
     for job_name, spec in jobs_raw.items():
+        job_name = str(job_name)
+        if not _JOB_NAME_RE.match(job_name):
+            raise WsError(
+                message=f"Invalid job name '{job_name}': must match [A-Za-z0-9_-]{{1,64}}",
+                fix="Use only letters, digits, hyphens, and underscores in job names.",
+            )
         if not isinstance(spec, dict):
             raise WsError(
                 message=f"Job '{job_name}' must be a mapping, got {type(spec).__name__}",
@@ -132,16 +141,24 @@ def parse_cron_5field(expr: str) -> list[dict]:
 
 
 def render_cron_file(desk: str, jobs: list[ScheduleJob]) -> str:
-    """Render a cron file for /etc/cron.d/drydock-<desk>."""
+    """Render a cron file for /etc/cron.d/drydock-<desk>.
+
+    Log paths are shell-quoted to prevent command injection — a malicious
+    schedule.yaml with `log: "/tmp/x; rm -rf /"` must not be executable.
+    The command field is intentionally NOT quoted (it's a shell command
+    by design), but the desk name and log path are user-controlled strings
+    that land in a cron line interpreted by /bin/sh.
+    """
     lines = [
         f"# Managed by drydock — do not edit. desk={desk}",
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "",
     ]
+    safe_desk = shlex.quote(desk)
     for job in jobs:
-        tail = f" >> {job.log} 2>&1" if job.log else ""
+        tail = f" >> {shlex.quote(job.log)} 2>&1" if job.log else ""
         lines.append(
-            f"{job.cron} root /usr/local/bin/ws exec {desk} -- {job.command}{tail}"
+            f"{job.cron} root /usr/local/bin/ws exec {safe_desk} -- {job.command}{tail}"
         )
     lines.append("")  # trailing newline
     return "\n".join(lines)

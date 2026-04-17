@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Drydock workspace daemon (wsd) — macOS launchd user agent.
+  Per docs/v2-design-protocol.md §6: user-level service, starts on login,
+  RestartOnFailure semantics, logs to ~/.drydock/logs/wsd.log.
+
+  Install:
+    cp base/com.drydock.wsd.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.drydock.wsd.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.drydock.wsd.plist
+    rm ~/Library/LaunchAgents/com.drydock.wsd.plist
+
+  The daemon reads ~/.drydock/wsd.toml for config (secrets backend, etc.).
+  Socket path: ~/.drydock/wsd.sock (default).
+-->
+<dict>
+    <key>Label</key>
+    <string>com.drydock.wsd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Adjust path if ws is installed elsewhere -->
+        <string>/Users/stevenfan/.local/bin/ws</string>
+        <string>daemon</string>
+        <string>start</string>
+        <string>--foreground</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/stevenfan/.drydock/logs/wsd-launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/stevenfan/.drydock/logs/wsd-launchd.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/Users/stevenfan/.local/bin</string>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>

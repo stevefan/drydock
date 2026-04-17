@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Claude Code remote-control server — macOS launchd user agent.
+  Runs `claude remote-control` on the host so mobile/web can drive
+  Claude Code sessions. Replaces the nohup loop from the manual setup.
+
+  Install:
+    cp base/com.drydock.claude-remote.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.drydock.claude-remote.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.drydock.claude-remote.plist
+    rm ~/Library/LaunchAgents/com.drydock.claude-remote.plist
+
+  Note: `claude` must be on PATH (installed via nvm). The
+  EnvironmentVariables block sets up the nvm-managed node path.
+-->
+<dict>
+    <key>Label</key>
+    <string>com.drydock.claude-remote</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/stevenfan/.nvm/versions/node/v23.10.0/bin/claude</string>
+        <string>remote-control</string>
+        <string>--name</string>
+        <string>Stevens-MacBook</string>
+        <string>--permission-mode</string>
+        <string>bypassPermissions</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/stevenfan/Unified Workspaces/drydock</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/claude-remote-control-host.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/claude-remote-control-host.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/stevenfan/.nvm/versions/node/v23.10.0/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/stevenfan</string>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>
