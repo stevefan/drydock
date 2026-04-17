@@ -24,21 +24,26 @@ You'll also want:
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/ | Claude Code inside the workspace |
 | `TAILSCALE_AUTHKEY` | https://login.tailscale.com/admin/settings/keys | Auto-joining the tailnet |
 
-**How secrets reach the workspace.** The workspace mounts `~/.drydock/secrets/<workspace_id>/` from your host at `/run/secrets/` (readonly). Before `ws create`, populate that directory with plain files named after each key:
+**How secrets reach the workspace.** Use `ws secret` to manage per-desk secrets. They're stored at `~/.drydock/secrets/<workspace_id>/` on the host and mounted at `/run/secrets/` (readonly) inside the container.
 
 ```bash
-mkdir -p ~/.drydock/secrets/ws_myproject
-chmod 700 ~/.drydock/secrets/ws_myproject
-echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/ws_myproject/anthropic_api_key
-echo -n "$TAILSCALE_AUTHKEY"  > ~/.drydock/secrets/ws_myproject/tailscale_authkey
-chmod 400 ~/.drydock/secrets/ws_myproject/*
+ws secret set myproject anthropic_api_key    # prompts for value (stdin)
+ws secret set myproject tailscale_authkey
+ws secret list myproject                     # show what's set
+ws secret push myproject --to root@host      # sync to a remote host
 ```
 
-The workspace id is `ws_<name_slug>` — deterministic from the `ws create` args (dashes and spaces in the name become underscores). If the directory is missing, Docker auto-creates an empty one and the workspace starts with an empty `/run/secrets/`; scripts that need secrets will see empty strings. See [secrets-design.md](secrets-design.md) for the full convention and the v2 broker direction.
+The workspace id is `ws_<name_slug>` — deterministic from the `ws create` args (dashes and spaces in the name become underscores). Secret names are validated (alphanumeric + underscores only). See [secrets-design.md](secrets-design.md) for the full convention and the v2 broker direction.
 
 ## Install `ws`
 
-Clone Drydock and install in a venv (development-era recommendation; switch to `pipx` once the CLI stabilizes):
+Install via `pipx` (recommended — gives you a global `ws` command without polluting your system Python):
+
+```bash
+pipx install --editable /path/to/drydock
+```
+
+Or for development (running tests, modifying the CLI):
 
 ```bash
 git clone https://github.com/<your-org>/drydock.git
@@ -50,14 +55,8 @@ python3 -m venv .venv
 Confirm:
 
 ```bash
-.venv/bin/ws --help
-.venv/bin/pytest  # should pass cleanly
-```
-
-For convenience, add `.venv/bin` to your PATH, or create an alias:
-
-```bash
-alias ws="$HOME/path/to/drydock/.venv/bin/ws"
+ws --help          # or .venv/bin/ws --help if using venv
+ws version         # should print the current version
 ```
 
 ## Your first workspace
@@ -192,13 +191,25 @@ ws create myapp-scraper
 
 The two workspaces are fully independent: different firewalls, different tailnet hostnames, different worktrees, different containers. A bug in the scraper's automation can't reach anything beyond the hosts listed above.
 
-### What v1 does *not* do yet
+## Schedules
 
-- **Nested spawning.** A Claude inside the top-level workspace cannot currently call `ws create` to spawn a child workspace. V1's `ws` is a host-side CLI. This is a known gap, captured in [v2-scope.md](v2-scope.md).
+Projects can declare scheduled jobs in `deploy/schedule.yaml`. The `ws schedule sync` command materializes these into the host's cron system:
+
+```bash
+ws schedule sync myproject        # install/update cron entries from schedule.yaml
+ws schedule list myproject        # show current schedule state
+```
+
+See the auction-crawl project for a working example with three scheduled jobs.
+
+## The v2 daemon
+
+The v2 daemon (`ws daemon`) adds RPC-mediated workspace management, enabling nested spawning (an agent inside a desk calling `ws create`), cross-desk secret delegation, and fleet-level policy. Slices 1-3 are complete with 11 RPC methods. See [v2-scope.md](v2-scope.md) for the design.
+
+### What is *not* yet shipped
+
 - **Parent-child destroy cascade.** Each workspace is independent; destroying a parent does not destroy its conceptual children.
-- **`ws attach`.** Attaching to a workspace from your phone or another machine is planned but not yet implemented; for now, use the workspace's Tailscale hostname and the Claude Code remote control or SSH.
-
-For the nested-spawning design and the monorepo case that drives it, see [v2-scope.md](v2-scope.md).
+- **Cross-host migration.** Desk state is host-local today; moving a desk between hosts requires manual re-provision.
 
 ## Troubleshooting
 
@@ -215,14 +226,14 @@ Check that `TAILSCALE_AUTHKEY` is set in your host environment or in `<project>/
 Add the domain to `firewall_extra_domains` in the project YAML, destroy, and recreate. The firewall is rebuilt from scratch at container start.
 
 **Python says `ws not found`:**
-You're probably shelling from outside the venv. Use `.venv/bin/ws` or add the venv's `bin/` to your PATH.
+If installed via `pipx`, check `pipx list`. If using a venv, ensure `.venv/bin/` is on your PATH.
 
 **Tests aren't passing:**
-Reinstall: `.venv/bin/pip install -e ".[dev]" --force-reinstall`. The editable install caches metadata occasionally.
+Reinstall: `pip install -e ".[dev]" --force-reinstall`. The editable install caches metadata occasionally.
 
 ## Where to go next
 
 - [CLAUDE.md](../CLAUDE.md) — agent-facing conventions for Drydock development
 - [vision.md](vision.md) — the fabric framing and long-form design rationale
-- [v2-scope.md](v2-scope.md) — the `ws` daemon for nested orchestration (upcoming)
+- [v2-scope.md](v2-scope.md) — the `ws` daemon for nested orchestration (slices 1-3 shipped)
 - [secrets-design.md](secrets-design.md) — secrets convention and the v2 broker direction
