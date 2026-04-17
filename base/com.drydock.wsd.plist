@@ -48,7 +48,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/Users/stevenfan/.local/bin</string>
+        <string>/Users/stevenfan/.nvm/versions/node/v23.10.0/bin:/Users/stevenfan/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
     <key>ThrottleInterval</key>

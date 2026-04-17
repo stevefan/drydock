@@ -25,12 +25,13 @@ RUN npm install -g \
   @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   @devcontainers/cli
 
-COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh /usr/local/bin/
+COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh start-litestream.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh \
               /usr/local/bin/start-tailscale.sh \
               /usr/local/bin/start-remote-control.sh \
               /usr/local/bin/sync-claude-auth.sh \
-              /usr/local/bin/refresh-firewall-allowlist.sh
+              /usr/local/bin/refresh-firewall-allowlist.sh \
+              /usr/local/bin/start-litestream.sh
 
 RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/tailscaled" >> /etc/sudoers.d/node-drydock && \
@@ -38,6 +39,15 @@ RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudo
   echo "node ALL=(root) NOPASSWD: /usr/sbin/iptables" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/ipset" >> /etc/sudoers.d/node-drydock && \
   chmod 0440 /etc/sudoers.d/node-drydock
+
+# LiteStream: continuous SQLite replication to S3. ~12MB static binary.
+# Projects opt in via litestream.yml + LITESTREAM_* env vars; the binary
+# being present doesn't activate anything by itself.
+ARG LITESTREAM_VERSION=0.3.13
+RUN ARCH=$(dpkg --print-architecture) && \
+  curl -fsSL "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-${ARCH}.tar.gz" \
+  | tar xzf - -C /usr/local/bin/ && \
+  chmod +x /usr/local/bin/litestream
 
 # git safe.directory = * system-wide. Inside a drydock desk, the container
 # itself is the trust boundary — individual paths within /workspace or
