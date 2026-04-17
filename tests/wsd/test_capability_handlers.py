@@ -125,8 +125,11 @@ class TestRequestCapability:
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "desk_not_running"
 
-    @patch("drydock.wsd.capability_handlers._materialize_secret")
-    def test_happy_path_inserts_lease_and_materializes(self, mock_mat, env):
+    def test_happy_path_inserts_lease_for_file_backend(self, env):
+        # FileBackend skips docker-exec materialization — /run/secrets/ is
+        # a read-only bind mount from the host secret dir, so the file is
+        # already visible inside the container. The handler's job is to
+        # check entitlement + issue the lease (audit record).
         result = request_capability(_params(), "rid", env["desk_id"],
                                     registry_path=env["db"],
                                     secrets_root=env["secrets_root"])
@@ -141,20 +144,11 @@ class TestRequestCapability:
         assert lease is not None
         assert lease.scope["secret_name"] == "anthropic_api_key"
 
-        # Materialization called with bytes
-        mock_mat.assert_called_once_with("cid_alpha", "anthropic_api_key", b"sk-ant-test\n")
-
-    @patch("drydock.wsd.capability_handlers._materialize_secret")
-    def test_materialization_failure_does_not_persist_lease(self, mock_mat, env):
-        mock_mat.side_effect = RuntimeError("docker exec timeout")
-        with pytest.raises(_RpcError) as exc:
-            request_capability(_params(), "rid", env["desk_id"],
-                               registry_path=env["db"], secrets_root=env["secrets_root"])
-        assert exc.value.message == "materialization_failed"
-
-        # No lease in registry — caller can retry without orphan
-        leases = env["registry"].list_active_leases_for_desk(env["desk_id"])
-        assert leases == []
+    # NOTE: materialization_failure test removed — file-backed backend
+    # skips docker-exec materialization (/run/secrets is a read-only bind
+    # mount). When a non-file backend ships, add a test that passes a
+    # non-FileBackend instance and verifies materialization failure leaves
+    # no orphan lease.
 
 
 class TestReleaseCapability:
@@ -200,33 +194,18 @@ class TestReleaseCapability:
         # Lease NOT revoked (caller wasn't authorized)
         assert env["registry"].get_lease("ls_other").revoked is False
 
-    @patch("drydock.wsd.capability_handlers._remove_materialized_secret")
-    def test_happy_path_revokes_and_removes_file(self, mock_rm, env):
+    def test_happy_path_revokes_lease(self, env):
+        # File-backed: no docker-exec removal on release (bind mount is
+        # read-only; lease is an audit/authorization record, not physical
+        # access control). The test verifies the lease record is revoked.
         self._make_lease(env["registry"], env["desk_id"], lease_id="ls_one")
         result = release_capability({"lease_id": "ls_one"}, "rid", env["desk_id"],
                                     registry_path=env["db"],
                                     secrets_root=env["secrets_root"])
         assert result == {"lease_id": "ls_one", "revoked": True}
         assert env["registry"].get_lease("ls_one").revoked is True
-        mock_rm.assert_called_once_with("cid_alpha", "anthropic_api_key")
 
-    # Refcount contract: if another active lease still grants the same
-    # secret, the materialized file stays.
-    @patch("drydock.wsd.capability_handlers._remove_materialized_secret")
-    def test_keeps_file_when_other_lease_still_active(self, mock_rm, env):
-        self._make_lease(env["registry"], env["desk_id"], lease_id="ls_one")
-        self._make_lease(env["registry"], env["desk_id"], lease_id="ls_two")
-
-        release_capability({"lease_id": "ls_one"}, "rid", env["desk_id"],
-                           registry_path=env["db"], secrets_root=env["secrets_root"])
-        mock_rm.assert_not_called()
-
-        release_capability({"lease_id": "ls_two"}, "rid", env["desk_id"],
-                           registry_path=env["db"], secrets_root=env["secrets_root"])
-        mock_rm.assert_called_once_with("cid_alpha", "anthropic_api_key")
-
-    @patch("drydock.wsd.capability_handlers._remove_materialized_secret")
-    def test_double_release_is_idempotent(self, mock_rm, env):
+    def test_double_release_is_idempotent(self, env):
         self._make_lease(env["registry"], env["desk_id"], lease_id="ls_dup")
         first = release_capability({"lease_id": "ls_dup"}, "rid", env["desk_id"],
                                    registry_path=env["db"],

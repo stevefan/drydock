@@ -32,6 +32,7 @@ from drydock.core.registry import Registry
 from drydock.core.secrets import (
     BackendPermissionDenied,
     BackendUnavailable,
+    FileBackend,
     SecretsBackend,
     build_backend,
 )
@@ -116,21 +117,37 @@ def request_capability(
                 },
             )
 
-        # Materialize bytes into the running container at /run/secrets/<name>.
-        # Best-effort to surface a useful error if the container is gone;
-        # the lease is NOT inserted on materialization failure (caller should
-        # retry once the container is up). Idempotent overwrite when called
-        # twice for the same secret — desk gets fresh bytes either way.
+        # Materialization: make the secret bytes available at
+        # /run/secrets/<name> inside the running container.
+        #
+        # For the file-backed backend (V2.0): the overlay already bind-
+        # mounts ~/.drydock/secrets/<desk_id>/ at /run/secrets/ (read-only).
+        # The FileBackend.fetch() reading from that host path succeeding
+        # means the file IS ALREADY VISIBLE inside the container via the
+        # bind mount. No docker exec needed — and docker exec would FAIL
+        # because the mount is read-only.
+        #
+        # For future network backends (1Password, Vault, cloud SMs):
+        # bytes come from the network, not the host filesystem. Those
+        # backends will need active materialization — either writing to
+        # a tmpfs overlay at /run/secrets, or changing the bind mount
+        # to read-write. That's additive when those backends ship.
+        #
+        # We still verify the desk is running (container exists) because
+        # issuing a lease for a stopped desk is confusing — the caller
+        # expects to read /run/secrets/<name> immediately after.
         workspace = _lookup_workspace(registry, caller_desk_id)
         if workspace is None or not workspace.container_id:
             raise _RpcError(code=-32010, message="desk_not_running",
                             data={"desk_id": caller_desk_id})
 
-        try:
-            _materialize_secret(workspace.container_id, spec["secret_name"], payload)
-        except RuntimeError as exc:
-            raise _RpcError(code=-32011, message="materialization_failed",
-                            data={"detail": str(exc)})
+        if not isinstance(backend, FileBackend):
+            # Non-file backends: active materialization into container.
+            try:
+                _materialize_secret(workspace.container_id, spec["secret_name"], payload)
+            except RuntimeError as exc:
+                raise _RpcError(code=-32011, message="materialization_failed",
+                                data={"detail": str(exc)})
 
         lease = CapabilityLease(
             lease_id=f"ls_{uuid4().hex}",
@@ -199,16 +216,18 @@ def release_capability(
 
         revoked = registry.revoke_lease(lease_id, "released")
 
-        # Refcount: only remove the materialized file if no other active
-        # lease grants the same secret to this desk.
-        if lease.type == CapabilityType.SECRET:
-            secret_name = lease.scope.get("secret_name")
-            if isinstance(secret_name, str) and secret_name:
-                still_active = registry.find_active_secret_lease(caller_desk_id, secret_name)
-                if still_active is None:
-                    workspace = _lookup_workspace(registry, caller_desk_id)
-                    if workspace is not None and workspace.container_id:
-                        _remove_materialized_secret(workspace.container_id, secret_name)
+        # File-backed note: /run/secrets/ is a read-only bind mount from
+        # the host secret dir. The file exists as long as the host file
+        # exists — lease revocation doesn't (and can't) remove it from
+        # the container. The lease is an audit/authorization record, not
+        # a physical access-control mechanism for file-backed secrets.
+        #
+        # When a non-file backend ships (1P, Vault), it will need active
+        # removal here — the materialized file would be on a writable
+        # tmpfs, and revoking the lease should clean it up. That's
+        # additive when those backends land.
+        #
+        # For now: revoke the lease record + emit audit. No docker exec.
 
         if revoked:
             emit_audit(
