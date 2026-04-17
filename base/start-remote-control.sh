@@ -12,6 +12,12 @@ if [ -x /usr/local/bin/sync-claude-auth.sh ]; then
     /usr/local/bin/sync-claude-auth.sh || echo "WARNING: sync-claude-auth.sh failed; see /tmp/claude-auth-sync.log" | tee -a "$LOG_FILE"
 fi
 
+# Materialize AWS credentials from drydock secrets into ~/.aws/ if present.
+# No-op when no AWS secrets are seeded (desk doesn't use AWS).
+if [ -x /usr/local/bin/sync-aws-auth.sh ]; then
+    /usr/local/bin/sync-aws-auth.sh || echo "WARNING: sync-aws-auth.sh failed; see /tmp/aws-auth-sync.log" | tee -a "$LOG_FILE"
+fi
+
 echo "Starting Claude Code remote-control server..." | tee "$LOG_FILE"
 
 # Claude Code auth precedence for remote-control:
