@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -99,8 +100,22 @@ def request_capability(
                 },
             )
 
+        # Resolve which desk's secret dir to read from.
+        source_desk_id = spec.get("source_desk_id")
+        fetch_desk_id = source_desk_id or caller_desk_id
+        is_cross_desk = source_desk_id is not None and source_desk_id != caller_desk_id
+
+        if is_cross_desk:
+            # Validate source desk exists.
+            source_policy = registry.load_desk_policy(source_desk_id)
+            if source_policy is None:
+                raise _RpcError(
+                    code=-32001, message="source_desk_not_found",
+                    data={"source_desk_id": source_desk_id},
+                )
+
         try:
-            payload = backend.fetch(spec["secret_name"], caller_desk_id)
+            payload = backend.fetch(spec["secret_name"], fetch_desk_id)
         except BackendPermissionDenied as exc:
             raise _RpcError(code=-32007, message="backend_permission_denied",
                             data={"detail": str(exc)})
@@ -109,51 +124,62 @@ def request_capability(
                             data={"detail": str(exc), "retry": True})
 
         if payload is None:
+            fix_desk = fetch_desk_id
             raise _RpcError(
                 code=-32009, message="backend_missing_secret",
                 data={
                     "secret_name": spec["secret_name"],
-                    "fix": f"ws secret set {caller_desk_id} {spec['secret_name']} < value",
+                    "fix": f"ws secret set {fix_desk} {spec['secret_name']} < value",
                 },
             )
 
         # Materialization: make the secret bytes available at
-        # /run/secrets/<name> inside the running container.
+        # /run/secrets/<name> inside the caller's container.
         #
-        # For the file-backed backend (V2.0): the overlay already bind-
-        # mounts ~/.drydock/secrets/<desk_id>/ at /run/secrets/ (read-only).
-        # The FileBackend.fetch() reading from that host path succeeding
-        # means the file IS ALREADY VISIBLE inside the container via the
-        # bind mount. No docker exec needed — and docker exec would FAIL
-        # because the mount is read-only.
+        # Same-desk + file-backed (V2.0): the overlay bind-mounts
+        # ~/.drydock/secrets/<caller_desk_id>/ at /run/secrets/ read-only.
+        # The file is already visible. No materialization needed.
         #
-        # For future network backends (1Password, Vault, cloud SMs):
-        # bytes come from the network, not the host filesystem. Those
-        # backends will need active materialization — either writing to
-        # a tmpfs overlay at /run/secrets, or changing the bind mount
-        # to read-write. That's additive when those backends ship.
+        # Cross-desk + file-backed (V2.1): the source desk's file is NOT
+        # in the caller's bind mount. The daemon writes the bytes into
+        # the CALLER's host secret dir (on the host filesystem). The bind
+        # mount makes it visible in the caller's container immediately.
+        # On release, daemon removes the file from the caller's dir.
         #
-        # We still verify the desk is running (container exists) because
-        # issuing a lease for a stopped desk is confusing — the caller
-        # expects to read /run/secrets/<name> immediately after.
+        # Non-file backends: active docker-exec materialization.
         workspace = _lookup_workspace(registry, caller_desk_id)
         if workspace is None or not workspace.container_id:
             raise _RpcError(code=-32010, message="desk_not_running",
                             data={"desk_id": caller_desk_id})
 
-        if not isinstance(backend, FileBackend):
-            # Non-file backends: active materialization into container.
+        if is_cross_desk and isinstance(backend, FileBackend):
+            # Cross-desk file-backed: write source bytes into caller's
+            # host secret dir so the bind mount picks them up.
+            try:
+                _materialize_to_host_secret_dir(
+                    secrets_root, caller_desk_id, spec["secret_name"], payload,
+                )
+            except OSError as exc:
+                raise _RpcError(code=-32011, message="materialization_failed",
+                                data={"detail": str(exc)})
+        elif not isinstance(backend, FileBackend):
+            # Non-file backends: active docker-exec materialization.
             try:
                 _materialize_secret(workspace.container_id, spec["secret_name"], payload)
             except RuntimeError as exc:
                 raise _RpcError(code=-32011, message="materialization_failed",
                                 data={"detail": str(exc)})
+        # else: same-desk file-backed — already visible via bind mount.
+
+        lease_scope: dict = {"secret_name": spec["secret_name"]}
+        if source_desk_id:
+            lease_scope["source_desk_id"] = source_desk_id
 
         lease = CapabilityLease(
             lease_id=f"ls_{uuid4().hex}",
             desk_id=caller_desk_id,
             type=CapabilityType.SECRET,
-            scope={"secret_name": spec["secret_name"]},
+            scope=lease_scope,
             issued_at=_utc_now(),
             expiry=None,
             issuer="wsd",
@@ -190,7 +216,6 @@ def release_capability(
     registry_path: Path,
     secrets_root: Path,
 ) -> dict:
-    del secrets_root
     if caller_desk_id is None:
         raise _RpcError(code=-32004, message="unauthenticated", data={"reason": "no_caller"})
 
@@ -209,25 +234,34 @@ def release_capability(
             raise _RpcError(code=-32012, message="lease_not_found",
                             data={"lease_id": lease_id})
         if lease.desk_id != caller_desk_id:
-            # Cross-desk lease access — confused-deputy guard. Same code as
-            # an unknown lease so we don't leak existence to other desks.
             raise _RpcError(code=-32012, message="lease_not_found",
                             data={"lease_id": lease_id})
 
         revoked = registry.revoke_lease(lease_id, "released")
 
-        # File-backed note: /run/secrets/ is a read-only bind mount from
-        # the host secret dir. The file exists as long as the host file
-        # exists — lease revocation doesn't (and can't) remove it from
-        # the container. The lease is an audit/authorization record, not
-        # a physical access-control mechanism for file-backed secrets.
-        #
-        # When a non-file backend ships (1P, Vault), it will need active
-        # removal here — the materialized file would be on a writable
-        # tmpfs, and revoking the lease should clean it up. That's
-        # additive when those backends land.
-        #
-        # For now: revoke the lease record + emit audit. No docker exec.
+        # Cleanup materialized cross-desk secrets.
+        # Same-desk file-backed: secret lives in the desk's own bind mount,
+        # daemon doesn't own it (ws secret set does). Leave it.
+        # Cross-desk file-backed: daemon copied bytes into the caller's
+        # secret dir. On release, remove the copy so the caller loses
+        # access through the bind mount.
+        if lease.type == CapabilityType.SECRET and revoked:
+            source_desk_id = lease.scope.get("source_desk_id")
+            secret_name = lease.scope.get("secret_name")
+            is_cross_desk = (
+                isinstance(source_desk_id, str)
+                and source_desk_id != caller_desk_id
+            )
+            if is_cross_desk and isinstance(secret_name, str):
+                # Only remove if no other active lease still grants the
+                # same cross-desk secret to this caller.
+                still_active = registry.find_active_secret_lease(
+                    caller_desk_id, secret_name,
+                )
+                if still_active is None:
+                    _remove_from_host_secret_dir(
+                        secrets_root, caller_desk_id, secret_name,
+                    )
 
         if revoked:
             emit_audit(
@@ -236,7 +270,11 @@ def release_capability(
                 request_id=request_id,
                 method="ReleaseCapability",
                 result="ok",
-                details={"lease_id": lease_id, "reason": "client_release"},
+                details={
+                    "lease_id": lease_id,
+                    "reason": "client_release",
+                    "source_desk_id": lease.scope.get("source_desk_id"),
+                },
             )
         return {"lease_id": lease_id, "revoked": revoked}
     finally:
@@ -267,7 +305,17 @@ def _validate_request_params(params: object) -> dict:
         raise _RpcError(code=-32602, message="invalid_params",
                         data={"reason": "scope.secret_name must match [A-Za-z0-9_.-]{1,64}"})
 
-    return {"secret_name": secret_name}
+    # V2.1: optional source_desk_id for cross-desk secret delegation.
+    # When present, the daemon reads from the source desk's secret dir
+    # instead of the caller's. The caller must still have the secret in
+    # its own entitlements (the capability broker gate is on the CALLER's
+    # policy, not the source's).
+    source_desk_id = scope.get("source_desk_id")
+    if source_desk_id is not None and not isinstance(source_desk_id, str):
+        raise _RpcError(code=-32602, message="invalid_params",
+                        data={"reason": "scope.source_desk_id must be a string"})
+
+    return {"secret_name": secret_name, "source_desk_id": source_desk_id}
 
 
 def _lookup_workspace(registry: Registry, desk_id: str):
@@ -304,6 +352,43 @@ def _materialize_secret(container_id: str, secret_name: str, payload: bytes) -> 
     if write.returncode != 0:
         stderr = write.stderr.decode("utf-8", errors="replace") if isinstance(write.stderr, bytes) else write.stderr
         raise RuntimeError(f"write failed: {stderr.strip()}")
+
+
+def _materialize_to_host_secret_dir(
+    secrets_root: Path, desk_id: str, secret_name: str, payload: bytes,
+) -> None:
+    """Write secret bytes into a desk's host secret directory.
+
+    For cross-desk file-backed delegation: the source desk's bytes get
+    written into the CALLER's secret dir on the host. The overlay's bind
+    mount at /run/secrets/ picks them up immediately inside the container.
+    Mode 0400 matches the `ws secret set` convention.
+    """
+    desk_dir = secrets_root / desk_id
+    desk_dir.mkdir(parents=True, exist_ok=True)
+    target = desk_dir / secret_name
+    target.write_bytes(payload)
+    os.chmod(target, 0o400)
+    logger.info(
+        "wsd: cross-desk secret materialized at %s (%d bytes)",
+        target, len(payload),
+    )
+
+
+def _remove_from_host_secret_dir(
+    secrets_root: Path, desk_id: str, secret_name: str,
+) -> None:
+    """Remove a cross-desk materialized secret from the host secret dir.
+
+    Best-effort: logs on failure, does not raise. The lease is already
+    revoked in the registry; the file is a convenience copy.
+    """
+    target = secrets_root / desk_id / secret_name
+    try:
+        target.unlink(missing_ok=True)
+        logger.info("wsd: cross-desk secret removed from %s", target)
+    except OSError as exc:
+        logger.warning("wsd: failed to remove cross-desk secret %s: %s", target, exc)
 
 
 def _remove_materialized_secret(container_id: str, secret_name: str) -> None:

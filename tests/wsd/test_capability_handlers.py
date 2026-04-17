@@ -215,3 +215,172 @@ class TestReleaseCapability:
                                     secrets_root=env["secrets_root"])
         assert first["revoked"] is True
         assert second["revoked"] is False
+
+
+# --- V2.1: Cross-desk secret delegation tests ---
+
+class TestCrossDeskDelegation:
+    """RequestCapability with source_desk_id reads from the source desk's
+    secret dir and materializes into the caller's host secret dir so the
+    caller's bind mount picks it up.
+    """
+
+    @pytest.fixture
+    def cross_env(self, tmp_path):
+        db = tmp_path / "registry.db"
+        secrets_root = tmp_path / "secrets"
+        secrets_root.mkdir()
+
+        registry = Registry(db_path=db)
+
+        # Source desk (fleet-auth) — holds the secret
+        source = Workspace(
+            name="fleet-auth",
+            project="infra",
+            repo_path="/tmp/repo",
+            worktree_path="/tmp/wt-fleet",
+            branch="ws/fleet-auth",
+            state="running",
+            container_id="cid_fleet",
+        )
+        registry.create_workspace(source)
+        source_id = source.id
+
+        # Caller desk (worker) — wants to read the source's secret
+        caller = Workspace(
+            name="worker",
+            project="p",
+            repo_path="/tmp/repo",
+            worktree_path="/tmp/wt-worker",
+            branch="ws/worker",
+            state="running",
+            container_id="cid_worker",
+        )
+        registry.create_workspace(caller)
+        caller_id = caller.id
+
+        # Grant caller the entitlement + capability
+        registry.update_desk_delegations(
+            "worker",
+            delegatable_secrets=["shared_cred"],
+            capabilities=[CapabilityKind.REQUEST_SECRET_LEASES.value],
+        )
+
+        # Place the secret in the SOURCE desk's secret dir (not the caller's)
+        source_secrets = secrets_root / source_id
+        source_secrets.mkdir()
+        (source_secrets / "shared_cred").write_bytes(b"cross-desk-value\n")
+
+        yield {
+            "db": db,
+            "secrets_root": secrets_root,
+            "registry": registry,
+            "source_id": source_id,
+            "caller_id": caller_id,
+        }
+        registry.close()
+
+    def test_cross_desk_happy_path_materializes_in_caller_dir(self, cross_env):
+        result = request_capability(
+            {"type": "SECRET", "scope": {
+                "secret_name": "shared_cred",
+                "source_desk_id": cross_env["source_id"],
+            }},
+            "rid-cross",
+            cross_env["caller_id"],
+            registry_path=cross_env["db"],
+            secrets_root=cross_env["secrets_root"],
+        )
+        assert result["type"] == "SECRET"
+        assert result["scope"]["source_desk_id"] == cross_env["source_id"]
+        assert result["scope"]["secret_name"] == "shared_cred"
+
+        # Secret materialized in CALLER's host secret dir
+        caller_file = cross_env["secrets_root"] / cross_env["caller_id"] / "shared_cred"
+        assert caller_file.exists()
+        assert caller_file.read_bytes() == b"cross-desk-value\n"
+
+    def test_cross_desk_requires_caller_entitlement(self, cross_env):
+        # Remove the entitlement from the caller
+        cross_env["registry"].update_desk_delegations(
+            "worker", delegatable_secrets=[],
+        )
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                {"type": "SECRET", "scope": {
+                    "secret_name": "shared_cred",
+                    "source_desk_id": cross_env["source_id"],
+                }},
+                "rid",
+                cross_env["caller_id"],
+                registry_path=cross_env["db"],
+                secrets_root=cross_env["secrets_root"],
+            )
+        assert exc.value.message == "narrowness_violated"
+
+    def test_cross_desk_source_not_found(self, cross_env):
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                {"type": "SECRET", "scope": {
+                    "secret_name": "shared_cred",
+                    "source_desk_id": "ws_nonexistent",
+                }},
+                "rid",
+                cross_env["caller_id"],
+                registry_path=cross_env["db"],
+                secrets_root=cross_env["secrets_root"],
+            )
+        assert exc.value.message == "source_desk_not_found"
+
+    def test_cross_desk_release_removes_materialized_file(self, cross_env):
+        result = request_capability(
+            {"type": "SECRET", "scope": {
+                "secret_name": "shared_cred",
+                "source_desk_id": cross_env["source_id"],
+            }},
+            "rid-rel",
+            cross_env["caller_id"],
+            registry_path=cross_env["db"],
+            secrets_root=cross_env["secrets_root"],
+        )
+        lease_id = result["lease_id"]
+
+        caller_file = cross_env["secrets_root"] / cross_env["caller_id"] / "shared_cred"
+        assert caller_file.exists()
+
+        release_capability(
+            {"lease_id": lease_id},
+            "rid-rel2",
+            cross_env["caller_id"],
+            registry_path=cross_env["db"],
+            secrets_root=cross_env["secrets_root"],
+        )
+
+        # File removed from caller's dir after release
+        assert not caller_file.exists()
+
+        # Source desk's original file is untouched
+        source_file = cross_env["secrets_root"] / cross_env["source_id"] / "shared_cred"
+        assert source_file.exists()
+        assert source_file.read_bytes() == b"cross-desk-value\n"
+
+    def test_same_desk_source_id_is_noop(self, cross_env):
+        """Passing source_desk_id == caller_desk_id is treated as same-desk."""
+        # Place the secret in the caller's own dir
+        caller_secrets = cross_env["secrets_root"] / cross_env["caller_id"]
+        caller_secrets.mkdir(exist_ok=True)
+        (caller_secrets / "shared_cred").write_bytes(b"own-value\n")
+
+        result = request_capability(
+            {"type": "SECRET", "scope": {
+                "secret_name": "shared_cred",
+                "source_desk_id": cross_env["caller_id"],
+            }},
+            "rid-self",
+            cross_env["caller_id"],
+            registry_path=cross_env["db"],
+            secrets_root=cross_env["secrets_root"],
+        )
+        # No source_desk_id in scope when same-desk? Actually it IS there since
+        # we passed it. That's fine — scope includes whatever was passed.
+        assert result["type"] == "SECRET"
