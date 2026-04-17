@@ -43,6 +43,7 @@ from drydock.cli.daemon import daemon  # noqa: E402
 from drydock.cli.upgrade import upgrade  # noqa: E402
 from drydock.cli.new import new  # noqa: E402
 from drydock.cli.audit import audit  # noqa: E402
+from drydock.cli.schedule import schedule  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(upgrade)
@@ -59,3 +60,4 @@ cli.add_command(secret)
 cli.add_command(tailnet)
 cli.add_command(host)
 cli.add_command(daemon)
+cli.add_command(schedule)
