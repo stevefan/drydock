@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Resume every drydock desk in state=suspended.
+# Invoked by drydock-desks.service at boot, or manually via
+# `systemctl start drydock-desks` after wsd downtime.
+#
+# Contract: best-effort per desk. A single desk's resume failure
+# (missing overlay, missing worktree, container engine error) does
+# NOT abort the loop — the remaining desks still get their chance.
+# Failures are logged; `ws inspect <name>` gives the human-readable
+# state afterward.
+set -u
+
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin:${PATH:-}"
+export PATH
+
+echo "drydock-resume-desks: $(date -Iseconds) starting"
+
+# Give wsd up to 60s to become responsive (systemd After= is not
+# a readiness guarantee for a simple-type service).
+for i in $(seq 1 30); do
+    if ws daemon status >/dev/null 2>&1; then
+        echo "drydock-resume-desks: wsd ready after ${i} attempts"
+        break
+    fi
+    if [ "$i" = "30" ]; then
+        echo "drydock-resume-desks: wsd not responsive after 60s; aborting"
+        exit 1
+    fi
+    sleep 2
+done
+
+ws list 2>/dev/null | python3 -c '
+import json, subprocess, sys
+try:
+    rows = json.load(sys.stdin)
+except json.JSONDecodeError as e:
+    print(f"drydock-resume-desks: cannot parse ws list output: {e}", flush=True)
+    sys.exit(1)
+
+to_resume = [r["name"] for r in rows if r.get("state") == "suspended" and r.get("name")]
+if not to_resume:
+    print("drydock-resume-desks: no suspended desks", flush=True)
+    sys.exit(0)
+
+print(f"drydock-resume-desks: resuming {len(to_resume)}: {to_resume}", flush=True)
+failures = []
+for name in to_resume:
+    print(f"drydock-resume-desks: resuming {name}", flush=True)
+    result = subprocess.run(["ws", "create", name], capture_output=True, text=True)
+    if result.returncode != 0:
+        failures.append(name)
+        print(f"drydock-resume-desks: FAILED {name}: {result.stderr.strip()}", flush=True)
+    else:
+        print(f"drydock-resume-desks: ok {name}", flush=True)
+
+if failures:
+    print(f"drydock-resume-desks: {len(failures)} failure(s): {failures}", flush=True)
+    sys.exit(1)
+print("drydock-resume-desks: all resumed", flush=True)
+'

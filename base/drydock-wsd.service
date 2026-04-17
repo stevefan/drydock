@@ -1,0 +1,31 @@
+# Drydock workspace daemon (wsd) — systemd system unit (Linux).
+# Complements base/com.drydock.wsd.plist (macOS launchd user agent).
+# Per docs/v2-design-protocol.md §6: long-running control-plane daemon,
+# RestartOnFailure semantics, logs to ~/.drydock/logs/wsd-systemd.log.
+#
+# Install on a drydock host:
+#   cp base/drydock-wsd.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now drydock-wsd.service
+#
+# Running as root matches Hetzner host convention (see docs/host-bootstrap.md):
+# pipx install at /root/.local, drydock state in /root/.drydock.
+[Unit]
+Description=Drydock workspace daemon
+Documentation=https://github.com/stevefan/drydock
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/root/.local/bin/ws daemon start --foreground
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/root/.drydock/logs/wsd-systemd.log
+StandardError=append:/root/.drydock/logs/wsd-systemd.log
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin
+Environment=HOME=/root
+
+[Install]
+WantedBy=multi-user.target
