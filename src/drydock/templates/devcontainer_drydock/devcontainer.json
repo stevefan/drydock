@@ -15,7 +15,6 @@
   "workspaceFolder": "/workspace",
   "containerEnv": {
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
-    "TAILSCALE_AUTHKEY": "${localEnv:TAILSCALE_AUTHKEY:}",
     "TAILSCALE_HOSTNAME": "${localEnv:TAILSCALE_HOSTNAME:{{ project_name }}-dev}",
     "TAILSCALE_SERVE_PORT": "${localEnv:TAILSCALE_SERVE_PORT:3000}",
     "REMOTE_CONTROL_NAME": "${localEnv:REMOTE_CONTROL_NAME:{{ project_name }}}",

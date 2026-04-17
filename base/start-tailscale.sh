@@ -15,25 +15,30 @@ sleep 2
 
 # Bring Tailscale up — use auth key if available, otherwise fall back to interactive auth URL
 echo "Bringing Tailscale up..." | tee -a "$LOG_FILE"
-# Source auth key. Prefer the mounted secret; fall back to env files.
-# Defensive check: if the secret exists but isn't readable, the silent
-# fall-through below sends us to interactive auth, which on a headless
-# host means the container appears to "hang" with no clear cause. Surface
-# the perm problem before the fall-through swallows it.
+# Auth key resolution — priority order:
+#   1. /run/secrets/tailscale_authkey  (drydock-managed desks)
+#   2. $TAILSCALE_AUTHKEY env var      (local dev, non-drydock devcontainers)
+#   3. .env.local / .env.devcontainer  (legacy, will be removed)
+#
+# Defensive check: if the secret exists but isn't readable, surface the
+# perm problem instead of silently falling to interactive auth (which
+# hangs on headless hosts).
 if [ -e /run/secrets/tailscale_authkey ] && [ ! -r /run/secrets/tailscale_authkey ]; then
     echo "ERROR: /run/secrets/tailscale_authkey exists but is unreadable by $(whoami) (uid $(id -u))." | tee -a "$LOG_FILE"
-    echo "  Likely cause: secret file owned by root with mode 0400 on a Linux host." | tee -a "$LOG_FILE"
     echo "  Fix on host: chown 1000:1000 ~/.drydock/secrets/<ws_id>/*" | tee -a "$LOG_FILE"
 fi
-if [ -z "${TAILSCALE_AUTHKEY:-}" ] && [ -r /run/secrets/tailscale_authkey ]; then
-    TAILSCALE_AUTHKEY=$(cat /run/secrets/tailscale_authkey)
-fi
-if [ -z "${TAILSCALE_AUTHKEY:-}" ]; then
-    for envfile in /workspace/.env.local /workspace/*/.env.local /workspace/*/.env.devcontainer; do
+if [ -r /run/secrets/tailscale_authkey ]; then
+    TAILSCALE_AUTHKEY=$(cat /run/secrets/tailscale_authkey | tr -d '\n')
+    echo "Tailscale auth key loaded from /run/secrets/" | tee -a "$LOG_FILE"
+elif [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
+    echo "Tailscale auth key from env var (local dev)" | tee -a "$LOG_FILE"
+else
+    for envfile in /workspace/.env.local /workspace/*/.env.local; do
         if [ -f "$envfile" ]; then
             found=$(grep -s '^TAILSCALE_AUTHKEY=' "$envfile" | cut -d'=' -f2- || true)
             if [ -n "$found" ]; then
                 TAILSCALE_AUTHKEY="$found"
+                echo "Tailscale auth key from $envfile (legacy)" | tee -a "$LOG_FILE"
                 break
             fi
         fi
