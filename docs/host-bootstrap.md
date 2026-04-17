@@ -72,7 +72,14 @@ ws secret set <desk> claude_account_state < ~/.claude.json
 ws secret push <desk> --to root@<host>
 ```
 
-**Token refresh:** after the initial credential seed, the container's own `refreshToken` loop should keep tokens alive indefinitely without re-extraction from the Mac. We are empirically validating this (as of 2026-04-16); if refresh silently fails, re-extract from keychain and re-push.
+**Token refresh — empirical result (2026-04-17):** the container's `claude remote-control` refreshes tokens **in memory only** — the process stays alive past the file's `expiresAt`, but `.credentials.json` is NOT updated on disk. File-based consumers (other desks via `RequestCapability`, any process reading `/run/secrets/claude_credentials`) get stale tokens after ~8 hours.
+
+**Designed refresh mechanism:** periodic re-extraction from Mac keychain:
+```bash
+security find-generic-password -s "Claude Code-credentials" -w | ws secret set <desk> claude_credentials
+ws secret push <desk> --to root@<host>
+```
+Run every 6 hours via Mac launchd, or manually when remote-control auth errors surface. The Mac is the credential source of truth for file-based consumers. Remote-control itself self-sustains and doesn't need this.
 
 **Why not `claude auth login` inside the container?** `claude auth login` requires Ink raw-mode TTY support. Most SSH and `docker exec` PTY combinations do not satisfy this — the login flow hangs or renders garbled output. The keychain-extraction pattern above bypasses this limitation entirely.
 
