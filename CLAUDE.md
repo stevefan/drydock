@@ -112,11 +112,10 @@ Design details live in [docs/v2-scope.md](docs/v2-scope.md) and the `docs/v2-des
 
 ## Environment variables
 
-Set on the host or in `<project>/.env.devcontainer`:
+Configuration (NOT secrets) set via project YAML, overlay, or `.env.devcontainer`:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TAILSCALE_AUTHKEY` | *(empty)* | Tailscale auth key (falls back to interactive) |
 | `TAILSCALE_HOSTNAME` | `claude-dev` | Machine name on tailnet |
 | `TAILSCALE_SERVE_PORT` | `3000` | Port served via Tailscale HTTPS |
 | `REMOTE_CONTROL_NAME` | `Claude Dev` | Remote control display name |
@@ -126,9 +125,16 @@ Set on the host or in `<project>/.env.devcontainer`:
 | `DRYDOCK_WSD_REGISTRY` | `~/.drydock/registry.db` | Daemon registry DB path |
 | `DRYDOCK_WSD_LOG` | `~/.drydock/wsd.log` | Daemon log file path |
 
+**Secrets are NOT env vars.** They go through `ws secret set` → `/run/secrets/` (see below).
+
 ## Secrets
 
-Host-side secrets layout:
+`ws secret set` is the single entry point for all credentials. Secrets are stored at `~/.drydock/secrets/<ws_id>/` (mode 0400) on the host and bind-mounted at `/run/secrets/` (read-only) inside the container. Per-desk isolation: each desk sees ONLY its own secrets.
+
+Auto-materialization scripts in drydock-base read from `/run/secrets/` at container start:
+- `sync-claude-auth.sh` → writes `~/.claude/.credentials.json` + `~/.claude.json`
+- `sync-aws-auth.sh` → writes `~/.aws/credentials` + `~/.aws/config`
+- `start-tailscale.sh` → reads `tailscale_authkey` directly
 
 | Path | Mode | Purpose |
 |---|---|---|
@@ -137,12 +143,16 @@ Host-side secrets layout:
 
 Use `ws secret set/list/rm` to manage per-workspace secrets. Use `ws secret push --to <host>` to replicate secrets to a remote Linux host.
 
-Required keys for full functionality:
+Common secret keys:
 
-| Key | Source | Purpose |
+| Key | Source | Auto-materialized by |
 |---|---|---|
-| `anthropic_api_key` | Anthropic console | Claude Code inside the workspace |
-| `tailscale_authkey` | Tailscale admin console | Auto-join the tailnet |
+| `tailscale_authkey` | Tailscale admin console | `start-tailscale.sh` |
+| `anthropic_api_key` | Anthropic console | (read directly from `/run/secrets/`) |
+| `claude_credentials` | Mac keychain: `security find-generic-password -s "Claude Code-credentials" -w` | `sync-claude-auth.sh` |
+| `claude_account_state` | `~/.claude.json` on Mac | `sync-claude-auth.sh` |
+| `aws_access_key_id` | AWS IAM console | `sync-aws-auth.sh` |
+| `aws_secret_access_key` | AWS IAM console | `sync-aws-auth.sh` |
 
 ## Host bootstrap
 
