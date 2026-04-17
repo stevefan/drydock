@@ -30,6 +30,7 @@ DEFAULT_LOG_PATH = Path.home() / ".drydock" / "audit.log"
 # breaking change for every audit consumer.
 V2_EVENTS = frozenset({
     "desk.created",
+    "desk.resumed",
     "desk.spawned",
     "desk.spawn_rejected",
     "desk.stopped",
