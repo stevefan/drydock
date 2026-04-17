@@ -1,0 +1,61 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAll",
+      "Effect": "Allow",
+      "Action": "*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenySelfElevation",
+      "Effect": "Deny",
+      "Action": "iam:*",
+      "Resource": [
+        "arn:aws:iam::047535447308:user/drydock-runner",
+        "arn:aws:iam::047535447308:user/Personal-MacBook-Pro-2023-G6L7YC3R95",
+        "arn:aws:iam::047535447308:role/drydock-agent",
+        "arn:aws:iam::047535447308:policy/drydock-boundary"
+      ]
+    },
+    {
+      "Sid": "DenyPersistence",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateUser",
+        "iam:CreateAccessKey",
+        "iam:CreateLoginProfile"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyNuclear",
+      "Effect": "Deny",
+      "Action": [
+        "account:CloseAccount",
+        "organizations:LeaveOrganization",
+        "route53domains:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyExpensiveCompute",
+      "Effect": "Deny",
+      "Action": "ec2:RunInstances",
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:InstanceType": [
+            "p*",
+            "g*",
+            "x*",
+            "*.metal",
+            "*.24xlarge",
+            "*.16xlarge",
+            "*.12xlarge"
+          ]
+        }
+      }
+    }
+  ]
+}

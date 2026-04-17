@@ -1,0 +1,19 @@
+{
+  "BudgetName": "drydock-cost-cap",
+  "BudgetLimit": {"Amount": "25", "Unit": "USD"},
+  "TimeUnit": "MONTHLY",
+  "BudgetType": "COST",
+  "CostTypes": {
+    "IncludeTax": true,
+    "IncludeSubscription": true,
+    "UseBlended": false,
+    "IncludeRefund": false,
+    "IncludeCredit": false,
+    "IncludeUpfront": true,
+    "IncludeRecurring": true,
+    "IncludeOtherSubscription": true,
+    "IncludeSupport": true,
+    "IncludeDiscount": true,
+    "UseAmortized": false
+  }
+}
