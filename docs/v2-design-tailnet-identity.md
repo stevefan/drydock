@@ -50,7 +50,7 @@ The cleaner framing: the token is **daemon-internal infrastructure**, like the d
 | Tailnet identifier | Configured in `wsd.toml` (`tailnet = "..."`); not fetched dynamically |
 | Absence behavior | Non-fatal. Daemon logs `warning: no tailnet admin token configured; device records will not be auto-deleted on destroy`. Behavior matches V1 (logout only, record persists). |
 
-Rotation is operator-driven; no V2 daemon-side rotation logic. (V3+ when secrets-broker plugin pattern can lease from external sources.)
+Rotation is operator-driven; no V2 daemon-side rotation logic. (Revisit when the secrets-broker plugin pattern can lease from external sources — capability broker §7.)
 
 ## 5. Lifecycle integration
 
@@ -158,9 +158,9 @@ This backport is **scoped as a separate v1.x release**, not part of the v2 daemo
 
 ## 10. Open questions deferred
 
-- **Multi-tailnet support**: a daemon handling desks across multiple tailnets. V2 assumes one tailnet per daemon, configured in `wsd.toml`. V3+ revisit.
+- **Multi-tailnet support**: a daemon handling desks across multiple tailnets. V2 assumes one tailnet per daemon, configured in `wsd.toml`. Revisit if the need surfaces.
 - **Tailscale OAuth client tokens vs. user API tokens**: OAuth clients (auto-issued from a tailnet) avoid manual rotation. V2 accepts user API tokens; OAuth-client integration is a v2.1 ergonomic improvement, not architectural.
-- **Reauth flow when admin token expires mid-destroy**: V2 logs and proceeds (best-effort). V3 may add an alerting hook.
+- **Reauth flow when admin token expires mid-destroy**: V2 logs and proceeds (best-effort). An alerting hook can be added later if this becomes noisy.
 
 ## Cross-references
 

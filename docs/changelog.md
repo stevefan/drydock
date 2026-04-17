@@ -41,8 +41,11 @@ First tagged release. V1 + V1.5 shipped. Covers the full "spawn sandboxed agent-
 ### What got designed but not built (roadmap)
 
 - **V2 daemon** — `docs/v2-scope.md`. Nested orchestration (agent-in-desk spawns child-desk), policy graph with enforced narrowness, bearer-token auth over Tailscale, audit as first-class. Waits for real nested-spawn pressure.
-- **V3 fleet-awareness** — registry federation, remote-host operations (laptop is viewport; desks live on always-on host). The daemon from V2 evolves into the RPC surface for this.
 - **V4+ cloud fabric** — remote filesystem mounts (S3/R2/GCS), capability broker generalizing the secrets broker, cloud-primary projects. Directional sketch in memory.
+
+### Archived (2026-04-17)
+
+- **V3 fleet-awareness and cross-host migration.** `ws migrate laptop→cloud`, fleet-aware daemon, identity continuity across hosts, suspend/resume as a first-class primitive. Pivoted to "always-on durability on a chosen host" — hardware refresh becomes a bounded rebuild-from-config runbook, not a daemon feature. V2's serializability-for-migration commitment dropped alongside. Full vision and reversal criteria preserved in `docs/_archive/migration-vision.md`.
 
 ### Tests
 

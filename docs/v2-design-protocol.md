@@ -10,11 +10,11 @@ Extends `v2-scope.md` §Protocol sketch + §Auth and addresses open questions OQ
 
 **Decision.** JSON-RPC 2.0 over a Unix domain socket at `~/.drydock/wsd.sock` (mode `0600`, owner = host user). Socket is bind-mounted into every desk via the overlay so desk-mode callers reach the daemon without networking.
 
-**HTTP/Tailscale transport is reserved for V3 multi-host, not shipped in V2.** `v2-scope.md` originally proposed HTTP/Tailscale; in V2 (single-host) the socket is simpler, cheaper, and removes an authentication surface that has no V2 caller. Wire protocol is identical either way; adding HTTP later reuses the same JSON-RPC envelope with bearer auth.
+**HTTP/Tailscale transport is deferred, not shipped in V2.** `v2-scope.md` originally proposed HTTP/Tailscale; in V2 (single-host, single-daemon) the socket is simpler, cheaper, and removes an authentication surface that has no V2 caller. Wire protocol is identical either way; adding HTTP later reuses the same JSON-RPC envelope with bearer auth — useful if a thin multi-host case ever surfaces (second host runs its own daemon, `ws` CLI on either host can target either daemon). Not a V2 goal.
 
 **Rejected alternative: gRPC.** Over-engineered for V2's method count (~10). JSON-RPC is human-debuggable (can `nc` the socket), has no tooling overhead, and stays out of the way.
 
-**Reversibility: MEDIUM.** Switching wire protocol later (to gRPC, Cap'n Proto, etc.) means every client re-implementation. JSON-RPC 2.0 is conservative and debuggable; this is the choice most likely to age well. Adding HTTP transport in V3 is additive.
+**Reversibility: MEDIUM.** Switching wire protocol later (to gRPC, Cap'n Proto, etc.) means every client re-implementation. JSON-RPC 2.0 is conservative and debuggable; this is the choice most likely to age well. Adding HTTP transport later is additive — same envelope.
 
 ## 2. Method surface
 
@@ -91,11 +91,11 @@ The dangerous case: daemon crashes mid-`CreateDesk`, between "devcontainer up st
 - Capability grants/revocations take effect immediately (no token reissue).
 - Leaked token grants whatever the desk currently has, nothing more.
 
-**Per-principal generalization (V3 multi-user).** The map becomes `token → (principal_id, desk_id)`. Multi-user tokens include a principal. V2 ships with `principal_id` implicitly = owner; the schema accommodates explicit principals without a breaking change. See `project_multi_user_sketch.md`.
+**Per-principal generalization (deferred multi-user).** The map becomes `token → (principal_id, desk_id)`. Multi-user tokens include a principal. V2 ships with `principal_id` implicitly = owner; the schema accommodates explicit principals without a breaking change. See `project_multi_user_sketch.md`. Not tied to migration; can ship when the multi-user case surfaces.
 
 **Rejected alternatives:**
 - **mTLS via Tailscale device identity.** Strong but couples V2 to Tailscale beyond transport. If a desk ever runs outside Tailscale (dev host without tailnet, CI), identity breaks.
-- **Unix-socket peer credentials only.** Works single-host. Multi-host V3 can't use it, and we'd need to bolt bearer tokens on anyway for cross-host.
+- **Unix-socket peer credentials only.** Works single-host-single-daemon. If a thin multi-host case ever surfaces, peer creds don't travel, and bolting bearer tokens on then is more work than just shipping them now.
 
 **Reversibility: MEDIUM.** Adding mTLS *on top of* bearer tokens is additive (stronger mutual authentication for specific callers). Removing bearer tokens in favor of something else is a breaking change for every desk's `/run/secrets/drydock-token`.
 
@@ -108,7 +108,7 @@ The dangerous case: daemon crashes mid-`CreateDesk`, between "devcontainer up st
 
 **Not tmux.** Daemon lifecycle shouldn't depend on a user's terminal session.
 
-**Survives reboot.** User-level services, not root. Starts on login. If the user isn't logged in, no daemon — fine for V2 (solo user). V3 fleet-awareness may promote to system service on always-on hosts.
+**Survives reboot.** User-level services, not root. Starts on login. If the user isn't logged in, no daemon — fine for V2 (solo user). Promote to a system service if an always-on headless host genuinely needs the daemon up regardless of login session.
 
 **Configuration** at `~/.drydock/wsd.toml`:
 ```toml
@@ -147,12 +147,12 @@ All errors return JSON with this shape (aligns with `WsError.to_dict()` bimodal 
 | Decision | Cost | Notes |
 |---|---|---|
 | JSON-RPC 2.0 envelope | Medium | Wire format churn is expensive; debuggability wins over alternatives |
-| Unix socket only (HTTP reserved for V3) | Low | Adding HTTP later reuses the same envelope; no client churn |
+| Unix socket only (HTTP deferred) | Low | Adding HTTP later reuses the same envelope; no client churn |
 | `CreateDesk`/`SpawnChild` as distinct methods | Medium | Once clients, audit, and tests depend on the split (host-admin vs. desk-authenticated policy-validated authority), reshaping is expensive. Codex flagged the initial `Low` rating as understated |
 | `RequestCapability` as the single lease entry point | Medium | Generalization is the point; splitting into type-specific methods later means RPC churn |
 | `RequestCapability` subject derived from token, not arg | Medium | Changing the subject-derivation rule (e.g., permitting admin impersonation without a separate method) is a trust-model change, not a refactor |
 | Bearer tokens (vs. mTLS) | Medium | Adding mTLS is additive; removing bearer tokens is breaking |
-| Token subject model (`token → desk_id`, not `→ (principal_id, desk_id)`) | Medium | V3 multi-user sketch reserves the extension; formally adding a principal later is additive but every audit consumer and policy-keyed store has to participate |
-| Daemon lives in launchd/systemd user service | Low | Can promote to system service in V3 without API change |
+| Token subject model (`token → desk_id`, not `→ (principal_id, desk_id)`) | Medium | Multi-user sketch reserves the extension; formally adding a principal later is additive but every audit consumer and policy-keyed store has to participate |
+| Daemon lives in launchd/systemd user service | Low | Can promote to system service later without API change |
 | `ws attach` bypasses daemon | Low | Can route through daemon later by flipping a single call site |
 | Task-log-based crash recovery | Low | Internal implementation; schema additive |

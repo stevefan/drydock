@@ -6,7 +6,7 @@ Drydock is a **personal agent fabric**. It provisions, connects, and governs the
 
 An agent-desk is a durable addressable place — a workspace with an occupant. It has a name, a policy scope, a git worktree, accumulated session state, and a stable identity that outlives its current container. "Workspace" is the technical artifact (daemon entity, registry row, container); "desk" is the conceptual framing — persistent place where an agent works.
 
-It is not a container launcher. Launching containers is mechanical plumbing; `devcontainer`, Docker, and `git worktree` already do that. What Drydock provides — the thing that can't be replaced by shell scripts and conventions — is the *fabric*: a policy graph, a daemon-enforced trust boundary, audit, identity, secrets brokering, and cross-host placement.
+It is not a container launcher. Launching containers is mechanical plumbing; `devcontainer`, Docker, and `git worktree` already do that. What Drydock provides — the thing that can't be replaced by shell scripts and conventions — is the *fabric*: a policy graph, a daemon-enforced trust boundary, audit, identity, and secrets brokering.
 
 At v1, the fabric is still a CLI wrapper over primitives. That's a stepping stone. The complete Drydock is a daemon-mediated control plane for a personal fleet of agent workspaces. [v2-scope.md](v2-scope.md) is the plan to get there.
 
@@ -18,9 +18,9 @@ Drydock is the **fabric layer**: where workspaces run, how they're governed, how
 
 These are the properties that make Drydock *infrastructure* rather than a convenience wrapper. V1 does not yet provide them; each is a commitment for the daemon era.
 
-1. **Workspaces as durable addressable places, not container incarnations.** A workspace has a name, a policy scope, a history, and state that outlives its current container. Suspend on your laptop, resume on your home server; the worktree, session state, and in-flight tasks move with it.
+1. **Workspaces as durable addressable places, not container incarnations.** A workspace has a name, a policy scope, a history, and state that outlives its current container. Rebuild the container (`ws upgrade --force`, base-image bump) and the worktree, session state, and accumulated tooling are intact on the other side.
 
-2. **A daemon (`wsd`) as the sole control plane.** Every lifecycle operation — create, spawn-child, suspend, migrate, destroy — goes through the daemon. Every operation is authenticated, policy-checked, and audited. The `ws` CLI is one client; Claude Code in a workspace is another; a mobile app could be a third.
+2. **A daemon (`wsd`) as the sole control plane.** Every lifecycle operation — create, spawn-child, stop, destroy — goes through the daemon. Every operation is authenticated, policy-checked, and audited. The `ws` CLI is one client; Claude Code in a workspace is another; a mobile app could be a third.
 
 3. **A policy graph with enforced narrowness.** Each workspace has declared capabilities, delegatable subsets, firewall allowances, secret entitlements. Children are strictly narrower than parents. Compromise of any single workspace cannot laterally expand authority.
 
@@ -28,7 +28,7 @@ These are the properties that make Drydock *infrastructure* rather than a conven
 
 5. **Drydock as secrets broker.** Workspaces request time-bounded credential leases from the daemon. Real API keys live in exactly one place — the daemon's trust anchor — and are never copied, only leased. Auto-rotate, auto-revoke on destroy.
 
-6. **The host fleet.** Workspaces run on a dynamic set of machines: laptop, home server, cloud VM. Placement follows resource availability, persistence needs, data locality. You say `ws create myapp`; you don't say where.
+6. **Always-on durability on a chosen host.** Drydock assumes one host per desk for the desk's lifetime — a laptop, a home server, or a cloud VM, picked when the desk is created. Desks don't migrate between hosts; they're pinned. Hardware refresh is a rebuild-from-config procedure (yaml + registry + worktree branches), not a daemon primitive. Cross-host fleet choreography (migration, placement, identity continuity) was explored and deliberately archived — see `_archive/migration-vision.md`.
 
 7. **Audit as first-class.** "What did `scraper-desk` do yesterday?" returns: container lifetimes, outbound hosts reached, secrets requested, files modified, messages sent to other workspaces.
 

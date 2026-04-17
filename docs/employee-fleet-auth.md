@@ -61,7 +61,7 @@ drydock-token           # auto-issued by the daemon
 
 1. `ws create fleet-auth` — provisions the desk
 2. Desk starts, init-firewall runs, tailscale joins (for reachability
-   from other hosts in V3)
+   from the user's own devices over tailnet)
 3. `sync-claude-auth.sh` materializes credentials from secrets into
    the shared claude-code-config volume
 4. `claude remote-control` starts and refreshes tokens in the background

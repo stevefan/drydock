@@ -8,15 +8,14 @@ Secrets are mounted as files at a well-known path (`/run/secrets/`), not injecte
 
 ## End state (v2 — daemon as broker)
 
-Workspaces do not hold long-lived secrets. When a workspace needs `ANTHROPIC_API_KEY`, it requests a credential lease from the `wsd` daemon. The daemon:
+Workspaces do not hold long-lived secrets out-of-band. When a workspace needs `ANTHROPIC_API_KEY`, it requests a capability lease from the `wsd` daemon. The daemon:
 
-1. Checks the workspace's declared entitlements against the policy graph
-2. Fetches the real secret from its configured backend (1Password, vault, cloud secret manager, or a trust-anchor directory)
-3. Issues a time-bounded, scoped credential — possibly the real key, possibly a short-lived derived credential
-4. Writes it to the workspace's mounted secrets directory (tmpfs, readonly)
-5. Rotates it before expiry; revokes it on workspace destroy
+1. Checks the workspace's declared entitlements against the policy graph (narrowness pinned at `SpawnChild` time)
+2. Fetches the real secret from its configured backend (file-backed by default; pluggable to 1Password, vault, cloud secret manager)
+3. Materializes it into the workspace's mounted secrets directory under `/run/secrets/`
+4. Revokes it on workspace destroy; audit-emits at issue and release
 
-The workspace never learns the broker's real keys. The broker is the only thing that holds them. Rotation, revocation, and audit all happen at the broker.
+The workspace never learns the broker's real backend credentials. Scope is the key property: audit, narrowness, and per-desk isolation all happen at the broker. V2 leases default to `expiry: None` (live until desk destroy or explicit release) — time-bounded rotation is a V4 concern for cloud credentials that genuinely need it, not a V2 feature.
 
 ## v1 stepping stone (today)
 
@@ -70,7 +69,7 @@ The operator's mechanism for populating `~/.drydock/secrets/<workspace_id>/` can
 | **Google Cloud Run** | GCP Secret Manager → volume mount |
 | **Kubernetes** | K8s Secrets → volume mount |
 
-The v2 daemon takes over the populate-at-create-time mechanism, makes it credential-lease-based instead of file-copy-based, and adds rotation + revocation.
+The v2 daemon takes over the populate-at-create-time mechanism, makes it capability-lease-based instead of file-copy-based, and adds policy-enforced entitlement checks + revocation on destroy.
 
 ## Profile declares required secrets
 
@@ -111,7 +110,7 @@ In v2 the daemon does this at lease time instead of at container-start time.
 - Host secrets directory (`~/.drydock/secrets/`) should have restricted permissions (mode 0700)
 - Secrets are never committed to git — `.gitignore` excludes all `.env*` and `~/.drydock/secrets/` is outside the repo
 - Cloud secret mounts should use tmpfs (in-memory) by default — no disk persistence
-- V2 daemon leases are time-bounded; rotate and revoke automatically
+- V2 daemon leases revoke automatically on desk destroy; finite-TTL + rotation is V4 (cloud credentials) not V2
 
 ## Why per-workspace scoping from v1
 
@@ -124,5 +123,5 @@ Per-project scoping (one shared secrets dir for all workspaces of a project) was
 ## Decided questions
 
 - **Per-workspace vs per-project scoping:** per-workspace. Decided 2026-04-12.
-- **Rotation in running workspaces:** v1 requires restart. V2 daemon supports live rotation by rewriting the mounted tmpfs file and optionally signaling the workspace to re-read.
+- **Rotation in running workspaces:** v1 requires restart. V2 ships without live rotation (leases are `expiry: None`). Live rotation by rewriting the mounted tmpfs file + signalling the workspace to re-read is reserved for V4 when cloud credentials make it load-bearing.
 - **Vault / 1Password integration:** operator's choice in v1 (populate mechanism is not Drydock's concern). V2 daemon has pluggable backends.

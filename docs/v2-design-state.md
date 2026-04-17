@@ -16,7 +16,7 @@ Extends the v1 schema with V2 tables. SQLite is source of truth for:
 
 - **`desks` table** (v1's `workspaces` table, renamed via migration or kept as-is per vocabulary doc):
   - v1 columns: `id`, `name`, `project`, `state`, `created_at`, `container_id`, `worktree_path`, …
-  - v2 additions (per `v2-scope.md`): `parent_desk_id`, `delegatable_firewall_domains` (JSON), `delegatable_secrets` (JSON), `capabilities` (JSON). Resource budgets deferred to V3 — see capability-broker §4.
+  - v2 additions (per `v2-scope.md`): `parent_desk_id`, `delegatable_firewall_domains` (JSON), `delegatable_secrets` (JSON), `capabilities` (JSON). Resource budgets deferred — see capability-broker §4.
 - **`leases` table** (new): columns per `CapabilityLease` dataclass. Every outstanding lease persisted so restart doesn't drop them.
 - **`tokens` table** (new): `desk_id → token_sha256, issued_at, rotated_at`. Plaintext never stored.
 - **`task_log` table** (new): `request_id, method, spec_json, status (in_progress|completed|failed), outcome_json, created_at, completed_at`. See §3.
@@ -38,7 +38,7 @@ Every daemon action emits one JSONL line. Fields:
 }
 ```
 
-**Event types** (V2 set; extended additively in V3/V4):
+**Event types** (V2 set; extended additively by later work, e.g. V4 cloud types):
 
 | Event | Emitted on | Required `details` keys |
 |---|---|---|
@@ -62,7 +62,7 @@ Every daemon action emits one JSONL line. Fields:
 - No secret values ever appear in `details`. Only names (`secret_name`), hashes, or scope descriptors.
 - `request_id` correlates daemon events to client-side logs.
 
-**Why spec it now.** Audit consumers (the future ops / dashboards / weekly "what did agents do" reviews) depend on stable event names. Changing event names or required-details fields later is a breaking change for every consumer. Committing the shape in V2 means V3/V4 add events without reshaping existing ones.
+**Why spec it now.** Audit consumers (the future ops / dashboards / weekly "what did agents do" reviews) depend on stable event names. Changing event names or required-details fields later is a breaking change for every consumer. Committing the shape in V2 means future versions add events without reshaping existing ones.
 
 **Reversibility: MEDIUM.** The event-name vocabulary is a consumer-facing contract. Adding events is free; renaming or restructuring is breaking.
 
@@ -86,7 +86,7 @@ All in-memory state is reconstructible from SQLite and Docker. Daemon crash does
 - `~/.drydock/logs/wsd.log` — daemon log.
 - `~/.drydock/audit.log` — audit stream.
 
-**All paths are addressable by `ws_id`** so V3 migration is a tar-and-ship of owned paths + DB export.
+**All paths are addressable by `ws_id`** so the rebuild-from-config procedure (hardware refresh on a new host) is mechanical: tar `~/.drydock/{worktrees,overlays,secrets}/<ws_id>/`, copy registry row, re-issue token on the destination host. Not a daemon primitive — a manual runbook. Cross-host migration as a first-class feature was archived; see `_archive/migration-vision.md`.
 
 ### Container — ephemeral
 
@@ -96,21 +96,19 @@ Everything inside the desk container is either:
 
 Container-local state (shell history in `/root`, untracked files in `/tmp`) is lost on `ws stop` + `ws create` cycle. This is by design (per v1 ephemeral-container-lifecycle branch just merged).
 
-## 2. Serializability for V3 (forward-compat)
+## 2. Rebuildability on a fresh host
 
-V2 doesn't migrate, but every piece of state must be serializable so V3 can:
+Cross-host migration is archived (`_archive/migration-vision.md`). What V2 does commit to: **desk state is mechanically rebuildable from yaml + registry + worktree** on a fresh host, as a hardware-refresh runbook. Not a primitive; not zero-downtime. A bad afternoon every few years.
 
-| Property | How V2 enforces |
+The commitments that make the rebuild tractable, and that we uphold as light invariants (not CI-enforced):
+
+| Property | Why it helps rebuild |
 |---|---|
-| No host-specific absolute paths in registry | All paths constructed from `ws_id` + host prefix at runtime; registry stores relative paths where possible |
-| No host-clock-relative timestamps | All timestamps UTC-absolute; lease `expiry` is absolute instant, never "5 minutes from now" at persistence |
-| No host-specific tokens in container | Token is opaque; re-issue on migration (source host's tokens invalidated on migrate-out) |
-| Leases portable | `issuer` field lets V3 track which host issued; on migration, issuer rewrites to destination host |
-| Container state recoverable | Anything in container-local filesystem that mustn't be lost is volume-mounted to `~/.drydock/...` (host-owned, serializable) |
+| Paths in registry are ws_id-relative under `~/.drydock/` | Copy the subtree; no cross-host path rewriting |
+| Timestamps are UTC-absolute | Registry portability across timezones |
+| Container state is either rebuildable (package installs, caches) or volume-mounted to `~/.drydock/` if it must survive a container recreate | Rebuild runbook can tar what matters without combing container layers |
 
-Practical V3 migration is `tar ~/.drydock/{worktrees,overlays,secrets,leases}/<ws_id>/` + registry row export + tokens re-issued on destination. V2 doesn't implement this; V2 just doesn't preclude it.
-
-**Reversibility: HIGH** on "no host-specific state in container." Breaking this invariant by V2 means V3 is either a rewrite or a buggy migrator. Guarded by CI lint: registry-write helpers reject absolute paths that aren't under `~/.drydock/`.
+**What we deliberately no longer enforce:** no-host-specific-state-in-containers is no longer a HIGH-reversibility invariant with CI guardrails. Container-private state (SQLite WAL files, shell history in `/root`, `.venv`s, tool caches) is fine where it naturally falls. Projects that want specific files to survive container recreate still volume-mount them, per the existing v1 pattern — but that's a project-level convenience, not a daemon correctness property.
 
 ## 3. Crash recovery
 
@@ -256,7 +254,7 @@ def wsd(tmp_path):
 ```
 
 **Explicitly not in V2 test discipline:**
-- Load / scale tests (single user, ~10 desks; scale concerns are V3).
+- Load / scale tests (single user, ~10 desks; scale concerns are deferred until a real density target surfaces).
 - Long-running soak tests (restart cadence is human-driven).
 - Fuzzing beyond the canonicalization fuzz specced in capability-broker §5.
 
@@ -274,5 +272,5 @@ Per `CLAUDE.md §Tests must justify their existence`: every daemon test must ans
 | "Propagate, don't retry" devcontainer errors | Low | Can layer retry later without API change |
 | No auto-restart on container death | Low | Matches v1; can add flag later |
 | Destroy+create as the v1→v2 on-ramp (no `ws adopt`) | Low | Can add live-adoption later if pressure surfaces |
-| "No host-specific state in containers" invariant | **HIGH** | If broken, V3 migration either is a rewrite or a buggy migrator. CI lint + reviewer discipline required |
-| Audit event schema (names + required `details` keys — §1a) | Medium | Consumer-facing contract; adding events is free, renaming is breaking. Commit the shape in V2 so V3/V4 extend additively |
+| Container-state discipline | Low | Post-archive of migration (2026-04-17), no-host-specific-state-in-containers is downgraded from HIGH to a soft convention. CI lint removed; projects choose what to volume-mount for rebuild convenience |
+| Audit event schema (names + required `details` keys — §1a) | Medium | Consumer-facing contract; adding events is free, renaming is breaking. Commit the shape in V2 so future versions extend additively |

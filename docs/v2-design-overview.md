@@ -19,7 +19,7 @@
 **Gotchas I surfaced during review worth addressing when convenient** (not blocking V2.0 ship, but on the docket):
 
 1. **Task-log LRU eviction not implemented** per protocol §3. Small pressure today; will grow with traffic. A cleanup pass on boot (drop entries older than 24h AND in terminal state) would handle it.
-2. **No rate-limit on `SpawnChild`**. A parent desk calling it 1000 times bottlenecks on DevcontainerCLI. Resource-budget rules deferred to V3 per capability-broker doc §4, but ops would benefit from a soft cap (N in-flight per parent) as a belt.
+2. **No rate-limit on `SpawnChild`**. A parent desk calling it 1000 times bottlenecks on DevcontainerCLI. Resource-budget rules deferred per capability-broker doc §4, but ops would benefit from a soft cap (N in-flight per parent) as a belt.
 3. **Nested spawn from desk-mode has no E2E test.** Socket is bind-mounted, token is readable; path exists but the smoke test only exercises host CLI. First real nested spawn attempt may surface socket-side issues (timeout tuning, error propagation). Low severity; design sound.
 4. **Uniform capability primitive** (per `project_v2_capability_primitive.md`): validator currently takes `(parent, child)`. Future occupant/session scoping (per `project_drydock_employee_pattern.md`) wants `(holder, requester)`. Adding the third case later has medium reversibility cost — worth parameterizing soon if you're touching the validator signature for other reasons.
 
@@ -50,7 +50,7 @@ Earlier drafts included a `v2-design-vault-bridge.md`. It was cut: vault-mount n
 |---|---|
 | "Desks as first-class entities" | vocabulary (Project/Desk/Session layering), state (ownership split) |
 | "Policy graph with enforced narrowness" | capability-broker (validator contract + rules) |
-| "Bearer-token auth over Tailscale" | protocol (Unix socket transport, per-principal generalization reserved; HTTP transport and `RotateDeskToken` deferred to V3) |
+| "Bearer-token auth over Tailscale" | protocol (Unix socket transport, per-principal generalization reserved; HTTP transport and `RotateDeskToken` deferred, reinstate if a thin multi-host case surfaces) |
 | "Secrets broker (replaces V1 static mount)" | capability-broker (generalized lease shape) |
 | §Open questions 1–5 | All addressed: daemon location (protocol), devcontainer errors (state), attach routing (protocol), revocation on policy change (capability-broker), pluggable backends (capability-broker) |
 | Migration from V1 | state (V1 coexistence contract, destroy+create on-ramp, failure modes) |
@@ -77,15 +77,14 @@ Earlier drafts included a `v2-design-vault-bridge.md`. It was cut: vault-mount n
 Items marked **HIGH** = get it right the first time; changing after V2 ships is breaking or a rewrite. **MEDIUM** = changeable with work. **LOW** = additive/painless.
 
 **HIGH — hardest to reverse:**
-- Capability-lease shape (`{lease_id, desk_id, type, scope, issued_at, expiry, issuer, revoked}`). V3/V4 extend; wrong field set = breaking change.
+- Capability-lease shape (`{lease_id, desk_id, type, scope, issued_at, expiry, issuer, revoked}`). V4 extends; wrong field set = breaking change.
 - `scope: dict` unversioned. V4 evolution of future type shapes has no formal compatibility path. V2 mitigation: append-only-per-type convention; first V4 type defines versioning model.
 - Purity of `validate_spawn`. Test-enforced invariant.
-- "No host-specific state in containers." V3 migration depends on it.
 
 **MEDIUM — changeable but painful:**
 - JSON-RPC 2.0 wire protocol.
 - Bearer-token auth (vs. mTLS — additive, but removing bearers is breaking).
-- Token subject model (`token → desk_id`). V3 multi-user extends additively but all consumers participate.
+- Token subject model (`token → desk_id`). Future multi-user work extends additively but all consumers participate.
 - `CreateDesk`/`SpawnChild` as distinct methods.
 - `RequestCapability` subject derived from token (trust-model contract).
 - `RequestCapability` as single-entry-point for leases.
@@ -106,7 +105,7 @@ Items marked **HIGH** = get it right the first time; changing after V2 ships is 
 - `ws attach` bypasses daemon.
 - Structured `Reject` shape.
 - Destroy+create as v1→v2 on-ramp (no `ws adopt`).
-- Unix socket only (HTTP transport reserved for V3).
+- Unix socket only (HTTP transport deferred; additive if a thin multi-host case surfaces).
 
 ## Thin-slice implementation plan
 
@@ -125,7 +124,7 @@ Thinnest end-to-end first, then layer.
 - **Proves:** observability boundary; closes V2's scope list.
 
 **Not in V2:**
-- V3 migration, suspend/resume, fleet-aware daemon.
+- Cross-host migration, suspend/resume, fleet-aware daemon. Archived — see `_archive/migration-vision.md`.
 - V4 cloud capability types (`STORAGE_MOUNT`, `COMPUTE_QUOTA`, `NETWORK_REACH`) — enum-reserved only, YAML rejects.
 - Multi-user per-principal tokens (reserved in auth model, not implemented).
 - Vault-bridge reconciliation desk (not a daemon feature).
@@ -144,11 +143,11 @@ Thinnest end-to-end first, then layer.
 
 ## Decisions deliberately deferred
 
-- **Resource-budget narrowness** (validator rule 4 in earlier drafts). V2 single-monorepo, few-children forcing function doesn't exercise it. Reinstate in V3 if fleet scale or shared-resource contention surfaces.
-- **Live `ws reconcile` on parent policy change.** V2 flow is narrow → destroy → respawn. Live per-child cascade deferred to V3.
+- **Resource-budget narrowness** (validator rule 4 in earlier drafts). V2 single-monorepo, few-children forcing function doesn't exercise it. Reinstate if shared-resource contention surfaces.
+- **Live `ws reconcile` on parent policy change.** V2 flow is narrow → destroy → respawn. Live per-child cascade deferred; reinstate if the destroy+respawn cost becomes painful.
 - **`ws adopt` / `ws disown`.** V1 → V2 on-ramp is destroy+create. Simpler, same outcome; revisit if an in-place upgrade becomes necessary.
 - **24h auto-renew on SECRET leases.** V2 ships `expiry: None` (matches Phase-1 file-backed semantics). Finite-expiry + auto-renew machinery reserved for V4 cloud credentials where rotation is load-bearing.
-- **HTTP/Tailscale transport.** V2 ships Unix socket only. HTTP reserved for V3 multi-host; same JSON-RPC envelope means the addition is additive.
+- **HTTP/Tailscale transport.** V2 ships Unix socket only. HTTP transport is a natural extension if a second host ever wants its `ws` CLI to target a remote daemon over tailnet — additive, same JSON-RPC envelope.
 - **`RotateDeskToken` method.** Reserved in the design; no V2 caller. Ship in V2.5 if operational need surfaces.
 - **Audit storage format** (JSONL vs. SQLite table). Default JSONL (v1 convention); revisit if query shape demands.
 - **Per-lease file-mount vs. single `/run/secrets/` dir materialization.** V1 uses single dir; keep. Revisit if dynamic lease adds/removes surface friction.
@@ -185,7 +184,7 @@ Independent pass by Codex focused on reversibility, V4 forward-compat of the cap
 |---|---|---|---|
 | `CreateDesk`/`SpawnChild` split | Low | Medium | Two authority models; expensive to reshape after clients depend |
 | Unversioned `scope: dict` | (missing) | **HIGH** | Append-only-per-type convention in V2 |
-| Token subject model | (missing) | Medium | V3 multi-user anchor |
+| Token subject model | (missing) | Medium | Multi-user anchor (if revisited) |
 | `RequestCapability` subject-from-token | (missing) | Medium | Trust-model contract |
 | Domain canonicalization rules in validator's pure module | (missing) | Medium | Validator-bug class |
 | Mount narrowness rule | (missing) | Medium | Pins daemon-enforced mount subset for nested spawn |

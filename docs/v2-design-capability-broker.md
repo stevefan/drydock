@@ -31,8 +31,8 @@ class CapabilityLease:
 **Notes.**
 
 - `expiry` for V2 `SECRET` leases: **None by default** — leases live until desk destroy or explicit `ReleaseCapability`. Matches Phase-1 file-backed semantics (files are readable for the life of the desk). Finite-expiry + auto-renew machinery is reserved for V4 cloud credentials, which need rotation by design; V2 secrets don't. Clients may pass an explicit `ttl` for test scenarios, but no V2 caller relies on it.
-- `issuer` reserved for V3 fleet federation (`wsd@hostname`). V2 always emits `"wsd"`.
-- **No `parent_lease_id` field** in V2. Earlier drafts reserved it for a V3+ "parent sub-lets to child" flow, but V2 enforces narrowness at `SpawnChild` time via the validator — children get independent leases against their own entitlements. If V3 needs sub-letting, add the field then.
+- `issuer` field preserved for forward-compat (e.g., `wsd@hostname` if a thin multi-host case surfaces). V2 always emits `"wsd"`.
+- **No `parent_lease_id` field** in V2. Earlier drafts reserved it for a "parent sub-lets to child" flow, but V2 enforces narrowness at `SpawnChild` time via the validator — children get independent leases against their own entitlements. If sub-letting ever becomes needed, add the field then.
 - **No `scope_version` field** in V2. Codex review flagged the unversioned `dict` as a HIGH-reversibility risk. Mitigation in V2: treat `scope` as **append-only per type** (never rename keys, never narrow value types). When V4 ships its first new type, that iteration defines the versioning model.
 
 ## 3. Capability types
@@ -83,7 +83,7 @@ def validate_spawn(
 3. **Capability narrowness:** `child.capabilities ⊆ parent.capabilities`.
 4. **Mount narrowness:** `child.extra_mounts ⊆ parent.extra_mounts`. The parent can only pass on mounts it already has. This covers the forcing-function case (parent has vault mount; child-scraper doesn't declare it → child can't reach vault).
 
-**Resource budgets deferred.** `v2-scope.md` mentioned a rule 4 "resource limits" (parent CPU/memory/child-count budget debited on spawn). Dropped from V2: the V2 forcing function is a single monorepo with a handful of children; budget caps are premature. Reinstate in V3 when fleet scale warrants or when a desk genuinely burns shared host resources. Until then, container-level resource limits are the mechanism.
+**Resource budgets deferred.** `v2-scope.md` mentioned a rule 4 "resource limits" (parent CPU/memory/child-count budget debited on spawn). Dropped from V2: the V2 forcing function is a single monorepo with a handful of children; budget caps are premature. Reinstate when a desk genuinely burns shared host resources. Until then, container-level resource limits are the mechanism.
 
 **Return shape:**
 ```python
@@ -134,7 +134,7 @@ Not worth writing: default-value assertions on dataclass fields, mock verificati
 Operator edits project YAML. V2 does **not** do live cascade reconciliation:
 - Existing children keep running under their existing entitlements (validator already pinned them at spawn time).
 - To enforce a narrowed policy on running children: destroy + respawn. The admin flow is `ws destroy <child>` then `ws create` (or `SpawnChild` from the parent) with the now-narrower scope.
-- Live `ws reconcile` with per-child state transitions is reserved for V3 when fleet scale or compliance pressure makes destroy+respawn costly.
+- Live `ws reconcile` with per-child state transitions is deferred; reinstate when destroy+respawn cost becomes painful.
 - Narrowing a grant with no children affected = zero-cost; just update YAML.
 
 ### 6c. Lease expiry
@@ -183,7 +183,7 @@ Lease semantics are backend-independent: `RequestCapability(type=SECRET, ...)` r
 
 | Decision | Cost | Notes |
 |---|---|---|
-| Capability-lease shape | **HIGH** | V3/V4 extend. Minimalist on purpose |
+| Capability-lease shape | **HIGH** | V4 extends. Minimalist on purpose |
 | `scope: dict` unversioned | **HIGH** | Append-only-per-type convention in V2; first V4 type defines formal versioning |
 | Purity of `validate_spawn` | **HIGH** | Hard invariant; test-enforced |
 | Secrets-as-capability-type (not separate API) | Medium | Generalization is the design's payoff |

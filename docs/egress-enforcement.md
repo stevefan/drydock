@@ -32,7 +32,7 @@ Both layers reference the SAME allowlist source (project YAML's `firewall_extra_
 
 **B. egress-proxy-only.** Rejected because raw-TCP or TLS-without-SNI tools would bypass it entirely. Belt stays for coverage that the proxy can't enforce.
 
-**C. Tailscale exit node + internal docker network.** Interesting; considered. Rejected for now because it adds latency on ALL egress (not just policy-enforced destinations), couples every drydock desk to Tailscale ACL management, and pushes the enforcement point off-host (harder local reasoning). Revisit if multi-host fleet scale makes per-desk proxies expensive.
+**C. Tailscale exit node + internal docker network.** Interesting; considered. Rejected for now because it adds latency on ALL egress (not just policy-enforced destinations), couples every drydock desk to Tailscale ACL management, and pushes the enforcement point off-host (harder local reasoning). Revisit if desk density on a single host makes per-desk proxies expensive.
 
 ## Architecture (when built)
 

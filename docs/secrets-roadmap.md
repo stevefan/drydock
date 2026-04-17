@@ -27,14 +27,15 @@ Invariants:
 
 ## Phase 2 — daemon-mediated broker (v2 daemon era)
 
-Backend: `wsd` daemon holds secrets in memory + encrypted rest-store; issues time-bounded lease files to containers. Same CLI; daemon replaces the file-backed store.
+Backend: `wsd` daemon holds secrets via a pluggable backend (file-backed in V2.0) and issues capability leases to containers. Leases default to `expiry: None` — live until desk destroy or explicit release. Same CLI; daemon replaces the file-backed store's direct-path operations.
 
 New capabilities the CLI gains:
 
 - **Scoped delegation**: `ws secret set <parent-ws> <key> --delegatable-to <child-ws>` — parent desk declares which secrets it may hand to spawned children. Enforces narrowness (child can request a subset, never more).
-- **Rotation**: daemon rotates secrets on a cadence; containers receive fresh leases automatically.
 - **Immediate revocation**: `ws secret rm` → daemon kills leases; running containers lose access next request.
-- **Scoping per principal**: in multi-user era (V3+), secrets are scoped to owner; one user's secrets don't leak to another user's desks.
+- **Scoping per principal**: in multi-user era (deferred), secrets are scoped to owner; one user's secrets don't leak to another user's desks.
+
+Rotation (live re-materialization of running-desk secret files on a cadence) is reserved for Phase 4 / V4 where cloud credentials make it load-bearing.
 
 Migration: `ws secret migrate --to broker` copies file-backed secrets into the daemon's store, updates mounts from bind-readonly-file to daemon-lease. One-time.
 

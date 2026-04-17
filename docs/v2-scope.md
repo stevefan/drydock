@@ -6,29 +6,26 @@ An **agent-desk** is a durable, addressable place where an agent works. It has a
 
 V1 treats workspaces as container-plus-worktree: useful, but the *container* is where identity effectively lives. When the container goes, so does the in-flight work, the session, the shell state. V2 inverts this — the *desk* is the first-class thing, owned by the daemon; containers are its current embodiment.
 
-Nested spawning — the forcing function for V2 — is one consequence of this inversion: if desks are daemon entities, then an occupying agent can ask the daemon for a sibling desk without Drydock violating its own layering principles. Migration (V3) is another: if state belongs to the desk rather than to the container, the desk can move.
+Nested spawning — the forcing function for V2 — is the primary consequence: if desks are daemon entities, then an occupying agent can ask the daemon for a sibling desk without Drydock violating its own layering principles. Container rebuild (`ws upgrade --force`, base-image bump, recovery after a crash) is another: when the container is rebuilt, the desk — registry row, worktree, named volumes, tokens — survives intact.
 
-This document scopes **V2: single-host daemon, desk-as-first-class, policy + nested spawn + audit**. Migration itself is V3 — but V2's interfaces must not preclude it.
+This document scopes **V2: single-host daemon, desk-as-first-class, policy + nested spawn + audit + tailnet identity lifecycle**. Desks are durable on their chosen host; cross-host migration is not a goal (see `_archive/migration-vision.md` for the archived vision and why it was dropped).
 
 ## What V2 delivers
 
 - **`wsd` daemon** as sole control plane for every lifecycle operation. The `ws` CLI becomes one client; Claude Code in a desk is another.
-- **Desks are daemon entities.** State lives in registry and well-known host paths owned by the daemon, not in container-private layers.
+- **Desks are daemon entities.** Daemon-authoritative state (policy, entitlements, tokens, parent-child links, audit) lives in the registry and well-known host paths. Project-level container state (caches, `.venv`s, shell history, SQLite WAL files) can live wherever is natural; no daemon correctness property requires banishing it.
 - **Policy graph with enforced narrowness.** Children are strictly narrower than parents — firewall, secrets, capabilities.
 - **Nested spawn via the daemon.** A desk-occupant asks the daemon to spawn a child; the daemon validates policy and dispatches.
 - **Audit log.** Every daemon action recorded with principal + operation + policy check result.
 - **Bearer-token auth over Tailscale.** Desks receive a token at creation; they present it when talking to the daemon.
 - **Tailnet identity lifecycle.** Daemon authoritatively cleans up the tailnet device record on `DestroyDesk` (closes a v1 gap where `tailscale logout` releases node-side auth but leaves the device record in the tailnet admin). Admin RPC `PruneStaleTailnetDevices` for batch cleanup of orphans. Daemon-level admin token, not a per-desk capability — see [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md).
 
-## What V2 explicitly does *not* do (belongs in V3)
+## What V2 explicitly does *not* do
 
-- **Migration.** `ws migrate myapp laptop→cloud` is V3.
-- **Suspend/resume.** The foundation for migration. On a single host, Docker Desktop's VM suspension already covers laptop close/open. Building Drydock-level suspend/resume before there's a reason (migration) is ceremony.
-- **Fleet-aware daemon.** Multi-host coordination, placement decisions, lead election.
-- **`drydock-base` image.** Publishing a base image so project devcontainers can `FROM ghcr.io/.../drydock-base`. Only becomes load-bearing when desks migrate between hosts with potentially different base-template versions.
-- **Cross-host identity continuity** (same Tailscale hostname across hosts, audit principal that follows the desk).
+- **Cross-host migration, fleet daemon, suspend/resume, cross-host identity continuity.** All archived in `_archive/migration-vision.md`. Desks are pinned to the host that creates them; hardware refresh is a rebuild-from-config procedure.
+- **Thin multi-host coordination.** Nothing stops two hosts each running their own `wsd` with their own desks, and a `ws` CLI on either host can target the other's socket over tailnet if configured. Not a V2 focus; no shared registry, no placement decisions.
 
-All of these are V3, and the V3 design starts from whatever V2 ships. The architectural commitment V2 makes, to unblock V3 later: **desk state must be serializable.** What lives in the daemon's ownership (registry, overlay, secrets broker leases) has portable representations; what lives in the container is either derived from that state (rebuildable from devcontainer + worktree) or volume-mounted to host-owned paths (session files, bash history, tool caches). V2 gets this discipline right from day one, even without implementing migration itself.
+The architectural commitment V2 makes: **desk state is rebuildable from yaml + registry + worktree.** Project yaml + `~/.drydock/projects/*.yaml` + a registry dump + worktree branch names are enough to re-provision a desk on a fresh host in a bounded manual procedure. This is hardware-refresh insurance, not migration. Container-private state (caches, `.venv`s, SQLite WAL files, shell history) can live wherever is natural — Docker volumes, container layers, or host-mounted paths as the project chooses; none of it needs to be portable between hosts.
 
 ## Forcing function: heterogeneous monorepos
 
@@ -54,7 +51,7 @@ Homogeneous repos (all sub-projects with similar isolation needs) don't exercise
 - **Narrowness.** A desk cannot grant a child any capability it does not hold. Compromise of any single desk cannot laterally expand authority.
 - **Explicit capability grants.** No desk is "permissionless." Each gets enumerated capabilities; spawning is one of them. Most desks don't have it.
 - **Host mode still works.** The `ws` CLI invoked on the host continues as today. The daemon is plumbing for the desk-occupant case, not a replacement for local use.
-- **Serializable state, even before migration.** The daemon owns desk state in ways that can later transfer between hosts, even though V2 doesn't transfer anything.
+- **Rebuildable state.** The daemon owns desk state in ways that survive container rebuilds and support a manual rebuild-from-config procedure on a fresh host. Not: transparent migration between hosts — that's archived.
 
 ## Architecture
 
@@ -89,7 +86,7 @@ Host
 | `wsd` daemon | Enforces policy, writes to registry, invokes devcontainer CLI on behalf of authorized callers. |
 | Desk state (registry columns) | `parent_workspace_id`, `delegatable_firewall_domains`, `delegatable_secrets`, `capabilities`, plus everything V1 already tracks. |
 | Policy validator | Pure function; given a parent's declared policy and a child's requested policy, returns `allow` or `reject with reason`. Extensively tested; this is the trust boundary. |
-| Secrets broker | Issues time-bounded credential leases to desks. Replaces V1's static `/run/secrets` directory with daemon-mediated provisioning. Migration-ready: re-leasing on a new host is cleaner than copying files. |
+| Secrets broker | Issues capability leases to desks. Replaces V1's static `/run/secrets` directory with daemon-mediated provisioning — policy-enforced entitlement checks, per-desk isolation, revocation on destroy. |
 | Audit log | `~/.drydock/audit.log`. Every daemon operation with timestamp, principal, policy check result. |
 
 ## Protocol sketch
@@ -112,7 +109,7 @@ Bearer token per desk, issued at `ws create`, mounted at `/run/secrets/drydock-t
 
 Rejected alternatives:
 - mTLS via Tailscale device identity — stronger, but couples V2 to Tailscale beyond the transport layer.
-- Unix socket peer credentials — only works single-host, which V3 wants to move beyond.
+- Unix socket peer credentials — only works single-host-single-daemon; a bearer token generalizes cleanly if a thin multi-host case ever surfaces.
 
 Revisit if the token model stresses.
 
@@ -125,7 +122,7 @@ Before spawning a child, the daemon verifies:
 3. **Capability narrowness.** `child.capabilities ⊆ parent.capabilities`. A parent that cannot spawn grandchildren cannot grant that authority either.
 4. **Mount narrowness.** `child.extra_mounts ⊆ parent.extra_mounts`. A child cannot receive a mount the parent itself doesn't have.
 
-*(Resource budgets — child count, CPU/memory caps debited on spawn — were sketched here originally but deferred to V3 per the design-pass trim. V2's forcing function is one monorepo with a handful of children; budget caps are premature. See `v2-design-capability-broker.md` §4.)*
+*(Resource budgets — child count, CPU/memory caps debited on spawn — were sketched here originally but deferred per the design-pass trim. V2's forcing function is one monorepo with a handful of children; budget caps are premature. See `v2-design-capability-broker.md` §4.)*
 
 ## Capability primitive: uniform across spawn and occupant
 
@@ -178,14 +175,8 @@ else:
 
 When the nested case becomes painful enough that spawning children from the host feels wrong. A heterogeneous monorepo can run today in V1 mode (each desk host-spawned); pain surfaces when a top-level agent wants to spawn narrower children and can't.
 
-## What V3 adds (preview)
+## The migration vision — archived
 
-V3 takes the agent-desk further: desks become **mobile**. The architectural bet of V2 — desks are serializable daemon entities — pays off in V3 as actual portability.
+An earlier trajectory had V3 making desks **mobile** across hosts: `ws migrate laptop→cloud`, fleet-aware daemon, identity continuity, published `drydock-base` as a migration-correctness gate. Dropped on 2026-04-17 in favor of "always-on durability on a chosen host" — see `_archive/migration-vision.md` for the full preserved vision and the reasoning behind the pivot.
 
-- **Migration primitive.** `ws migrate myapp laptop→cloud`. Suspend on source, serialize state, transfer, deserialize, resume on destination.
-- **Fleet-aware daemon.** Multiple hosts running `wsd`, coordinated. Placement decisions driven by policy (prefer cloud for heavy compute, prefer interactive host for desks you're currently attached to).
-- **Identity continuity across hosts.** Same Tailscale hostname, same audit principal, same `DRYDOCK_WORKSPACE_ID` across host changes.
-- **`drydock-base` image.** Published base image so project devcontainers `FROM` it. Migration between hosts requires base-template consistency; duplication across project-owned devcontainers is tolerable in V2, unacceptable in V3.
-- **Suspend/resume as a first-class primitive** (because it's the same operation as migration, just without the transfer step).
-
-The user-facing outcome V3 targets: *seamless remote development*. You work on a desk from your laptop; you close the lid, walk to the lab; overnight, heavy work keeps going on a cloud VM; next morning, the desk has migrated back to your laptop and in-flight work is exactly where you left it. The desk is the stable thing; the host is implementation detail.
+Post-pivot, `drydock-base` remains useful as a deduplication pattern across project devcontainers, but is no longer load-bearing for any correctness property.

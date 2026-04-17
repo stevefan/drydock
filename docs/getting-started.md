@@ -204,12 +204,15 @@ See the auction-crawl project for a working example with three scheduled jobs.
 
 ## The v2 daemon
 
-The v2 daemon (`ws daemon`) adds RPC-mediated workspace management, enabling nested spawning (an agent inside a desk calling `ws create`), cross-desk secret delegation, and fleet-level policy. Slices 1-3 are complete with 11 RPC methods. See [v2-scope.md](v2-scope.md) for the design.
+The v2 daemon (`ws daemon`) adds RPC-mediated workspace management, enabling nested spawning (an agent inside a desk calling `ws create`), cross-desk secret delegation, and host-wide policy enforcement. Slices 1-3 are complete with 11 RPC methods. See [v2-scope.md](v2-scope.md) for the design.
 
 ### What is *not* yet shipped
 
 - **Parent-child destroy cascade.** Each workspace is independent; destroying a parent does not destroy its conceptual children.
-- **Cross-host migration.** Desk state is host-local today; moving a desk between hosts requires manual re-provision.
+
+### Not a goal
+
+- **Cross-host migration.** Desks are pinned to the host that creates them; hardware refresh is a rebuild-from-config procedure (yaml + registry dump + worktree branches). See `_archive/migration-vision.md` for the archived exploration.
 
 ## Troubleshooting
 

@@ -43,7 +43,7 @@ The v1 identifier `ws_<slug>` remains. Read it as **"workspace id"** = **"desk i
 ### Session
 - Explicitly **out of Drydock's scope.** Agent-to-agent coordination within a desk (two Claudes editing the same repo, pair-agent patterns, reviewer/actor) is a substrate/orchestrator problem, not a daemon problem.
 - The daemon does not track session count, session attribution, or per-session policy. If two sessions on one desk both call `RequestCapability`, the daemon sees both calls as coming from the same desk with the same token.
-- **V3 multi-user note:** when principals become explicit, a session carries a `principal_id`. The token → `(principal_id, desk_id)` lookup remains at desk-level; per-session policy is never added.
+- **Multi-user note (deferred):** when principals become explicit, a session carries a `principal_id`. The token → `(principal_id, desk_id)` lookup remains at desk-level; per-session policy is never added.
 
 ## Canonical phrasings
 
@@ -71,4 +71,4 @@ No rename of identifiers (`ws_<slug>`, `workspaces` table). Pure documentation a
 |---|---|---|
 | Three-layer Project/Desk/Session split | **Medium** | Once daemon RPC surface encodes the split (capabilities keyed on desk, audit principal = desk, tokens per desk), the layering is expensive to change. The split itself is load-bearing; the naming on top of it is cheap. |
 | Keeping `ws_<slug>` as the technical id | Low | Pure naming; can alias later if needed. |
-| Session as explicitly out-of-scope | Medium | If session-level policy becomes required (per-user secrets scoping, per-session audit), we'd need to extend the token model from desk-only to desk-plus-principal. V3 multi-user sketch already reserves this extension. |
+| Session as explicitly out-of-scope | Medium | If session-level policy becomes required (per-user secrets scoping, per-session audit), we'd need to extend the token model from desk-only to desk-plus-principal. Multi-user sketch already reserves this extension. |
