@@ -371,6 +371,71 @@ def _release_capability(
     )
 
 
+def _stop_desk(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    from drydock.wsd.handlers import stop_desk
+    return stop_desk(
+        params,
+        request_id,
+        caller_desk_id,
+        registry_path=_REGISTRY_PATH,
+        dry_run=_DRY_RUN,
+    )
+
+
+def _list_desks(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    from drydock.wsd.handlers import list_desks
+    return list_desks(
+        params,
+        request_id,
+        caller_desk_id,
+        registry_path=_REGISTRY_PATH,
+    )
+
+
+def _list_children(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    from drydock.wsd.handlers import list_children
+    return list_children(
+        params,
+        request_id,
+        caller_desk_id,
+        registry_path=_REGISTRY_PATH,
+    )
+
+
+def _inspect_desk(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    from drydock.wsd.handlers import inspect_desk
+    return inspect_desk(
+        params,
+        request_id,
+        caller_desk_id,
+        registry_path=_REGISTRY_PATH,
+    )
+
+
 def _get_audit(
     params: dict | list | None,
     request_id: str | int | None,
@@ -436,6 +501,10 @@ _METHODS: dict[str, MethodSpec] = {
     "SpawnChild": MethodSpec(handler=_spawn_child, requires_auth=True),
     "RequestCapability": MethodSpec(handler=_request_capability, requires_auth=True),
     "ReleaseCapability": MethodSpec(handler=_release_capability, requires_auth=True),
+    "StopDesk": MethodSpec(handler=_stop_desk, requires_auth=False),
+    "ListDesks": MethodSpec(handler=_list_desks, requires_auth=False),
+    "ListChildren": MethodSpec(handler=_list_children, requires_auth=True),
+    "InspectDesk": MethodSpec(handler=_inspect_desk, requires_auth=False),
     "GetAudit": MethodSpec(handler=_get_audit, requires_auth=False),
     "wsd.health": MethodSpec(handler=_health, requires_auth=False),
     "wsd.whoami": MethodSpec(handler=_whoami, requires_auth=True),

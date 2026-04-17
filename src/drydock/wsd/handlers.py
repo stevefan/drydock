@@ -925,6 +925,162 @@ def _rpc_error_from_ws_error(exc: WsError) -> _RpcError:
     return _RpcError(code=-32000, message="create_desk_failed", data=data)
 
 
+def stop_desk(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+    *,
+    registry_path: Path,
+    dry_run: bool,
+) -> dict[str, object]:
+    """Stop a desk's container without destroying the workspace."""
+    del request_id
+    del caller_desk_id
+    target_name, target_desk_id = _validated_stop_target(params)
+
+    registry = Registry(db_path=registry_path)
+    try:
+        workspace = _lookup_by_name_or_id(registry, target_name, target_desk_id)
+        if workspace is None:
+            raise _RpcError(
+                code=-32001,
+                message="desk_not_found",
+                data={"desk_id": target_desk_id},
+            )
+
+        if not dry_run:
+            devc = DevcontainerCLI(dry_run=False)
+            devc.stop(container_id=workspace.container_id)
+
+        registry.update_state(workspace.name, "suspended")
+        return {
+            "desk_id": workspace.id,
+            "name": workspace.name,
+            "state": "suspended",
+        }
+    finally:
+        registry.close()
+
+
+def inspect_desk(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+    *,
+    registry_path: Path,
+) -> dict[str, object]:
+    """Return full details for one desk."""
+    del request_id
+    del caller_desk_id
+    target_name, target_desk_id = _validated_stop_target(params)
+
+    registry = Registry(db_path=registry_path)
+    try:
+        workspace = _lookup_by_name_or_id(registry, target_name, target_desk_id)
+        if workspace is None:
+            raise _RpcError(
+                code=-32001,
+                message="desk_not_found",
+                data={"desk_id": target_desk_id},
+            )
+        return workspace.to_dict()
+    finally:
+        registry.close()
+
+
+def list_desks(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+    *,
+    registry_path: Path,
+) -> dict[str, object]:
+    """List workspaces with optional filters."""
+    del request_id
+    del caller_desk_id
+    project: str | None = None
+    state: str | None = None
+    if isinstance(params, dict):
+        project = params.get("project")
+        state = params.get("state")
+
+    registry = Registry(db_path=registry_path)
+    try:
+        workspaces = registry.list_workspaces(project=project, state=state)
+        return {"desks": [ws.to_dict() for ws in workspaces]}
+    finally:
+        registry.close()
+
+
+def list_children(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_desk_id: str | None,
+    *,
+    registry_path: Path,
+) -> dict[str, object]:
+    """List children of a parent desk."""
+    del request_id
+    parent_id: str | None = None
+    if isinstance(params, dict):
+        parent_id = params.get("parent_id")
+    if not parent_id:
+        parent_id = caller_desk_id
+    if not parent_id:
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"missing": ["parent_id"]},
+        )
+
+    registry = Registry(db_path=registry_path)
+    try:
+        children = registry.get_children(parent_id)
+        return {"children": [ws.to_dict() for ws in children]}
+    finally:
+        registry.close()
+
+
+def _validated_stop_target(params: dict | list | None) -> tuple[str | None, str]:
+    """Validate params for StopDesk / InspectDesk — accepts {name} or {desk_id}."""
+    if not isinstance(params, dict):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"missing": ["name or desk_id"]},
+        )
+    name = params.get("name")
+    if isinstance(name, str) and name:
+        return name, Workspace(name=name, project=name, repo_path="").id
+
+    desk_id = params.get("desk_id")
+    if isinstance(desk_id, str) and desk_id:
+        return None, desk_id
+
+    raise _RpcError(
+        code=-32602,
+        message="invalid_params",
+        data={"missing": ["name or desk_id"]},
+    )
+
+
+def _lookup_by_name_or_id(
+    registry: Registry,
+    target_name: str | None,
+    target_desk_id: str,
+) -> Workspace | None:
+    """Look up a workspace by name or desk_id."""
+    if target_name is not None:
+        return registry.get_workspace(target_name)
+    row = registry._conn.execute(
+        "SELECT * FROM workspaces WHERE id = ?",
+        (target_desk_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return registry._row_to_workspace(row)
+
+
 def _ensure_gitconfig_stub() -> None:
     gitconfig = Path.home() / ".gitconfig"
     if gitconfig.exists():
