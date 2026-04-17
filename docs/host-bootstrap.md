@@ -34,6 +34,8 @@ After the script, `which ws && ws --version` should work.
 # Tailscale — joins the tailnet
 tailscale up --hostname=<box-name>
 # (device flow — opens a URL; do it on your phone or any browser)
+# Once the tailnet ACL permits it, SSH into any desk with:
+#   tailscale ssh node@<desk>
 
 # GitHub — for private-repo clones
 gh auth login --hostname github.com --git-protocol https --web
@@ -53,14 +55,26 @@ The `claude remote-control` server (what surfaces a desk in your claude.ai Remot
 
 Good news: once you've done that on any machine (e.g. your Mac), you can **transplant the auth state to any drydock host** via two drydock secrets. `sync-claude-auth.sh` (in drydock-base v1.0.6+) picks them up at container startup, materializes them in the `claude-code-config` shared volume, and marks `/workspace` as trusted.
 
+**Important: newer Claude Code versions no longer store credentials on disk.** On macOS, Claude Code now stores OAuth credentials exclusively in the macOS Keychain (service name `Claude Code-credentials`). The file `~/.claude/.credentials.json` no longer exists. Extract credentials from the keychain instead.
+
+The account-state file `~/.claude.json` (contains `organizationUuid`, selected model, etc.) still exists on disk and is still needed.
+
 **One-time per host (and re-run whenever your token refreshes):**
 
 ```bash
-# On the machine where you're logged in to Claude Code (e.g. your Mac):
-ws secret set <desk> claude_credentials   < ~/.claude/.credentials.json
+# On your Mac — extract credentials from macOS Keychain (always has the freshest tokens):
+security find-generic-password -s "Claude Code-credentials" -w | ws secret set <desk> claude_credentials
+
+# Account state still lives on disk:
 ws secret set <desk> claude_account_state < ~/.claude.json
+
+# Push both to the remote host:
 ws secret push <desk> --to root@<host>
 ```
+
+**Token refresh:** after the initial credential seed, the container's own `refreshToken` loop should keep tokens alive indefinitely without re-extraction from the Mac. We are empirically validating this (as of 2026-04-16); if refresh silently fails, re-extract from keychain and re-push.
+
+**Why not `claude auth login` inside the container?** `claude auth login` requires Ink raw-mode TTY support. Most SSH and `docker exec` PTY combinations do not satisfy this — the login flow hangs or renders garbled output. The keychain-extraction pattern above bypasses this limitation entirely.
 
 After the first container restart (or `ws create --force`) the desk registers with claude.ai. The `claude-code-config` volume is shared across all desks on a host, so any sibling desk gets the auth for free.
 
@@ -82,6 +96,14 @@ chmod 400 /root/.drydock/daemon-secrets/*
 ```
 
 See [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md) for the full lifecycle story.
+
+## Tailscale SSH into desks
+
+Once your tailnet ACL permits SSH, `tailscale ssh node@<desk>` is the canonical way to remote into a running desk. Notes from the auction-crawl deployment (2026-04-14 through 2026-04-16):
+
+- **`safe.directory = *`** — drydock-base v1.0.8 sets `git config --global safe.directory '*'` inside desks. Without this, git refuses to operate in `/workspace` when the UID of the SSH session doesn't match the repo owner. The wildcard is acceptable in single-tenant agent containers; do not carry this pattern to shared hosts.
+- **ACL `check` vs `accept`** — Tailscale SSH ACLs support `action: "check"` (requires the connecting user to re-authenticate via the admin panel) and `action: "accept"` (trusts the tailnet identity directly). For personal drydock hosts, `accept` is simpler; for shared hosts or sensitive desks, `check` adds an interactive gate. Choose based on your threat model.
+- **PTY quality** — Tailscale SSH provides a better PTY than raw `docker exec -it`, which matters for tools like `claude` that use Ink/raw-mode rendering. If you need interactive Claude sessions inside a desk, prefer Tailscale SSH over docker exec.
 
 ## What's per-project (NOT host bootstrap)
 
