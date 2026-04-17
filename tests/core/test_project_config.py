@@ -123,3 +123,26 @@ class TestLoadProjectConfig:
             load_project_config("typo", base_dir=tmp_path)
         assert "typo_field" in str(exc_info.value)
         assert exc_info.value.fix is not None
+
+    # Regression: V2 delegation fields must flow through the YAML loader.
+    # Daemon's CreateDesk handler already accepts these; loader has to too.
+    def test_v2_delegation_fields_parsed(self, tmp_path):
+        (tmp_path / "emp.yaml").write_text(
+            "repo_path: /srv/infra\n"
+            "capabilities:\n"
+            "  - request_secret_leases\n"
+            "  - spawn_children\n"
+            "secret_entitlements:\n"
+            "  - anthropic_api_key\n"
+            "delegatable_secrets:\n"
+            "  - claude_credentials\n"
+            "  - anthropic_api_key\n"
+            "delegatable_firewall_domains:\n"
+            "  - api.anthropic.com\n"
+        )
+        cfg = load_project_config("emp", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.capabilities == ["request_secret_leases", "spawn_children"]
+        assert cfg.secret_entitlements == ["anthropic_api_key"]
+        assert cfg.delegatable_secrets == ["claude_credentials", "anthropic_api_key"]
+        assert cfg.delegatable_firewall_domains == ["api.anthropic.com"]

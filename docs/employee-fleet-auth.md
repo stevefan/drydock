@@ -1,6 +1,20 @@
 # Drydock Employee: Fleet Auth Desk
 
-**Status:** Design sketch. Not yet implemented. V2.1 target.
+**Status:** First instance live as of 2026-04-17. `infra` desk on
+`drydock-hillsboro` holds fleet-level secrets and delegates
+`claude_credentials` to `auction-crawl` via the V2.1 capability broker.
+Cross-desk delegation path empirically validated: lease issued, source
+bytes materialized into caller's secret dir, visible inside caller's
+container at `/run/secrets/claude_credentials`, audit log stamped.
+
+**Known gap:** in-desk RPC access (desk calling the daemon from inside
+its own container) isn't wired up yet — `wsd.sock` isn't bind-mounted
+into desks, and `ws` CLI isn't installed in `drydock-base`. Today
+cross-desk delegation must be triggered from the host. The consumer-
+side flow through the daemon works end-to-end; it just requires a
+host-side RPC client rather than an in-desk one. Follow-up: bind-mount
+the socket to `/run/drydock/wsd.sock` in the overlay and set
+`DRYDOCK_WSD_SOCKET` in containerEnv.
 
 The first concrete instance of the "drydock employee" pattern described
 in `project_drydock_employee_pattern.md`: a long-running desk whose

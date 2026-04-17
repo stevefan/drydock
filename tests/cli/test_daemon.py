@@ -132,6 +132,28 @@ def test_daemon_stop_when_not_running():
         shutil.rmtree(home, ignore_errors=True)
 
 
+# Regression: systemd/launchd-managed wsd has no pid file at
+# ~/.drydock/wsd.pid, but its socket is authoritative. _daemon_status
+# must report running=true when the socket health-checks, regardless of
+# pid-file presence. The previous logic gated health_responsive on
+# _process_alive(pid), which was always False without a pid file.
+def test_daemon_status_recognizes_externally_managed_daemon(tmp_path, monkeypatch):
+    from drydock.cli import daemon as daemon_mod
+
+    socket_path = tmp_path / "wsd.sock"
+    socket_path.touch()
+    log_path = tmp_path / "wsd.log"
+
+    monkeypatch.setattr(daemon_mod, "_pid_path", lambda: tmp_path / "wsd.pid")
+    monkeypatch.setattr(daemon_mod, "_health_call", lambda _socket_path: True)
+
+    data = daemon_mod._daemon_status(socket_path, log_path)
+    assert data["running"] is True
+    assert data["health_responsive"] is True
+    assert data["pid"] is None
+    assert data["socket_present"] is True
+
+
 def test_daemon_logs_n_lines():
     """Logs command must surface recent daemon output for operators."""
     home = _short_tmp()
