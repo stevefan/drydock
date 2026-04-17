@@ -25,11 +25,12 @@ RUN npm install -g \
   @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   @devcontainers/cli
 
-COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh start-litestream.sh /usr/local/bin/
+COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh sync-aws-auth.sh refresh-firewall-allowlist.sh start-litestream.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh \
               /usr/local/bin/start-tailscale.sh \
               /usr/local/bin/start-remote-control.sh \
               /usr/local/bin/sync-claude-auth.sh \
+              /usr/local/bin/sync-aws-auth.sh \
               /usr/local/bin/refresh-firewall-allowlist.sh \
               /usr/local/bin/start-litestream.sh
 
