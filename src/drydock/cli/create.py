@@ -57,6 +57,14 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["forward_ports"] = proj_cfg.forward_ports
     if proj_cfg.claude_profile is not None:
         params["claude_profile"] = proj_cfg.claude_profile
+    if proj_cfg.capabilities:
+        params["capabilities"] = proj_cfg.capabilities
+    if proj_cfg.secret_entitlements:
+        params["secret_entitlements"] = proj_cfg.secret_entitlements
+    if proj_cfg.delegatable_secrets:
+        params["delegatable_secrets"] = proj_cfg.delegatable_secrets
+    if proj_cfg.delegatable_firewall_domains:
+        params["delegatable_firewall_domains"] = proj_cfg.delegatable_firewall_domains
     return params
 
 

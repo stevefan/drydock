@@ -21,6 +21,10 @@ KNOWN_KEYS = {
     "forward_ports",
     "extra_mounts",
     "claude_profile",
+    "capabilities",
+    "secret_entitlements",
+    "delegatable_secrets",
+    "delegatable_firewall_domains",
 }
 
 
@@ -39,6 +43,10 @@ class ProjectConfig:
     forward_ports: list[int] = field(default_factory=list)
     extra_mounts: list[str] = field(default_factory=list)
     claude_profile: str | None = None
+    capabilities: list[str] = field(default_factory=list)
+    secret_entitlements: list[str] = field(default_factory=list)
+    delegatable_secrets: list[str] = field(default_factory=list)
+    delegatable_firewall_domains: list[str] = field(default_factory=list)
 
 
 DEFAULT_PROJECTS_DIR = Path.home() / ".drydock" / "projects"
@@ -90,4 +98,8 @@ def load_project_config(
         forward_ports=raw.get("forward_ports", []),
         extra_mounts=raw.get("extra_mounts", []),
         claude_profile=raw.get("claude_profile"),
+        capabilities=raw.get("capabilities", []),
+        secret_entitlements=raw.get("secret_entitlements", []),
+        delegatable_secrets=raw.get("delegatable_secrets", []),
+        delegatable_firewall_domains=raw.get("delegatable_firewall_domains", []),
     )
