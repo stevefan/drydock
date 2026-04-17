@@ -1,53 +1,114 @@
 # Drydock — Personal Agent Fabric
 
-Drydock provisions, connects, and governs the sandboxed workspaces where Claude agents live and do work. V1 ships as a host-side CLI (`ws`) over devcontainer primitives; the long-term shape is a daemon-mediated control plane with policy graph, audit, secrets brokering, and cross-host placement. See [docs/vision.md](docs/vision.md) for the fabric framing and [docs/v2-scope.md](docs/v2-scope.md) for the daemon design.
-
-The v1 CLI runs on the host; containers are workspaces, not orchestrators. Nested spawning (a workspace calling `ws create`) is a v2 feature.
+Drydock provisions, connects, and governs sandboxed workspaces where Claude agents do work. The host-side CLI (`ws`) orchestrates devcontainer-based workspaces; the `wsd` daemon mediates lifecycle operations, policy enforcement, audit, and nested spawn. See [docs/vision.md](docs/vision.md) for the fabric framing and [docs/v2-scope.md](docs/v2-scope.md) for the daemon design.
 
 **New users: start with [docs/getting-started.md](docs/getting-started.md).** This file is agent-facing; the getting-started doc walks through install, project YAML config, and a concrete walkthrough.
 
 ## Repo structure
 
 ```
-.devcontainer/          # Workspace template (Dockerfile, firewall, Tailscale, remote control)
-src/drydock/            # ws CLI source (Python)
-  cli/                  # Click commands (create, list, inspect, stop, destroy)
-  core/                 # Registry (SQLite), workspace model, devcontainer wrapper, errors
+base/                   # drydock-base image (Dockerfile, firewall/tailscale/remote-control scripts)
+.devcontainer/          # Workspace template (devcontainer.json, Dockerfile, project configs)
+src/drydock/
+  cli/                  # Click commands (see CLI reference below)
+  core/                 # Registry (SQLite), workspace model, overlay, checkout, policy, secrets, schedule, audit, tailnet, trust, compliance
   output/               # JSON/human output formatting
+  wsd/                  # Daemon: server, handlers, auth, config, recovery, audit/capability handlers
+  templates/            # Bundled devcontainer template for `ws new`
+scripts/                # bootstrap-linux-host.sh, smoke-v2-daemon.sh
 tests/                  # pytest tests
 docs/                   # Specs and design docs
-.claude/skills/ws.md    # Claude Code skill for /ws
+.claude/skills/         # Claude Code skill for /ws
 ```
 
-## Container features
-
-- **Default-deny firewall** via iptables/ipset — only whitelisted domains are reachable
-- **Tailscale** for private network access to dev server
-- **Claude Code remote control** for headless agent access
-- Base whitelist: GitHub, npm, Anthropic API, VS Code marketplace, Tailscale infra
-
-## Using the ws CLI
+## CLI reference
 
 Install on the host (not inside a container):
 ```bash
-pip install -e .
+pip install -e .       # or: pipx install --editable .
 ```
 
-Commands:
-```
-ws create <project> [name]    Provision a workspace container
-ws list                       List workspaces
-ws inspect <name>             Show workspace details
-ws stop <name>                Stop a workspace
-ws destroy <name> --force     Remove a workspace
-```
+### Workspace lifecycle
+
+| Command | Description |
+|---|---|
+| `ws create <project> [name]` | Provision a workspace (worktree, overlay, container). Routes through daemon when available. |
+| `ws stop <name>` | Stop and remove the container; volumes and worktree preserved. |
+| `ws destroy <name> --force` | Remove workspace entirely (container, worktree, overlay, tailnet device record). |
+| `ws upgrade <name> [--tag TAG]` | Bump drydock-base tag in the workspace's Dockerfile and recreate. |
+| `ws new <project>` | Scaffold `.devcontainer/drydock/` in a project repo from the bundled template. |
+
+### Workspace interaction
+
+| Command | Description |
+|---|---|
+| `ws list [--project P] [--state S]` | List workspaces (filterable). |
+| `ws inspect <name>` | Show full workspace details. |
+| `ws status <name>` | Per-workspace health: container, tailscale, firewall, remote-control, compliance. |
+| `ws attach <name> [--editor code]` | Open VS Code / Cursor attached to a running workspace. |
+| `ws exec <name> [-- CMD...]` | Shell into (or run a command in) a running workspace container. |
+
+### Secrets
+
+| Command | Description |
+|---|---|
+| `ws secret set <ws> <key>` | Store a secret (value from stdin). Files land in `~/.drydock/secrets/<ws_id>/`. |
+| `ws secret list <ws>` | List secret key names (never shows values). |
+| `ws secret rm <ws> <key>` | Remove a secret. |
+| `ws secret push <ws> --to <host>` | Rsync workspace secrets to a remote host over SSH. |
+
+Secrets are mounted into containers at `/run/secrets/` (readonly bind-mount of `~/.drydock/secrets/<ws_id>/`).
+
+### Daemon
+
+| Command | Description |
+|---|---|
+| `ws daemon start [--foreground]` | Start the `wsd` daemon (Unix socket at `~/.drydock/wsd.sock`). |
+| `ws daemon stop` | Stop the daemon (SIGTERM, then SIGKILL after timeout). |
+| `ws daemon status` | Show daemon health (pid, socket, RPC responsiveness). Exit 0 if healthy, 1 otherwise. |
+| `ws daemon logs [-n N] [-f]` | Show (or follow) daemon log output. |
+
+When the daemon is running, `ws create`, `ws destroy`, and `ws upgrade` route operations through it via JSON-RPC over the Unix socket. When the daemon is unavailable, the CLI falls back to direct execution.
+
+### Administration
+
+| Command | Description |
+|---|---|
+| `ws host init` | Idempotent post-install setup: state dirs, gitconfig stub. |
+| `ws host check` | Preflight: verify docker, devcontainer CLI, tailscale, gh auth, state dirs. Exits 1 on required-check failure. |
+| `ws tailnet prune [--apply]` | List (or delete) orphan drydock-style tailnet device records. Dry-run by default. |
+| `ws audit [--limit N] [--event E]` | Paginated query over the audit log (daemon RPC or direct file read). |
+| `ws schedule sync <desk>` | Sync `deploy/schedule.yaml` from a workspace to host-native cron/launchd. |
+| `ws schedule list <desk>` | List installed schedule entries for a workspace. |
+| `ws schedule remove <desk>` | Remove all host-native schedule entries for a workspace. |
 
 Global flags: `--json` (force JSON output), `--dry-run` (preview without executing).
 Output is JSON automatically when piped or called by an agent.
 
+## drydock-base image
+
+`base/` builds the `ghcr.io/stevefan/drydock-base` image. Project Dockerfiles use `FROM ghcr.io/stevefan/drydock-base:<tag>`. It provides:
+
+- **Node 20** runtime (Claude Code, devcontainer CLI)
+- **Default-deny firewall** via iptables/ipset (`init-firewall.sh`, `refresh-firewall-allowlist.sh`)
+- **Tailscale** for private network access (`start-tailscale.sh`)
+- **Claude Code remote control** for headless agent access (`start-remote-control.sh`)
+- **Claude auth sync** (`sync-claude-auth.sh`) — transplants host Claude credentials into the container
+- System tools: git, curl, jq, mosh, tmux, dnsutils, iproute2
+- Pre-created volume mount targets (`~/.claude`, `~/.vscode-server`, `~/.npm`, `~/.cache/pip`) with correct ownership
+- `git config --system safe.directory '*'` (container is the trust boundary)
+
 ## Workspace template
 
-The `.devcontainer/` directory is the base workspace template. Projects can have their own devcontainer; if they don't, this one is used. `ws create` layers an override JSON on top for per-workspace identity, secrets, and networking.
+The `.devcontainer/` directory is the fallback workspace template. Projects can have their own (scaffolded via `ws new`); if they don't, this one is used. `ws create` layers an override JSON on top for per-workspace identity, secrets mount, and networking config.
+
+## The wsd daemon
+
+`src/drydock/wsd/` implements the daemon process. It listens on a Unix socket (`~/.drydock/wsd.sock`) and exposes JSON-RPC methods for workspace lifecycle, policy enforcement, capability grants, and audit. Bearer-token auth scopes each desk's access. The CLI is one client; Claude Code inside a desk is another.
+
+Start with `ws daemon start`. Check health with `ws daemon status`. Logs at `~/.drydock/wsd.log`.
+
+Design details live in [docs/v2-scope.md](docs/v2-scope.md) and the `docs/v2-design-*.md` files.
 
 ## Environment variables
 
@@ -61,24 +122,33 @@ Set on the host or in `<project>/.env.devcontainer`:
 | `REMOTE_CONTROL_NAME` | `Claude Dev` | Remote control display name |
 | `FIREWALL_EXTRA_DOMAINS` | *(empty)* | Additional domains to whitelist |
 | `FIREWALL_IPV6_HOSTS` | *(empty)* | IPv6 hosts to allow (`host:port`) |
+| `DRYDOCK_WSD_SOCKET` | `~/.drydock/wsd.sock` | Daemon socket path |
+| `DRYDOCK_WSD_REGISTRY` | `~/.drydock/registry.db` | Daemon registry DB path |
+| `DRYDOCK_WSD_LOG` | `~/.drydock/wsd.log` | Daemon log file path |
 
 ## Secrets
 
-Secrets are loaded from `.env.local` files (gitignored). Required keys for full functionality:
+Host-side secrets layout:
+
+| Path | Mode | Purpose |
+|---|---|---|
+| `~/.drydock/secrets/<ws_id>/` | 0700 | Per-workspace secrets (bind-mounted to `/run/secrets/`) |
+| `~/.drydock/daemon-secrets/` | 0700 | Fleet-level admin tokens (tailscale_admin_token, tailscale_tailnet) |
+
+Use `ws secret set/list/rm` to manage per-workspace secrets. Use `ws secret push --to <host>` to replicate secrets to a remote Linux host.
+
+Required keys for full functionality:
 
 | Key | Source | Purpose |
 |---|---|---|
-| `TAILSCALE_AUTHKEY` | Tailscale admin console | Container network access |
-| `ANTHROPIC_API_KEY` | Anthropic console | Claude Code |
+| `anthropic_api_key` | Anthropic console | Claude Code inside the workspace |
+| `tailscale_authkey` | Tailscale admin console | Auto-join the tailnet |
 
-## Firewall
+## Host bootstrap
 
-The `postStartCommand` sources all `*/.env.devcontainer` files, then runs:
-1. `init-firewall.sh` — builds whitelist, sets DROP policy
-2. `start-tailscale.sh` — connects to tailnet, serves dev port
-3. `start-remote-control.sh` — starts Claude remote control (backgrounded)
+Fresh Linux host setup is scripted at `scripts/bootstrap-linux-host.sh` (idempotent). After running it, complete the interactive auth steps (Tailscale, GitHub, Claude). See [docs/host-bootstrap.md](docs/host-bootstrap.md) for the full walkthrough.
 
-Scripts are symlinked from `.devcontainer/` into `/usr/local/bin/` so edits take effect without rebuilding.
+On any host, `ws host init` + `ws host check` gets drydock state dirs right and verifies prerequisites.
 
 ## Tests must justify their existence
 
