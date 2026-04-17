@@ -22,6 +22,11 @@ Requires=drydock-wsd.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/drydock-resume-desks
+# On graceful shutdown: mark running desks suspended so they resume next boot.
+# drydock-desks stops before drydock-wsd (reverse of start order), so wsd is
+# still serving when ws stop runs.
+ExecStop=/usr/local/bin/drydock-stop-desks
+TimeoutStopSec=180
 StandardOutput=append:/root/.drydock/logs/desks-resume.log
 StandardError=append:/root/.drydock/logs/desks-resume.log
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin

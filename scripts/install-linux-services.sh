@@ -13,6 +13,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install -m 0644 "${REPO_ROOT}/base/drydock-wsd.service"   /etc/systemd/system/drydock-wsd.service
 install -m 0644 "${REPO_ROOT}/base/drydock-desks.service" /etc/systemd/system/drydock-desks.service
 install -m 0755 "${REPO_ROOT}/scripts/drydock-resume-desks" /usr/local/bin/drydock-resume-desks
+install -m 0755 "${REPO_ROOT}/scripts/drydock-stop-desks"   /usr/local/bin/drydock-stop-desks
 
 mkdir -p /root/.drydock/logs
 

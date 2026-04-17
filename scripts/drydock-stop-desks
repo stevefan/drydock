@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Mark all running desks as suspended before host shutdown.
+# Invoked by drydock-desks.service's ExecStop. Runs while wsd is
+# still up (systemd reverses dependency order for stop: desks stop
+# before wsd). This ensures drydock-resume-desks picks them up on
+# the next boot — without this hook, a `reboot` would leave the
+# registry state=running while the containers are actually gone,
+# and the boot-time resume sweep would skip them.
+#
+# Ungraceful shutdowns (kernel panic, power loss) don't run ExecStop;
+# those cases are handled at boot-time by the resume sweep, which
+# should cross-check registry vs. live container state (follow-up).
+set -u
+
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin:${PATH:-}"
+export PATH
+
+echo "drydock-stop-desks: $(date -Iseconds) starting"
+
+ws list 2>/dev/null | python3 -c '
+import json, subprocess, sys
+try:
+    rows = json.load(sys.stdin)
+except json.JSONDecodeError as e:
+    print(f"drydock-stop-desks: cannot parse ws list: {e}", flush=True)
+    sys.exit(1)
+
+to_stop = [r["name"] for r in rows if r.get("state") == "running" and r.get("name")]
+if not to_stop:
+    print("drydock-stop-desks: no running desks", flush=True)
+    sys.exit(0)
+
+print(f"drydock-stop-desks: stopping {len(to_stop)}: {to_stop}", flush=True)
+failures = []
+for name in to_stop:
+    result = subprocess.run(["ws", "stop", name], capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        failures.append(name)
+        print(f"drydock-stop-desks: FAILED {name}: {result.stderr.strip()}", flush=True)
+    else:
+        print(f"drydock-stop-desks: ok {name}", flush=True)
+
+if failures:
+    print(f"drydock-stop-desks: {len(failures)} failure(s): {failures}", flush=True)
+    sys.exit(1)
+print("drydock-stop-desks: all stopped", flush=True)
+'
