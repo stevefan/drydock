@@ -81,8 +81,13 @@ class TestRequestCapability:
         assert exc.value.message == "unauthenticated"
 
     def test_rejects_unsupported_capability_type(self, env):
+        # COMPUTE_QUOTA is reserved in the CapabilityType enum but not
+        # implemented. Must reject with capability_unsupported so callers
+        # get an actionable error rather than invalid_params. (STORAGE_MOUNT
+        # used to live in this test; shipped as a real type in 5c7f45e.)
+        params = {"type": "COMPUTE_QUOTA", "scope": {}}
         with pytest.raises(_RpcError) as exc:
-            request_capability(_params(type="STORAGE_MOUNT"), "rid", env["desk_id"],
+            request_capability(params, "rid", env["desk_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "capability_unsupported"
 
