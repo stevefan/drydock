@@ -42,6 +42,10 @@ def _drydock_state_dirs() -> dict[str, dict]:
         "daemon-secrets": {"path": home / ".drydock" / "daemon-secrets", "mode": 0o700},
         "logs": {"path": home / ".drydock" / "logs", "mode": 0o755},
         "bin": {"path": home / ".drydock" / "bin", "mode": 0o755},
+        # Dedicated dir for the wsd socket so the overlay can bind-mount
+        # the dir (not the socket file) into drydock containers — durable
+        # across daemon restarts.
+        "run": {"path": home / ".drydock" / "run", "mode": 0o755},
     }
 
 

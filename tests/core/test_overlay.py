@@ -130,7 +130,7 @@ class TestGenerateOverlay:
         mounts = overlay["mounts"]
         assert len(mounts) == 10
         assert "/run/secrets" in mounts[0]
-        assert "wsd.sock" in mounts[1]
+        assert "target=/run/drydock" in mounts[1]  # wsd run directory
         assert "drydock-rpc" in mounts[2]
         assert "claude-code-config" in mounts[3]
         assert "claude-code-bashhistory" in mounts[4]
@@ -156,17 +156,23 @@ class TestGenerateOverlay:
         assert len(mounts) == 11
         assert mounts[-1] == "source=/data,target=/data,type=bind"
 
-    # V2 in-desk RPC: the overlay bind-mounts the wsd socket + drydock-rpc
-    # client so a worker inside the drydock can call the daemon.
+    # V2 in-desk RPC: the overlay bind-mounts the wsd run *directory*
+    # (not the socket file) + drydock-rpc client so a worker inside the
+    # drydock can call the daemon — and survives daemon restarts that
+    # recreate the socket inode.
     def test_in_desk_rpc_mounts_and_env(self, ws):
         overlay = generate_overlay(ws)
         mounts = overlay["mounts"]
-        sock_mount = next(m for m in mounts if "wsd.sock" in m)
-        assert "target=/run/drydock/wsd.sock" in sock_mount
-        assert "type=bind" in sock_mount
-        # Not readonly — a connected socket needs the bind-mount writable
-        # for connect() semantics to work cleanly across kernels.
-        assert "readonly" not in sock_mount
+        run_mount = next(m for m in mounts if "/run/drydock" in m and "drydock-rpc" not in m)
+        assert "target=/run/drydock" in run_mount
+        assert "type=bind" in run_mount
+        # Not readonly — connect() to the socket needs write access
+        # against the bind-mounted dir.
+        assert "readonly" not in run_mount
+        # Source is the run directory, not the socket file.
+        assert ".drydock/run" in run_mount
+        assert "wsd.sock" not in run_mount.split(",")[0]  # source isn't the file itself
+
         rpc_mount = next(m for m in mounts if "drydock-rpc" in m)
         assert "target=/usr/local/bin/drydock-rpc" in rpc_mount
         assert "readonly" in rpc_mount
@@ -176,12 +182,12 @@ class TestGenerateOverlay:
     # fresh Harbor, or a test fixture that doesn't care about RPC).
     def test_in_desk_rpc_mounts_opt_out(self, ws):
         config = OverlayConfig(
-            wsd_socket_host_path=None,
+            wsd_run_host_dir=None,
             drydock_rpc_host_path=None,
         )
         overlay = generate_overlay(ws, config)
         mounts = overlay["mounts"]
-        assert not any("wsd.sock" in m for m in mounts)
+        assert not any("/run/drydock" in m for m in mounts if "drydock-rpc" not in m)
         assert not any("drydock-rpc" in m for m in mounts)
         assert "DRYDOCK_WSD_SOCKET" not in overlay.get("containerEnv", {})
 

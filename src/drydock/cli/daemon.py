@@ -25,7 +25,7 @@ def _state_root() -> Path:
 def _socket_path(value: str | Path | None = None) -> Path:
     if value is not None:
         return Path(value).expanduser()
-    return Path(os.environ.get("DRYDOCK_WSD_SOCKET", "~/.drydock/wsd.sock")).expanduser()
+    return Path(os.environ.get("DRYDOCK_WSD_SOCKET", "~/.drydock/run/wsd.sock")).expanduser()
 
 
 def _registry_path(value: str | Path | None = None) -> Path:

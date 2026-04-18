@@ -13,7 +13,7 @@ def _default_socket_path() -> Path:
     value = os.environ.get("DRYDOCK_WSD_SOCKET")
     if value:
         return Path(value)
-    return Path.home() / ".drydock" / "wsd.sock"
+    return Path.home() / ".drydock" / "run" / "wsd.sock"
 
 
 class DaemonUnavailable(Exception):
