@@ -14,6 +14,13 @@ install -m 0644 "${REPO_ROOT}/base/drydock-wsd.service"   /etc/systemd/system/dr
 install -m 0644 "${REPO_ROOT}/base/drydock-desks.service" /etc/systemd/system/drydock-desks.service
 install -m 0755 "${REPO_ROOT}/scripts/drydock-resume-desks" /usr/local/bin/drydock-resume-desks
 install -m 0755 "${REPO_ROOT}/scripts/drydock-stop-desks"   /usr/local/bin/drydock-stop-desks
+# drydock-rpc is bind-mounted into each drydock container (see overlay.py).
+# Place it at ~/.drydock/bin/drydock-rpc — the overlay's source path — AND
+# at /usr/local/bin for Harbor-side convenience.
+DRYDOCK_BIN="/root/.drydock/bin"
+mkdir -p "${DRYDOCK_BIN}"
+install -m 0755 "${REPO_ROOT}/scripts/drydock-rpc"          "${DRYDOCK_BIN}/drydock-rpc"
+install -m 0755 "${REPO_ROOT}/scripts/drydock-rpc"          /usr/local/bin/drydock-rpc
 
 mkdir -p /root/.drydock/logs
 

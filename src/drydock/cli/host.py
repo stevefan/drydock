@@ -15,6 +15,7 @@ vector (drydock can't bootstrap itself); this is what comes after.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -28,8 +29,8 @@ def _drydock_state_dirs() -> dict[str, dict]:
     """Canonical drydock state directories with their expected modes.
 
     `secrets` and `daemon-secrets` are 0700 because they hold credential
-    material (per-desk secrets and fleet-level admin tokens respectively).
-    The rest are 0755 — readable by other users on the host but only the
+    material (per-drydock secrets and Harbor-level admin tokens respectively).
+    The rest are 0755 — readable by other users on the Harbor but only the
     owner writes.
     """
     home = Path.home()
@@ -40,7 +41,54 @@ def _drydock_state_dirs() -> dict[str, dict]:
         "overlays": {"path": home / ".drydock" / "overlays", "mode": 0o755},
         "daemon-secrets": {"path": home / ".drydock" / "daemon-secrets", "mode": 0o700},
         "logs": {"path": home / ".drydock" / "logs", "mode": 0o755},
+        "bin": {"path": home / ".drydock" / "bin", "mode": 0o755},
     }
+
+
+def _repo_root() -> Path | None:
+    """Find the drydock repo root from the installed package location.
+
+    Works for pipx-editable installs (the common case): `src/drydock/cli/host.py`
+    is at `<repo>/src/drydock/cli/host.py`, so parents[3] is the repo root.
+    Non-editable installs (wheel) won't have the scripts/ dir — caller
+    handles the None case gracefully.
+    """
+    try:
+        candidate = Path(__file__).resolve().parents[3]
+    except IndexError:
+        return None
+    if (candidate / "scripts").is_dir():
+        return candidate
+    return None
+
+
+def _install_drydock_rpc(bin_dir: Path) -> str | None:
+    """Copy scripts/drydock-rpc into ~/.drydock/bin/drydock-rpc.
+
+    The overlay bind-mounts this file into every drydock container at
+    /usr/local/bin/drydock-rpc, giving workers a tiny stdlib-only JSON-RPC
+    client for wsd. See docs/v2-design-protocol.md §1.
+
+    Idempotent — no-op when the target already matches the source byte-for-byte.
+    Returns a short action string on change, None otherwise.
+    """
+    repo = _repo_root()
+    if repo is None:
+        return None
+    source = repo / "scripts" / "drydock-rpc"
+    if not source.exists():
+        return None
+    target = bin_dir / "drydock-rpc"
+    if target.exists() and target.read_bytes() == source.read_bytes():
+        # Still ensure mode — harmless if already 0755.
+        if target.stat().st_mode & 0o777 != 0o755:
+            os.chmod(target, 0o755)
+            return f"chmod 0o755 {target}"
+        return None
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    os.chmod(target, 0o755)
+    return f"installed {target}"
 
 
 @click.group()
@@ -81,6 +129,14 @@ def host_init(ctx):
         if not sys_log.exists():
             sys_log.mkdir(parents=True)
             actions.append(f"created {sys_log}")
+
+    # Deploy the in-desk JSON-RPC client (drydock-rpc). The overlay bind-mounts
+    # this file into every drydock container; shipping it via `ws host init`
+    # keeps the source-of-truth in the repo + a stable deploy path per Harbor.
+    bin_dir = _drydock_state_dirs()["bin"]["path"]
+    rpc_action = _install_drydock_rpc(bin_dir)
+    if rpc_action:
+        actions.append(rpc_action)
 
     out.success(
         {"actions": actions, "noop": len(actions) == 0},

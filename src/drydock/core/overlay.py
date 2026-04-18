@@ -14,6 +14,10 @@ from .workspace import Workspace
 
 DEFAULT_SECRETS_HOST_DIR = str(Path.home() / ".drydock" / "secrets")
 DEFAULT_SECRETS_CONTAINER_DIR = "/run/secrets"
+DEFAULT_WSD_SOCKET_HOST_PATH = str(Path.home() / ".drydock" / "wsd.sock")
+DEFAULT_WSD_SOCKET_CONTAINER_PATH = "/run/drydock/wsd.sock"
+DEFAULT_DRYDOCK_RPC_HOST_PATH = str(Path.home() / ".drydock" / "bin" / "drydock-rpc")
+DEFAULT_DRYDOCK_RPC_CONTAINER_PATH = "/usr/local/bin/drydock-rpc"
 SHORT_ID_LENGTH = 6
 
 
@@ -40,6 +44,10 @@ class OverlayConfig:
     extra_mounts: list[str] = field(default_factory=list)
     forward_ports: list[int] = field(default_factory=list)
     claude_profile: str = ""
+    # In-desk RPC wiring. Set to None to disable either bind-mount
+    # (e.g. running a drydock on a Harbor with no wsd daemon yet).
+    wsd_socket_host_path: str | None = DEFAULT_WSD_SOCKET_HOST_PATH
+    drydock_rpc_host_path: str | None = DEFAULT_DRYDOCK_RPC_HOST_PATH
 
 
 def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict:
@@ -200,6 +208,11 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
     if ws.workspace_subdir:
         env["DRYDOCK_WORKSPACE_SUBDIR"] = ws.workspace_subdir
 
+    # In-desk RPC — tell any worker (ws CLI, drydock-rpc, direct clients)
+    # where to reach the daemon inside the container.
+    if config.wsd_socket_host_path:
+        env["DRYDOCK_WSD_SOCKET"] = DEFAULT_WSD_SOCKET_CONTAINER_PATH
+
     env.update(config.extra_env)
 
     return env
@@ -215,6 +228,25 @@ def _build_mounts(ws: Workspace, config: OverlayConfig) -> list[str]:
     mounts.append(
         f"source={workspace_secrets},target={config.secrets_container_dir},type=bind,readonly"
     )
+
+    # In-desk RPC: bind-mount the wsd socket + the drydock-rpc client
+    # script. A worker inside the container reaches the daemon by
+    # connect()-ing to /run/drydock/wsd.sock. The bind-mount is the
+    # socket FILE, which has a known restart-fragility (a daemon restart
+    # that unlink+recreates the socket leaves the container bound to the
+    # dead inode). Acceptable for V2.0: systemd-managed daemon rarely
+    # restarts; when it does, recreating the affected drydock (ws stop
+    # && ws create) refreshes the bind-mount.
+    if config.wsd_socket_host_path:
+        mounts.append(
+            f"source={config.wsd_socket_host_path},"
+            f"target={DEFAULT_WSD_SOCKET_CONTAINER_PATH},type=bind"
+        )
+    if config.drydock_rpc_host_path:
+        mounts.append(
+            f"source={config.drydock_rpc_host_path},"
+            f"target={DEFAULT_DRYDOCK_RPC_CONTAINER_PATH},type=bind,readonly"
+        )
 
     claude_vol = (
         f"claude-code-config-{config.claude_profile}"
