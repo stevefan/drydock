@@ -149,9 +149,43 @@ Scoped creds say what the worker MAY do in AWS. The drydock's default-deny firew
 
 S3 virtual-host addressing (`<bucket>.s3.<region>.amazonaws.com`) means each bucket is a distinct hostname. `firewall_extra_domains` must include each specific bucket (or `s3.<region>.amazonaws.com` for path-style addressing — AWS SDK defaults to virtual-host). A known operational follow-up is wildcard/CIDR support for AWS IP ranges; today each bucket's host needs to land in the allowlist with a DNS refresh cycle.
 
-## Known follow-ups
+## Declarative storage_mounts (Phase C, shipped 2026-04-18)
 
-- `aws` CLI is not bundled in `drydock-base` — fleet-agent drydocks (the ones that provision buckets, not just consume them) install it at runtime, which doesn't survive container recreate.
-- S3 wildcard firewall via AWS IP-ranges JSON would avoid the per-bucket DNS dance.
+Project YAML declares S3 mounts directly; the daemon handles lease + `s3fs` mount at drydock start:
+
+```yaml
+storage_mounts:
+  - source: s3://my-bucket/data
+    target: /mnt/data
+    mode: rw          # ro (default) or rw
+    region: us-west-2 # optional, default us-west-2
+```
+
+One entry expands at YAML-load time (`expand_storage_mounts` in `project_config.py`) into:
+
+- `request_storage_leases` capability (added if absent)
+- `s3://bucket/prefix/*` (or `rw:...`) appended to `delegatable_storage_scopes`
+- `<region>:AMAZON` appended to `firewall_aws_ip_ranges`
+
+User-declared values on those fields are preserved and deduped.
+
+### Overlay wiring
+
+`OverlayConfig.storage_mounts` emits:
+
+- `STORAGE_MOUNTS_JSON` in `containerEnv` — JSON-encoded list consumed by `setup-storage-mounts.sh` inside the container.
+- Three `runArgs` required for FUSE: `--cap-add=SYS_ADMIN`, `--device=/dev/fuse`, `--security-opt=apparmor=unconfined`. The last one exists because Ubuntu Harbors run docker with a default AppArmor profile that blocks `mount()` even when the SYS_ADMIN cap is present — surfaced during the first Hetzner smoke test.
+
+### Lifecycle
+
+`wsd` runs `setup-storage-mounts.sh` via `docker exec -u node` after `devcontainer up` returns (both on `CreateDesk` and `ResumeDesk`). This works regardless of what the project's `devcontainer.json` does at `postStartCommand` — drydock-base's script is daemon-triggered. Mount survives the life of the container; a stop → create recreates it.
+
+The script parses `STORAGE_MOUNTS_JSON`, requests one `STORAGE_MOUNT` lease per entry, and `s3fs bucket:/prefix target …` with creds from `/run/secrets/aws_*`. Errors are logged to `/tmp/storage-mounts.log` but don't fail the drydock — a misdeclared mount leaves the rest running.
+
+### Known follow-up (Phase C.1)
+
+STS sessions expire after 4h (`aws_session_expiration`). `s3fs` reads creds once at mount and holds them in memory — after expiry, requests start 403'ing and the mount effectively dies. A credential-refresh daemon or periodic remount is the obvious next step. Acceptable for drydocks whose workload completes within the session; not yet suitable for drydocks that need to hold a mount across days.
+
+## Other follow-ups
+
 - `COMPUTE_QUOTA` and `NETWORK_REACH` capability types are enum-reserved for the same lease-issuance pattern applied to compute grants and fine-grained network reach.
-- Active FUSE mount at drydock-up (declarative `storage_mounts:` YAML rendering into `aws_*` + mount automation) is the next step up from credentials delivery.

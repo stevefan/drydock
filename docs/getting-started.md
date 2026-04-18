@@ -149,6 +149,29 @@ claude_profile: staging
 # Notebook vaults, shared data dirs, host-side tooling.
 extra_mounts:
   - "source=/Users/you/Notebooks/mylab,target=/workspace/vault,type=bind,readonly"
+
+# Declarative S3 mounts (optional). Each entry becomes a FUSE mount at
+# drydock start, backed by a scoped, time-bounded STS session issued by
+# the capability broker. One declaration auto-wires the capability +
+# narrowness scope + AWS firewall CIDRs — you don't need to declare
+# request_storage_leases / delegatable_storage_scopes / firewall_aws_ip_ranges
+# separately (but you can, and they merge).
+storage_mounts:
+  - source: s3://my-bucket/data
+    target: /mnt/data
+    mode: rw                # ro (default) or rw
+    region: us-west-2       # optional, us-west-2 default
+
+# Environment variables to pass through to the container (optional).
+extra_env:
+  MY_SERVICE_URL: https://svc.internal
+
+# Extra IAM-action allow-list for provisioner drydocks (optional;
+# declare only if you need INFRA_PROVISION leases). Patterns are bare
+# AWS IAM actions with fnmatch glob support.
+delegatable_provision_scopes:
+  - s3:*
+  - iam:CreateRole
 ```
 
 Unknown keys are rejected (so typos don't become silent no-ops). Missing file is fine — the CLI falls back to defaults.
