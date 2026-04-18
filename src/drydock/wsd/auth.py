@@ -9,6 +9,7 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
+from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID
 from drydock.core.registry import Registry
 
 TOKEN_FILENAME = "drydock-token"
@@ -61,9 +62,22 @@ def validate_token(plaintext: str | None, registry: Registry | None = None) -> s
 def _write_secret_atomic(path: Path, plaintext: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
+    # Chown dir to container node uid so a drydock with no user-set
+    # secrets (no ws secret set) still gets a readable secrets bind mount.
+    # Otherwise root-owned 0700 means node can't read even drydock-token.
+    # PermissionError on non-root Harbors (Mac dev) is silently skipped —
+    # same-uid file perms work there regardless.
+    try:
+        os.chown(path.parent, CONTAINER_REMOTE_UID, CONTAINER_REMOTE_GID)
+    except PermissionError:
+        pass
     tmp_path = path.with_name(f"{path.name}.tmp")
     with open(tmp_path, "w", encoding="utf-8") as handle:
         handle.write(plaintext)
         handle.flush()
         os.fchmod(handle.fileno(), 0o400)
+    try:
+        os.chown(tmp_path, CONTAINER_REMOTE_UID, CONTAINER_REMOTE_GID)
+    except PermissionError:
+        pass
     os.replace(tmp_path, path)
