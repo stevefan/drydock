@@ -90,6 +90,8 @@ When the daemon is running, `ws create`, `ws destroy`, and `ws upgrade` route op
 | `ws schedule sync <drydock>` | Sync `deploy/schedule.yaml` from a drydock to Harbor-native cron/launchd. |
 | `ws schedule list <drydock>` | List installed schedule entries for a drydock. |
 | `ws schedule remove <drydock>` | Remove all Harbor-native schedule entries for a drydock. |
+| `ws project reload <drydock>` | Re-read project YAML, update registry config + policy columns, regenerate overlay. Apply to running container with `ws stop && ws create`. `--no-regenerate` skips overlay rewrite. |
+| `ws overlay regenerate <drydock>` | Rewrite overlay JSON from current registry config (no YAML re-read). Narrower than `project reload` — picks up overlay-code changes without touching YAML. |
 
 Global flags: `--json` (force JSON output), `--dry-run` (preview without executing).
 Output is JSON automatically when piped or called by an agent.
