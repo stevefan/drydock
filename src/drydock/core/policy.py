@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import fnmatch
+import os.path
 from dataclasses import dataclass, field
 from enum import Enum
-import os.path
 from typing import Any
 
 
@@ -31,6 +32,9 @@ class CapabilityKind(str, Enum):
     # V4 Phase 1: coarse gate for type=STORAGE_MOUNT lease requests.
     # Per-bucket narrowness is deferred to Phase 1b (delegatable_storage_scopes).
     REQUEST_STORAGE_LEASES = "request_storage_leases"
+    # Provisioner drydocks: coarse gate for type=INFRA_PROVISION lease
+    # requests. Per-action narrowness via delegatable_provision_scopes.
+    REQUEST_PROVISION_LEASES = "request_provision_leases"
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,13 @@ class DeskPolicy:
     # empty=deny-all was considered and rejected because it would break
     # every existing request_storage_leases user immediately.
     delegatable_storage_scopes: tuple[str, ...] = ()
+    # INFRA_PROVISION narrowness: allow-list of IAM action strings
+    # (bare AWS actions, optionally globbed: "s3:CreateBucket", "iam:*",
+    # "*"). Default-permissive-when-empty preserves the same "declare
+    # something to narrow, else capability gate alone" invariant used
+    # for storage scopes above. A request's action list must be a subset
+    # of the union of matches against granted globs.
+    delegatable_provision_scopes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -333,6 +344,41 @@ def matches_storage_scope(requested: dict, granted: list[str] | tuple[str, ...])
             continue
         return True
     return False
+
+
+def matches_provision_actions(
+    requested: list[str] | tuple[str, ...],
+    granted: list[str] | tuple[str, ...],
+) -> bool:
+    """Return True iff every requested IAM action is matched by some grant.
+
+    Grants are glob patterns on bare IAM action strings — "s3:CreateBucket"
+    (exact), "s3:*" (prefix wildcard), "*" (any). The wildcard syntax is
+    deliberately limited to match AWS's own IAM policy grammar (where `*`
+    can appear at end of segments or as the whole value).
+
+    Default-permissive-when-empty: an empty `granted` list permits any
+    request, matching the pre-narrowness behavior so existing drydocks
+    keep working once they've been granted request_provision_leases.
+    """
+    if not granted:
+        return True
+    if not requested:
+        return True
+    for action in requested:
+        if not isinstance(action, str) or not action:
+            return False
+        if not any(_iam_glob_match(action, pat) for pat in granted):
+            return False
+    return True
+
+
+def _iam_glob_match(action: str, pattern: str) -> bool:
+    if not isinstance(pattern, str) or not pattern:
+        return False
+    if pattern == "*" or pattern == action:
+        return True
+    return fnmatch.fnmatchcase(action, pattern)
 
 
 def _prefix_matches(requested: str, granted: str) -> bool:

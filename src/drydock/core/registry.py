@@ -50,6 +50,9 @@ V2_WORKSPACE_COLUMNS = (
     # Phase 1b narrowness for STORAGE_MOUNT leases. Empty list = no
     # narrowness declared (capability gate alone). See policy.DeskPolicy.
     ("delegatable_storage_scopes", "TEXT DEFAULT '[]'"),
+    # INFRA_PROVISION narrowness: list of IAM action globs. Empty list =
+    # no narrowness declared (capability gate alone). See policy.DeskPolicy.
+    ("delegatable_provision_scopes", "TEXT DEFAULT '[]'"),
 )
 
 V2_TABLES = """
@@ -276,7 +279,7 @@ class Registry:
         row = self._conn.execute(
             """
             SELECT delegatable_firewall_domains, delegatable_secrets, capabilities,
-                   delegatable_storage_scopes, config
+                   delegatable_storage_scopes, delegatable_provision_scopes, config
             FROM workspaces
             WHERE id = ?
             """,
@@ -294,6 +297,7 @@ class Registry:
         delegatable_secrets: list[str] | None = None,
         capabilities: list[str] | None = None,
         delegatable_storage_scopes: list[str] | None = None,
+        delegatable_provision_scopes: list[str] | None = None,
     ) -> None:
         fields: dict[str, str] = {}
         if delegatable_firewall_domains is not None:
@@ -304,6 +308,8 @@ class Registry:
             fields["capabilities"] = json.dumps(capabilities)
         if delegatable_storage_scopes is not None:
             fields["delegatable_storage_scopes"] = json.dumps(delegatable_storage_scopes)
+        if delegatable_provision_scopes is not None:
+            fields["delegatable_provision_scopes"] = json.dumps(delegatable_provision_scopes)
         if not fields:
             return
         self.update_workspace(name, **fields)
@@ -444,6 +450,17 @@ class Registry:
         """
         for lease in self.list_active_leases_for_desk(desk_id):
             if lease.type == CapabilityType.STORAGE_MOUNT:
+                return lease
+        return None
+
+    def find_active_aws_lease(self, desk_id: str) -> CapabilityLease | None:
+        """Any active STORAGE_MOUNT or INFRA_PROVISION lease for desk_id.
+
+        Both types materialize the same 4 aws_* files, so supersede /
+        cleanup decisions must consider them together.
+        """
+        for lease in self.list_active_leases_for_desk(desk_id):
+            if lease.type in (CapabilityType.STORAGE_MOUNT, CapabilityType.INFRA_PROVISION):
                 return lease
         return None
 

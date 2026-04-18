@@ -34,7 +34,11 @@ from uuid import uuid4
 from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID
 from drydock.core.audit import emit_audit
 from drydock.core.capability import CapabilityLease, CapabilityType
-from drydock.core.policy import CapabilityKind, matches_storage_scope
+from drydock.core.policy import (
+    CapabilityKind,
+    matches_provision_actions,
+    matches_storage_scope,
+)
 from drydock.core.registry import Registry
 from drydock.core.secrets import (
     BackendPermissionDenied,
@@ -96,6 +100,15 @@ def request_capability(
         )
     if request_type == "STORAGE_MOUNT":
         return _handle_storage_request(
+            spec,
+            caller_desk_id=caller_desk_id,
+            request_id=request_id,
+            registry_path=registry_path,
+            secrets_root=secrets_root,
+            storage_backend=storage_backend,
+        )
+    if request_type == "INFRA_PROVISION":
+        return _handle_provision_request(
             spec,
             caller_desk_id=caller_desk_id,
             request_id=request_id,
@@ -281,13 +294,12 @@ def _handle_storage_request(
 
     registry = Registry(db_path=registry_path)
     try:
-        # Phase 1 semantic: one active STORAGE_MOUNT lease per drydock.
-        # Materialization overwrites the aws_* files in place, so keeping
-        # older lease records "active" in the registry makes release
-        # cleanup unreliable (can't tell which lease owns the files).
-        # Auto-revoke prior active storage leases on new issue.
+        # One active AWS lease per drydock (STORAGE_MOUNT + INFRA_PROVISION
+        # share the same aws_* materialization slots — issuing either
+        # overwrites prior creds, so stale "active" rows would make release
+        # cleanup unreliable). Auto-revoke prior on new issue.
         while True:
-            prior = registry.find_active_storage_lease(caller_desk_id)
+            prior = registry.find_active_aws_lease(caller_desk_id)
             if prior is None:
                 break
             registry.revoke_lease(prior.lease_id, "superseded")
@@ -413,6 +425,135 @@ def _handle_storage_request(
         registry.close()
 
 
+def _handle_provision_request(
+    spec: dict,
+    *,
+    caller_desk_id: str,
+    request_id: str | int | None,
+    registry_path: Path,
+    secrets_root: Path,
+    storage_backend: StorageBackend | None,
+) -> dict:
+    """Issue an INFRA_PROVISION lease: AWS STS credentials narrowed to an
+    IAM action allow-list, materialized as aws_* files.
+
+    Reuses the STS assume-role path (StorageBackend.mint_provision).
+    Materializes to the same aws_* filenames as STORAGE_MOUNT — a drydock
+    holds at most one active AWS lease at a time (prior is superseded).
+    """
+    if storage_backend is None:
+        raise _RpcError(
+            code=-32015, message="storage_backend_not_configured",
+            data={"fix": "Set [storage] backend = 'sts' and role_arn = '...' in ~/.drydock/wsd.toml"},
+        )
+
+    registry = Registry(db_path=registry_path)
+    try:
+        while True:
+            prior = registry.find_active_aws_lease(caller_desk_id)
+            if prior is None:
+                break
+            registry.revoke_lease(prior.lease_id, "superseded")
+            emit_audit(
+                "lease.released",
+                principal=caller_desk_id,
+                request_id=request_id,
+                method="RequestCapability",
+                result="ok",
+                details={"lease_id": prior.lease_id, "reason": "superseded_by_new_provision_lease"},
+            )
+
+        policy_row = registry.load_desk_policy(caller_desk_id)
+        if policy_row is None:
+            raise _RpcError(code=-32001, message="desk_not_found",
+                            data={"desk_id": caller_desk_id})
+
+        capabilities_raw = json.loads(policy_row.get("capabilities") or "[]")
+        capabilities = {CapabilityKind(value) for value in capabilities_raw}
+        if CapabilityKind.REQUEST_PROVISION_LEASES not in capabilities:
+            raise _RpcError(
+                code=-32005, message="capability_not_granted",
+                data={
+                    "missing": CapabilityKind.REQUEST_PROVISION_LEASES.value,
+                    "fix": "Grant request_provision_leases in the desk's project YAML capabilities",
+                },
+            )
+
+        granted = json.loads(policy_row.get("delegatable_provision_scopes") or "[]")
+        if not matches_provision_actions(spec["actions"], granted):
+            raise _RpcError(
+                code=-32006, message="narrowness_violated",
+                data={
+                    "rule": "provision_actions",
+                    "requested": spec["actions"],
+                    "granted": granted,
+                    "fix": "Add matching IAM action globs to delegatable_provision_scopes in the project YAML",
+                },
+            )
+
+        workspace = _lookup_workspace(registry, caller_desk_id)
+        if workspace is None or not workspace.container_id:
+            raise _RpcError(code=-32010, message="desk_not_running",
+                            data={"desk_id": caller_desk_id})
+
+        try:
+            cred = storage_backend.mint_provision(
+                desk_id=caller_desk_id,
+                actions=spec["actions"],
+            )
+        except StorageBackendConfigError as exc:
+            raise _RpcError(code=-32016, message="storage_backend_config_error",
+                            data={"detail": str(exc)})
+        except StorageBackendPermissionDenied as exc:
+            raise _RpcError(code=-32007, message="backend_permission_denied",
+                            data={"detail": str(exc)})
+        except StorageBackendUnavailable as exc:
+            raise _RpcError(code=-32008, message="backend_unavailable",
+                            data={"detail": str(exc), "retry": True})
+
+        try:
+            _materialize_storage_credentials(secrets_root, caller_desk_id, cred)
+        except OSError as exc:
+            raise _RpcError(code=-32011, message="materialization_failed",
+                            data={"detail": str(exc)})
+
+        lease_scope = {
+            "actions": list(spec["actions"]),
+            "expiration": cred.expiration.isoformat(),
+        }
+        lease = CapabilityLease(
+            lease_id=f"ls_{uuid4().hex}",
+            desk_id=caller_desk_id,
+            type=CapabilityType.INFRA_PROVISION,
+            scope=lease_scope,
+            issued_at=_utc_now(),
+            expiry=cred.expiration,
+            issuer="wsd",
+        )
+        registry.insert_lease(lease)
+        logger.info(
+            "wsd: provision lease issued lease_id=%s desk_id=%s actions=%s",
+            lease.lease_id, caller_desk_id, spec["actions"],
+        )
+        emit_audit(
+            "lease.issued",
+            principal=caller_desk_id,
+            request_id=request_id,
+            method="RequestCapability",
+            result="ok",
+            details={
+                "lease_id": lease.lease_id,
+                "desk_id": caller_desk_id,
+                "type": lease.type.value,
+                "scope": dict(lease.scope),
+                "expiry": cred.expiration.isoformat(),
+            },
+        )
+        return lease.to_wire()
+    finally:
+        registry.close()
+
+
 def release_capability(
     params: dict | list | None,
     request_id: str | int | None,
@@ -475,9 +616,9 @@ def release_capability(
         # Single-lease-at-a-time semantic today: one active STORAGE_MOUNT
         # per drydock overwrites prior creds in place. On release of the
         # last active lease we drop the files entirely.
-        if lease.type == CapabilityType.STORAGE_MOUNT and revoked:
-            still_active_storage = registry.find_active_storage_lease(caller_desk_id)
-            if still_active_storage is None:
+        if lease.type in (CapabilityType.STORAGE_MOUNT, CapabilityType.INFRA_PROVISION) and revoked:
+            still_active_aws = registry.find_active_aws_lease(caller_desk_id)
+            if still_active_aws is None:
                 _remove_storage_credentials(secrets_root, caller_desk_id)
 
         if revoked:
@@ -501,7 +642,8 @@ def release_capability(
 _BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_.\-/]{0,256}$")
 _STORAGE_MODES = {"ro", "rw"}
-_SUPPORTED_CAPABILITY_TYPES = {"SECRET", "STORAGE_MOUNT"}
+_SUPPORTED_CAPABILITY_TYPES = {"SECRET", "STORAGE_MOUNT", "INFRA_PROVISION"}
+_IAM_ACTION_RE = re.compile(r"^[A-Za-z0-9*]+:[A-Za-z0-9*]+$|^\*$")
 
 
 def _validate_request_params(params: object) -> dict:
@@ -528,6 +670,8 @@ def _validate_request_params(params: object) -> dict:
         return _validate_secret_scope(scope)
     if type_str == "STORAGE_MOUNT":
         return _validate_storage_scope(scope)
+    if type_str == "INFRA_PROVISION":
+        return _validate_provision_scope(scope)
     # Unreachable — _SUPPORTED_CAPABILITY_TYPES exhausted above.
     raise _RpcError(code=-32013, message="capability_unsupported",
                     data={"type": type_str})
@@ -583,6 +727,30 @@ def _validate_storage_scope(scope: dict) -> dict:
         "prefix": prefix.strip("/"),
         "mode": mode,
     }
+
+
+def _validate_provision_scope(scope: dict) -> dict:
+    """INFRA_PROVISION scope shape: {actions: [str, ...]}.
+
+    Each action must match `SERVICE:ACTION` with optional `*` in either
+    segment, or be the bare wildcard `*`. Bounded at 64 entries per
+    request to keep the session policy under AWS's 2048-byte inline limit.
+    """
+    actions = scope.get("actions")
+    if not isinstance(actions, list) or not actions:
+        raise _RpcError(code=-32602, message="invalid_params",
+                        data={"reason": "scope.actions must be a non-empty list"})
+    if len(actions) > 64:
+        raise _RpcError(code=-32602, message="invalid_params",
+                        data={"reason": "scope.actions must be <= 64 entries"})
+    cleaned: list[str] = []
+    for a in actions:
+        if not isinstance(a, str) or not _IAM_ACTION_RE.match(a):
+            raise _RpcError(code=-32602, message="invalid_params",
+                            data={"reason": "scope.actions entries must match 'service:action' (e.g. 's3:CreateBucket', 'iam:*', '*')",
+                                  "got": a})
+        cleaned.append(a)
+    return {"type": "INFRA_PROVISION", "actions": cleaned}
 
 
 _STORAGE_CRED_FILENAMES = (

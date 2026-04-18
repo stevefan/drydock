@@ -28,6 +28,7 @@ KNOWN_KEYS = {
     "delegatable_secrets",
     "delegatable_firewall_domains",
     "delegatable_storage_scopes",
+    "delegatable_provision_scopes",
 }
 
 
@@ -63,14 +64,25 @@ class ProjectConfig:
     delegatable_secrets: list[str] = field(default_factory=list)
     delegatable_firewall_domains: list[str] = field(default_factory=list)
     delegatable_storage_scopes: list[str] = field(default_factory=list)
+    delegatable_provision_scopes: list[str] = field(default_factory=list)
 
 
+def default_projects_dir() -> Path:
+    """Resolved lazily so tests can monkeypatch HOME after import."""
+    return Path.home() / ".drydock" / "projects"
+
+
+# Kept for import-compat; do not use for new code — pass base_dir explicitly
+# or call default_projects_dir(). Resolving at import time bakes in $HOME
+# before test setup can swap it.
 DEFAULT_PROJECTS_DIR = Path.home() / ".drydock" / "projects"
 
 
 def load_project_config(
-    project: str, base_dir: Path = DEFAULT_PROJECTS_DIR
+    project: str, base_dir: Path | None = None,
 ) -> ProjectConfig | None:
+    if base_dir is None:
+        base_dir = default_projects_dir()
     path = base_dir / f"{project}.yaml"
     if not path.exists():
         return None
@@ -121,4 +133,5 @@ def load_project_config(
         delegatable_secrets=raw.get("delegatable_secrets", []),
         delegatable_firewall_domains=raw.get("delegatable_firewall_domains", []),
         delegatable_storage_scopes=raw.get("delegatable_storage_scopes", []),
+        delegatable_provision_scopes=raw.get("delegatable_provision_scopes", []),
     )

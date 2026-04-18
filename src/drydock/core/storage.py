@@ -116,6 +116,18 @@ class StorageBackend(Protocol):
         """
         ...
 
+    def mint_provision(
+        self,
+        *,
+        desk_id: str,
+        actions: list[str] | tuple[str, ...],
+    ) -> StorageCredential:
+        """Issue a credential narrowed to an IAM action list on `*`.
+
+        Used by INFRA_PROVISION leases. Same error contract as `mint`.
+        """
+        ...
+
 
 def build_session_policy(bucket: str, prefix: str, mode: str) -> dict:
     """Render an inline STS session policy narrowing to bucket/prefix/mode.
@@ -163,6 +175,32 @@ def build_session_policy(bucket: str, prefix: str, mode: str) -> dict:
     return {"Version": "2012-10-17", "Statement": statements}
 
 
+def build_provision_session_policy(actions: list[str] | tuple[str, ...]) -> dict:
+    """Render an inline STS session policy granting IAM actions on `*`.
+
+    Scoped by the caller-declared action list; resources are `*` because
+    provisioner drydocks create resources that don't exist yet. The
+    permission-boundary on drydock-agent is the ceiling — session policy
+    cannot exceed it, regardless of what's in `actions`.
+    """
+    cleaned: list[str] = []
+    for a in actions:
+        if not isinstance(a, str) or not a.strip():
+            raise StorageBackendConfigError(f"invalid IAM action: {a!r}")
+        cleaned.append(a.strip())
+    if not cleaned:
+        raise StorageBackendConfigError("provision scope must list at least one IAM action")
+    return {
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Sid": "ScopedProvisionAccess",
+            "Effect": "Allow",
+            "Action": cleaned,
+            "Resource": ["*"],
+        }],
+    }
+
+
 def _session_name(desk_id: str, prefix: str = DEFAULT_SESSION_NAME_PREFIX) -> str:
     """Construct an AWS STS RoleSessionName matching the trust-policy condition.
 
@@ -208,7 +246,17 @@ class StsAssumeRoleBackend:
         prefix: str,
         mode: str,
     ) -> StorageCredential:
-        policy = build_session_policy(bucket, prefix, mode)
+        return self._assume_role(desk_id, build_session_policy(bucket, prefix, mode))
+
+    def mint_provision(
+        self,
+        *,
+        desk_id: str,
+        actions: list[str] | tuple[str, ...],
+    ) -> StorageCredential:
+        return self._assume_role(desk_id, build_provision_session_policy(actions))
+
+    def _assume_role(self, desk_id: str, policy: dict) -> StorageCredential:
         argv = [
             self.aws_bin, "sts", "assume-role",
             "--profile", self.source_profile,
@@ -231,9 +279,6 @@ class StsAssumeRoleBackend:
 
         if proc.returncode != 0:
             stderr = proc.stderr.strip()
-            # STS returns 254 for AccessDenied / invalid creds; the CLI
-            # wraps it in a ClientError string. Any nonzero is a
-            # backend-level failure from our perspective.
             if "AccessDenied" in stderr or "invalid" in stderr.lower():
                 raise StorageBackendPermissionDenied(stderr[:400])
             raise StorageBackendUnavailable(stderr[:400] or f"aws exit {proc.returncode}")
@@ -278,6 +323,19 @@ class StubStorageBackend:
         # Validate mode shape even in the stub so tests catch bad inputs.
         build_session_policy(bucket, prefix, mode)
         self.calls.append({"desk_id": desk_id, "bucket": bucket, "prefix": prefix, "mode": mode})
+        return self._fake(desk_id)
+
+    def mint_provision(
+        self,
+        *,
+        desk_id: str,
+        actions: list[str] | tuple[str, ...],
+    ) -> StorageCredential:
+        build_provision_session_policy(actions)
+        self.calls.append({"desk_id": desk_id, "actions": list(actions)})
+        return self._fake(desk_id)
+
+    def _fake(self, desk_id: str) -> StorageCredential:
         return StorageCredential(
             access_key_id=f"STUB-{desk_id}-AKID",
             secret_access_key=f"STUB-{desk_id}-SECRET",

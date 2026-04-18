@@ -121,6 +121,8 @@ def project_reload(ctx, name, no_regenerate):
         delegation_kwargs["delegatable_firewall_domains"] = list(proj.delegatable_firewall_domains)
     if proj.delegatable_storage_scopes:
         delegation_kwargs["delegatable_storage_scopes"] = list(proj.delegatable_storage_scopes)
+    if proj.delegatable_provision_scopes:
+        delegation_kwargs["delegatable_provision_scopes"] = list(proj.delegatable_provision_scopes)
     if delegation_kwargs:
         registry.update_desk_delegations(name, **delegation_kwargs)
 

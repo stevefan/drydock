@@ -19,9 +19,13 @@ from datetime import datetime
 
 class CapabilityType(str, enum.Enum):
     SECRET = "SECRET"
+    STORAGE_MOUNT = "STORAGE_MOUNT"
+    # Provisioner leases: scoped AWS STS credentials narrowed to an
+    # allow-list of IAM actions on "*". Used by drydocks whose job IS
+    # creating / destroying cloud resources (buckets, IAM roles, etc.).
+    INFRA_PROVISION = "INFRA_PROVISION"
     # V4-reserved. Daemon rejects these with `capability_unsupported`
     # until the corresponding scope schema and broker logic land.
-    STORAGE_MOUNT = "STORAGE_MOUNT"
     COMPUTE_QUOTA = "COMPUTE_QUOTA"
     NETWORK_REACH = "NETWORK_REACH"
 
