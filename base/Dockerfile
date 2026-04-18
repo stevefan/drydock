@@ -18,12 +18,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   mosh \
   sudo \
   tmux \
+  unzip \
   && apt-get clean && rm -rf /var/lib/apt/lists/* \
   && curl -fsSL https://tailscale.com/install.sh | sh
 
 RUN npm install -g \
   @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   @devcontainers/cli
+
+# awscli v2 (~90 MB). Bundled in drydock-base so fleet-agent / provisioner
+# drydocks (infra, future per-service provisioners) can `aws sts assume-role`
+# from inside their container without a runtime install that vanishes on
+# every recreate. Workers that don't need it pay the pull cost once per
+# Harbor; that's acceptable overhead for the simpler "click-and-go" story.
+# TARGETARCH is set automatically by buildx + docker build; defaults to the
+# build host's arch for single-arch builds.
+ARG TARGETARCH
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) AWS_ARCH=x86_64 ;; \
+      arm64) AWS_ARCH=aarch64 ;; \
+      *) echo "unsupported arch: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip && \
+    unzip -q /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install && \
+    rm -rf /tmp/awscliv2.zip /tmp/aws && \
+    aws --version
 
 COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh \
