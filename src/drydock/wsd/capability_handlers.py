@@ -281,6 +281,31 @@ def _handle_storage_request(
 
     registry = Registry(db_path=registry_path)
     try:
+        # Phase 1 semantic: one active STORAGE_MOUNT lease per drydock.
+        # Materialization overwrites the aws_* files in place, so keeping
+        # older lease records "active" in the registry makes release
+        # cleanup unreliable (can't tell which lease owns the files).
+        # Auto-revoke prior active storage leases on new issue.
+        while True:
+            prior = registry.find_active_storage_lease(caller_desk_id)
+            if prior is None:
+                break
+            registry.revoke_lease(prior.lease_id, "superseded")
+            emit_audit(
+                "lease.released",
+                principal=caller_desk_id,
+                request_id=request_id,
+                method="RequestCapability",
+                result="ok",
+                details={
+                    "lease_id": prior.lease_id,
+                    "reason": "superseded_by_new_storage_lease",
+                },
+            )
+            logger.info(
+                "wsd: superseded prior storage lease %s on new issue", prior.lease_id,
+            )
+
         policy_row = registry.load_desk_policy(caller_desk_id)
         if policy_row is None:
             raise _RpcError(code=-32001, message="desk_not_found",
