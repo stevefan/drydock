@@ -711,6 +711,55 @@ def _count_provisioning_children(registry: Registry, parent_desk_id: str) -> int
     return int(row["n"]) if row else 0
 
 
+def _regenerate_overlay_for_resume(existing: Workspace, overlay_path: Path) -> None:
+    """Re-derive the overlay file from current OverlayConfig + stored config.
+
+    Resume uses the same overlay path but rewrites the file in place so
+    code-level overlay changes (new bind-mounts, env vars, default paths)
+    land on every `ws create <name>` for suspended desks. Not a validator
+    — if a field is missing or malformed, callers see the normal overlay
+    generation errors.
+
+    Persistent fields are pulled from `existing.config` (the registry's
+    stored snapshot): tailscale_hostname, tailscale_serve_port,
+    remote_control_name, firewall_extra_domains, firewall_ipv6_hosts,
+    forward_ports, claude_profile, extra_mounts. These were set at create
+    time from the project YAML; project-YAML drift isn't reconciled here
+    (scope: resume is "pick up overlay-code changes", not "re-read YAML").
+    """
+    cfg = existing.config if isinstance(existing.config, dict) else {}
+    kwargs: dict[str, object] = {}
+    if cfg.get("tailscale_hostname"):
+        kwargs["tailscale_hostname"] = cfg["tailscale_hostname"]
+    if cfg.get("tailscale_serve_port"):
+        kwargs["tailscale_serve_port"] = cfg["tailscale_serve_port"]
+    if cfg.get("remote_control_name"):
+        kwargs["remote_control_name"] = cfg["remote_control_name"]
+    if cfg.get("firewall_extra_domains"):
+        kwargs["firewall_extra_domains"] = list(cfg["firewall_extra_domains"])
+    if cfg.get("firewall_ipv6_hosts"):
+        kwargs["firewall_ipv6_hosts"] = list(cfg["firewall_ipv6_hosts"])
+    if cfg.get("forward_ports"):
+        kwargs["forward_ports"] = list(cfg["forward_ports"])
+    if cfg.get("claude_profile"):
+        kwargs["claude_profile"] = cfg["claude_profile"]
+    if cfg.get("extra_mounts"):
+        kwargs["extra_mounts"] = list(cfg["extra_mounts"])
+
+    overlay_config = OverlayConfig(**kwargs)
+    workspace_folder = existing.worktree_path
+    devcontainer_subpath = cfg.get("devcontainer_subpath") or ".devcontainer"
+    base_devcontainer = Path(workspace_folder) / devcontainer_subpath / "devcontainer.json"
+
+    write_overlay(
+        existing,
+        overlay_path.parent,
+        overlay_config,
+        base_devcontainer_path=base_devcontainer,
+    )
+    logger.info("resume: regenerated overlay for %s at %s", existing.name, overlay_path)
+
+
 def _validate_devcontainer_subpath(devcontainer_subpath: str) -> None:
     subpath = Path(devcontainer_subpath)
     if subpath.is_absolute() or ".." in subpath.parts:
@@ -729,14 +778,37 @@ def _resume_desk(
 ) -> dict[str, object]:
     """Re-up the container for a suspended/defined desk.
 
-    Worktree, overlay, token, and named volumes are reused. Container is fresh.
+    Worktree, token, and named volumes are reused. Container is fresh.
+    Overlay is REGENERATED from current OverlayConfig defaults + stored
+    config — picks up overlay-code changes (e.g. new bind-mounts) without
+    requiring a `--force` destroy+create. Stored overlay_path is
+    authoritative for WHERE to write; contents are re-derived every time.
     """
     config = existing.config or {}
     overlay_path = config.get("overlay_path") if isinstance(config, dict) else None
-    if not overlay_path or not Path(overlay_path).exists():
+    if not overlay_path:
         registry.update_state(existing.name, "error")
         raise WsError(
-            f"Cannot resume desk '{existing.name}': overlay missing at {overlay_path or '(unset)'}",
+            f"Cannot resume desk '{existing.name}': overlay_path missing from registry",
+            fix=f"Rebuild from clean state: ws create {existing.project} {existing.name} --force",
+        )
+
+    # Regenerate overlay so new OverlayConfig defaults (bind-mounts, env vars)
+    # land without requiring `--force`. Pull persistent fields from the stored
+    # registry config so user-set tailscale_hostname, firewall_extra_domains,
+    # etc. survive the regen.
+    try:
+        _regenerate_overlay_for_resume(existing, Path(overlay_path))
+    except (WsError, FileNotFoundError, OSError) as exc:
+        logger.warning(
+            "resume: overlay regen failed for %s (%s); using stored file",
+            existing.name, exc,
+        )
+
+    if not Path(overlay_path).exists():
+        registry.update_state(existing.name, "error")
+        raise WsError(
+            f"Cannot resume desk '{existing.name}': overlay missing at {overlay_path}",
             fix=f"Rebuild from clean state: ws create {existing.project} {existing.name} --force",
         )
     workspace_folder = existing.worktree_path
