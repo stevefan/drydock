@@ -2,6 +2,35 @@
 
 > **Vocabulary note (2026-04-17):** Entries below predate the Harbor / DryDock / Worker product-vocabulary shift and are preserved verbatim as history. In current vocabulary: "host" (the machine running `wsd`) is a **Harbor**, "agent-desk" / "workspace" (product concept) is a **DryDock**, and the agent running inside is a **Worker**. Code identifiers (`ws_<slug>`, `workspaces` table, `Workspace` class, CLI `ws` prefix) are unchanged. See [v2-design-vocabulary.md](v2-design-vocabulary.md).
 
+## v1.0.0 — 2026-04-18
+
+V2 architecturally complete + V4 Phase 1 (STORAGE_MOUNT) live end-to-end.
+
+**What shipped since v1.0.0-rc1 (the "RPC surface feature-complete" marker):**
+
+- **Persistence pivot.** V3 cross-host migration archived (`docs/_archive/migration-vision.md`); drydocks are durable on a chosen Harbor. Reboot-resume via systemd units (`drydock-wsd.service` + `drydock-desks.service` with ExecStop hook). Resume-on-CreateDesk for suspended drydocks + ungraceful-shutdown detection.
+- **In-desk RPC.** `wsd` socket bind-mounted into every drydock at `/run/drydock/wsd.sock` (directory bind — durable across daemon restart). Stdlib-only client `drydock-rpc` bind-mounted at `/usr/local/bin/drydock-rpc`. Socket chmod 0o666 so non-root workers can connect; bearer-token auth remains the real security gate.
+- **V4 Phase 1: STORAGE_MOUNT.** New `CapabilityKind.REQUEST_STORAGE_LEASES`, `[storage]` wsd.toml section, `StsAssumeRoleBackend` + `StubStorageBackend`. Workers get scoped AWS STS creds via `RequestCapability(type=STORAGE_MOUNT, scope={bucket, prefix, mode})`; daemon materializes `aws_*` files into the desk's secret dir with container-uid chown.
+- **V4 Phase 1b narrowness.** `delegatable_storage_scopes` YAML field + registry column + validator. Scope format `"s3://bucket/prefix/*"` with optional `rw:` prefix. Default-permissive-when-empty for back-compat.
+- **V2.1 cross-drydock secret delegation.** `source_desk_id` on `RequestCapability` lets a drydock receive a secret held by another; daemon-mediated file copy into caller's secret dir.
+- **Resume regenerates overlay.** Overlay-code changes land on `ws create <suspended-name>` without `--force`-destroying the worktree.
+- **Product vocabulary refactor.** Harbor / DryDock / Worker as the product three-layer model; code identifiers unchanged. See `docs/v2-design-vocabulary.md`.
+- **project_config accepts V2 fields.** `capabilities`, `secret_entitlements`, `delegatable_secrets`, `delegatable_firewall_domains`, `delegatable_storage_scopes` all supported in YAML + forwarded via CLI→daemon.
+- **ws daemon status under systemd.** Health-derives-from-socket, not pid-file.
+- **Container-uid chown on materialized secrets.** Fixes the class of "daemon writes as root, node worker can't read" bugs for both cross-desk SECRET and STORAGE_MOUNT.
+- **Validated end-to-end on `drydock-hillsboro`:** auction-crawl worker requests STORAGE_MOUNT from inside its container, writes to S3 via scoped creds, narrowness denies out-of-prefix writes. Infra bootstrapped as fleet-agent (Harbor `drydock-runner` → `drydock-agent` role assume-role).
+
+**Known follow-ups (tracked, not blockers):**
+- awscli not in `drydock-base` — fleet-agent drydocks reinstall on each container recreate
+- S3 virtual-host per-bucket addressing vs firewall ipset — new buckets miss the allowlist until DNS refresh
+- `firewall_extra_domains` YAML drift not reconciled on resume (needs `ws project reload <name>`)
+- `ws overlay regenerate` as an explicit CLI command (today implicit via resume)
+- Tighten `delegatable_storage_scopes` default-permissive-when-empty per-project when ready
+
+**Commits since rc1:** 30+. Full list: `git log v1.0.0-rc1..v1.0.0`.
+
+---
+
 ## v0.1.0 — 2026-04-13
 
 First tagged release. V1 + V1.5 shipped. Covers the full "spawn sandboxed agent-desks and use them from anywhere" use case for a single user on a single host.
