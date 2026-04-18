@@ -30,6 +30,11 @@ _REGISTRY_PATH: Path | None = None
 _SECRETS_ROOT: Path | None = None
 _DRY_RUN = False
 _SECRETS_BACKEND_NAME = "file"
+# V4 Phase 1: pre-built storage backend (StsAssumeRoleBackend or StubStorageBackend).
+# None = storage not configured; STORAGE_MOUNT leases reject with
+# `storage_backend_not_configured`. Built once in serve() — AWS CLI setup
+# is stable for the daemon's lifetime.
+_STORAGE_BACKEND: Any = None
 
 
 @dataclass(frozen=True)
@@ -338,6 +343,7 @@ def _request_capability(
                 registry_path=_REGISTRY_PATH,
                 secrets_root=_SECRETS_ROOT,
                 backend_name=_SECRETS_BACKEND_NAME,
+                storage_backend=_STORAGE_BACKEND,
             )
         except _RpcError as exc:
             error = {"code": exc.code, "message": exc.message}
@@ -650,6 +656,10 @@ def serve(
     secrets_root: Path,
     dry_run: bool,
     secrets_backend: str = "file",
+    storage_backend: str | None = None,
+    storage_role_arn: str | None = None,
+    storage_source_profile: str = "drydock-runner",
+    storage_session_duration_seconds: int = 14400,
 ) -> None:
     """Bind the Unix socket and serve until interrupted.
 
@@ -660,13 +670,29 @@ def serve(
     (Slice 3). Default is "file"; the wsd.toml [secrets] loader resolves
     the value before serve() is called and rejects unknown names with
     `unknown_secrets_backend` so the daemon never starts misconfigured.
+
+    `storage_backend` selects the StorageBackend used by
+    RequestCapability(type=STORAGE_MOUNT). None = STORAGE_MOUNT
+    unavailable. "sts" = real AWS STS AssumeRole; "stub" = test backend.
     """
-    global _REGISTRY_PATH, _SECRETS_ROOT, _DRY_RUN, _SECRETS_BACKEND_NAME
+    global _REGISTRY_PATH, _SECRETS_ROOT, _DRY_RUN, _SECRETS_BACKEND_NAME, _STORAGE_BACKEND
     socket_path = Path(socket_path)
     _REGISTRY_PATH = registry_path or (Path.home() / ".drydock" / "registry.db")
     _SECRETS_ROOT = Path(secrets_root)
     _DRY_RUN = dry_run
     _SECRETS_BACKEND_NAME = secrets_backend
+
+    if storage_backend:
+        from drydock.core.storage import build_storage_backend
+        _STORAGE_BACKEND = build_storage_backend(
+            storage_backend,
+            role_arn=storage_role_arn,
+            source_profile=storage_source_profile,
+            session_duration_seconds=storage_session_duration_seconds,
+        )
+        logger.info("wsd: storage backend = %s", storage_backend)
+    else:
+        _STORAGE_BACKEND = None
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():
         socket_path.unlink()

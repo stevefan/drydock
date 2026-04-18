@@ -66,6 +66,10 @@ def main(argv: list[str] | None = None) -> int:
         _secrets_root_from_env(),
         _env_truthy(os.environ.get("DRYDOCK_WSD_DRY_RUN")),
         secrets_backend=config.secrets_backend,
+        storage_backend=config.storage_backend,
+        storage_role_arn=config.storage_role_arn,
+        storage_source_profile=config.storage_source_profile,
+        storage_session_duration_seconds=config.storage_session_duration_seconds,
     )
     return 0
 

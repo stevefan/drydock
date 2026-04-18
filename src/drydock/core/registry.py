@@ -427,6 +427,19 @@ class Registry:
                 return lease
         return None
 
+    def find_active_storage_lease(self, desk_id: str) -> CapabilityLease | None:
+        """Return any active STORAGE_MOUNT lease for desk_id, or None.
+
+        STORAGE_MOUNT uses a single-lease-at-a-time semantic: materialized
+        aws_* files are overwritten by the latest lease, so the daemon
+        needs to know whether any storage lease is still live before
+        cleaning up on release.
+        """
+        for lease in self.list_active_leases_for_desk(desk_id):
+            if lease.type == CapabilityType.STORAGE_MOUNT:
+                return lease
+        return None
+
     def get_workspace_extra_mounts(self, name: str) -> list[str]:
         row = self._conn.execute(
             "SELECT config FROM workspaces WHERE name = ?",

@@ -384,3 +384,153 @@ class TestCrossDeskDelegation:
         # No source_desk_id in scope when same-desk? Actually it IS there since
         # we passed it. That's fine — scope includes whatever was passed.
         assert result["type"] == "SECRET"
+
+
+# V4 Phase 1: STORAGE_MOUNT leases issue scoped AWS STS creds + materialize
+# them into the caller's host secret dir as 4 aws_* files. Pin:
+# - reject when no storage backend configured
+# - reject when desk lacks REQUEST_STORAGE_LEASES capability
+# - validate bucket/prefix/mode shapes
+# - materialize creds + return lease on happy path (uses StubStorageBackend)
+# - release removes the materialized aws_* files
+class TestStorageMount:
+    @pytest.fixture
+    def storage_env(self, tmp_path):
+        from drydock.core.storage import StubStorageBackend
+
+        db = tmp_path / "registry.db"
+        secrets_root = tmp_path / "secrets"
+        secrets_root.mkdir()
+
+        registry = Registry(db_path=db)
+        ws = Workspace(
+            name="storage-worker",
+            project="p",
+            repo_path="/tmp/repo",
+            worktree_path="/tmp/wt-sw",
+            branch="ws/storage-worker",
+            state="running",
+            container_id="cid_sw",
+        )
+        registry.create_workspace(ws)
+
+        registry.update_desk_delegations(
+            ws.name,
+            delegatable_firewall_domains=[],
+            delegatable_secrets=[],
+            capabilities=[CapabilityKind.REQUEST_STORAGE_LEASES.value],
+        )
+
+        backend = StubStorageBackend()
+
+        yield {
+            "db": db,
+            "secrets_root": secrets_root,
+            "registry": registry,
+            "desk_id": ws.id,
+            "backend": backend,
+        }
+        registry.close()
+
+    def _storage_params(self, bucket="lab-data", prefix="scraped", mode="ro"):
+        return {"type": "STORAGE_MOUNT", "scope": {"bucket": bucket, "prefix": prefix, "mode": mode}}
+
+    def test_happy_path_materializes_aws_files(self, storage_env):
+        result = request_capability(
+            self._storage_params(),
+            "rid-storage-1",
+            storage_env["desk_id"],
+            registry_path=storage_env["db"],
+            secrets_root=storage_env["secrets_root"],
+            storage_backend=storage_env["backend"],
+        )
+        assert result["type"] == "STORAGE_MOUNT"
+        assert result["scope"]["bucket"] == "lab-data"
+        assert result["scope"]["prefix"] == "scraped"
+        assert result["scope"]["mode"] == "ro"
+        assert result["expiry"] is not None  # storage leases always have expiry
+
+        desk_dir = storage_env["secrets_root"] / storage_env["desk_id"]
+        assert (desk_dir / "aws_access_key_id").read_bytes().decode().startswith("STUB-")
+        assert (desk_dir / "aws_secret_access_key").exists()
+        assert (desk_dir / "aws_session_token").exists()
+        assert (desk_dir / "aws_session_expiration").exists()
+
+    def test_rejects_when_backend_not_configured(self, storage_env):
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._storage_params(),
+                "rid",
+                storage_env["desk_id"],
+                registry_path=storage_env["db"],
+                secrets_root=storage_env["secrets_root"],
+                storage_backend=None,
+            )
+        assert exc.value.message == "storage_backend_not_configured"
+
+    def test_rejects_when_capability_not_granted(self, storage_env):
+        storage_env["registry"].update_desk_delegations(
+            "storage-worker", capabilities=[],
+        )
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._storage_params(),
+                "rid",
+                storage_env["desk_id"],
+                registry_path=storage_env["db"],
+                secrets_root=storage_env["secrets_root"],
+                storage_backend=storage_env["backend"],
+            )
+        assert exc.value.message == "capability_not_granted"
+        assert "request_storage_leases" in exc.value.data["missing"]
+
+    @pytest.mark.parametrize("bucket", ["UPPERCASE", "a", "x_y_z", "-leading-dash"])
+    def test_invalid_bucket_names_rejected(self, storage_env, bucket):
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._storage_params(bucket=bucket),
+                "rid",
+                storage_env["desk_id"],
+                registry_path=storage_env["db"],
+                secrets_root=storage_env["secrets_root"],
+                storage_backend=storage_env["backend"],
+            )
+        assert exc.value.message == "invalid_params"
+
+    def test_invalid_mode_rejected(self, storage_env):
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._storage_params(mode="admin"),
+                "rid",
+                storage_env["desk_id"],
+                registry_path=storage_env["db"],
+                secrets_root=storage_env["secrets_root"],
+                storage_backend=storage_env["backend"],
+            )
+        assert exc.value.message == "invalid_params"
+
+    def test_release_removes_materialized_aws_files(self, storage_env):
+        result = request_capability(
+            self._storage_params(),
+            "rid-storage-rel",
+            storage_env["desk_id"],
+            registry_path=storage_env["db"],
+            secrets_root=storage_env["secrets_root"],
+            storage_backend=storage_env["backend"],
+        )
+        lease_id = result["lease_id"]
+        desk_dir = storage_env["secrets_root"] / storage_env["desk_id"]
+        assert (desk_dir / "aws_access_key_id").exists()
+
+        release_capability(
+            {"lease_id": lease_id},
+            "rid-storage-rel-2",
+            storage_env["desk_id"],
+            registry_path=storage_env["db"],
+            secrets_root=storage_env["secrets_root"],
+        )
+
+        assert not (desk_dir / "aws_access_key_id").exists()
+        assert not (desk_dir / "aws_secret_access_key").exists()
+        assert not (desk_dir / "aws_session_token").exists()
+        assert not (desk_dir / "aws_session_expiration").exists()

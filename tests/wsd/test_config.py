@@ -39,3 +39,49 @@ class TestLoadWsdConfig:
         path.write_text("[secrets]\nbackend = 42\n")
         with pytest.raises(ConfigError, match="non-empty string"):
             load_wsd_config(path)
+
+
+# V4 Phase 1: [storage] section governs STORAGE_MOUNT lease issuance.
+# Missing section → None → daemon rejects STORAGE_MOUNT with
+# storage_backend_not_configured. Present but misconfigured → fail fast
+# at daemon startup, never mid-RPC.
+class TestStorageConfig:
+    def test_missing_storage_section_leaves_none(self, tmp_path):
+        path = tmp_path / "wsd.toml"
+        path.write_text('[secrets]\nbackend = "file"\n')
+        cfg = load_wsd_config(path)
+        assert cfg.storage_backend is None
+        assert cfg.storage_role_arn is None
+
+    def test_sts_backend_parsed(self, tmp_path):
+        path = tmp_path / "wsd.toml"
+        path.write_text(
+            '[storage]\n'
+            'backend = "sts"\n'
+            'role_arn = "arn:aws:iam::123:role/drydock-agent"\n'
+            'source_profile = "drydock-runner"\n'
+            'session_duration_seconds = 7200\n'
+        )
+        cfg = load_wsd_config(path)
+        assert cfg.storage_backend == "sts"
+        assert cfg.storage_role_arn == "arn:aws:iam::123:role/drydock-agent"
+        assert cfg.storage_source_profile == "drydock-runner"
+        assert cfg.storage_session_duration_seconds == 7200
+
+    def test_stub_backend_accepted(self, tmp_path):
+        path = tmp_path / "wsd.toml"
+        path.write_text('[storage]\nbackend = "stub"\n')
+        cfg = load_wsd_config(path)
+        assert cfg.storage_backend == "stub"
+
+    def test_sts_without_role_arn_rejected(self, tmp_path):
+        path = tmp_path / "wsd.toml"
+        path.write_text('[storage]\nbackend = "sts"\n')
+        with pytest.raises(ConfigError, match="role_arn"):
+            load_wsd_config(path)
+
+    def test_unknown_storage_backend_rejected(self, tmp_path):
+        path = tmp_path / "wsd.toml"
+        path.write_text('[storage]\nbackend = "gcs"\n')
+        with pytest.raises(ConfigError, match="unknown_storage_backend"):
+            load_wsd_config(path)

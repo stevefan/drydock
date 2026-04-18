@@ -24,6 +24,9 @@ class CapabilityKind(str, Enum):
 
     SPAWN_CHILDREN = "spawn_children"
     REQUEST_SECRET_LEASES = "request_secret_leases"
+    # V4 Phase 1: coarse gate for type=STORAGE_MOUNT lease requests.
+    # Per-bucket narrowness is deferred to Phase 1b (delegatable_storage_scopes).
+    REQUEST_STORAGE_LEASES = "request_storage_leases"
 
 
 @dataclass(frozen=True)
