@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID
+from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID, chown_to_container
 from drydock.core.audit import emit_audit
 from drydock.core.capability import CapabilityLease, CapabilityType
 from drydock.core.policy import (
@@ -791,23 +791,8 @@ def _materialize_storage_credentials(
         # and future non-root Harbors don't).
         target.unlink(missing_ok=True)
         target.write_bytes(value)
-        _chown_for_container(target)
+        chown_to_container(target)
         os.chmod(target, 0o400)
-
-
-def _chown_for_container(path: Path) -> None:
-    """chown to the drydock-base container's node uid/gid. No-op if not root.
-
-    Non-root Harbor (dev Mac) cannot chown; the file stays owned by the
-    Harbor user, which happens to align with the container user only on
-    Linux Harbors running as root (Hetzner convention).
-    """
-    try:
-        os.chown(path, CONTAINER_REMOTE_UID, CONTAINER_REMOTE_GID)
-    except PermissionError:
-        # Mac Harbor / non-root tests — chown needs root. Fine; file
-        # ownership only matters when a real container mounts and reads.
-        logger.debug("skipped chown on %s (not root)", path)
 
 
 def _remove_storage_credentials(secrets_root: Path, desk_id: str) -> None:
@@ -874,7 +859,7 @@ def _materialize_to_host_secret_dir(
     desk_dir.mkdir(parents=True, exist_ok=True)
     target = desk_dir / secret_name
     target.write_bytes(payload)
-    _chown_for_container(target)
+    chown_to_container(target)
     os.chmod(target, 0o400)
     logger.info(
         "wsd: cross-desk secret materialized at %s (%d bytes)",

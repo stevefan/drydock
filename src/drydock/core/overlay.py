@@ -48,11 +48,7 @@ class OverlayConfig:
     remote_control_name: str = ""
     extra_env: dict[str, str] = field(default_factory=dict)
     extra_mounts: list[str] = field(default_factory=list)
-    # Declarative S3 mounts; setup-storage-mounts.sh reads STORAGE_MOUNTS_JSON
-    # at container start, issues STORAGE_MOUNT leases, and runs s3fs per entry.
-    # Requires FUSE in the container (drydock-base bundles s3fs + fuse) and
-    # FUSE device access via --cap-add SYS_ADMIN + --device /dev/fuse runArgs,
-    # which generate_overlay adds automatically when this list is non-empty.
+    # See docs/design/storage-mount.md.
     storage_mounts: list[dict] = field(default_factory=list)
     forward_ports: list[int] = field(default_factory=list)
     claude_profile: str = ""
@@ -80,13 +76,9 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
     hostname = config.tailscale_hostname or _default_identity(ws)
     overlay["runArgs"] = [f"--hostname={hostname}"]
     if config.storage_mounts:
-        # s3fs FUSE mount requires three separate pieces of docker config:
-        #   - SYS_ADMIN: mount() syscall capability
-        #   - /dev/fuse device: FUSE kernel interface
-        #   - apparmor=unconfined: the default docker apparmor profile blocks
-        #     mount() even when SYS_ADMIN is present, producing an opaque
-        #     "fuse: mount failed: Permission denied". Surfaced on Hetzner
-        #     during Phase C smoke (Ubuntu + AppArmor enforce on docker).
+        # apparmor=unconfined is required in addition to SYS_ADMIN: docker's
+        # default profile blocks mount() even with the cap, producing an
+        # opaque "fuse: mount failed: Permission denied".
         overlay["runArgs"].extend([
             "--cap-add=SYS_ADMIN",
             "--device=/dev/fuse",

@@ -66,14 +66,8 @@ class ProjectConfig:
     delegatable_firewall_domains: list[str] = field(default_factory=list)
     delegatable_storage_scopes: list[str] = field(default_factory=list)
     delegatable_provision_scopes: list[str] = field(default_factory=list)
-    # Declarative S3 mounts. Each entry: {source, target, mode, region?}.
-    # source is an s3://bucket/prefix URL; target is the in-container
-    # mount point (e.g. /mnt/data); mode is "ro" or "rw" (default "ro");
-    # region defaults to us-west-2 (matches the infra drydock deployment).
-    # `capabilities`, `delegatable_storage_scopes`, and
-    # `firewall_aws_ip_ranges` are auto-extended from these entries —
-    # see expand_storage_mounts() below. A drydock that doesn't declare
-    # storage_mounts gets no FUSE cap / no mount work at startup.
+    # Declarative S3 mounts; expand_storage_mounts fills in the capability,
+    # scope, and firewall entries each one implies. See storage-mount.md.
     storage_mounts: list[dict] = field(default_factory=list)
 
 
