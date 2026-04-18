@@ -60,8 +60,12 @@ fi
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
     sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" --authkey="$TAILSCALE_AUTHKEY" $TS_ADVERTISE_TAGS_ARG 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing without tailnet join" | tee -a "$LOG_FILE"
 else
-    echo "WARNING: No TAILSCALE_AUTHKEY set. You'll need to authenticate manually via the URL below." | tee -a "$LOG_FILE"
-    sudo tailscale up --ssh --hostname="$TAILSCALE_HOSTNAME" $TS_ADVERTISE_TAGS_ARG 2>&1 | tee -a "$LOG_FILE" || echo "WARNING: tailscale up failed; continuing" | tee -a "$LOG_FILE"
+    echo "WARNING: No TAILSCALE_AUTHKEY set; skipping 'tailscale up'. To join the tailnet later, ws secret set <name> tailscale_authkey and restart." | tee -a "$LOG_FILE"
+    # Do NOT call 'tailscale up' without an authkey — it blocks the
+    # postStartCommand chain indefinitely waiting for interactive browser
+    # auth (the container has no way to surface the login URL to a human).
+    # Surfaced on 2026-04-18 during a Phase C smoke test: a drydock with no
+    # tailscale secret hung `ws create` for 16+ minutes before I noticed.
 fi
 
 # Serve the dev server on the tailnet (only meaningful if tailscale up succeeded)

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 
@@ -473,6 +474,35 @@ def _validated_int_list(value: object, *, field_name: str) -> list[int]:
     return value
 
 
+def _run_setup_storage_mounts(container_id: str) -> None:
+    """docker exec setup-storage-mounts.sh as node user in the drydock.
+
+    Runs after devcontainer up succeeds. Best-effort: logs on failure,
+    doesn't raise. The script is idempotent (s3fs mount is a no-op if
+    already mounted) and self-handles errors internally — the daemon
+    just needs to trigger it once the container is live.
+
+    5-minute timeout covers s3fs initial mount + lease issuance; hanging
+    past that indicates a genuine problem (e.g., stuck postStartCommand
+    delaying daemon connectivity) that shouldn't block the whole create.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "-u", "node", container_id,
+             "/usr/local/bin/setup-storage-mounts.sh"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "wsd: setup-storage-mounts.sh exit=%d: %s",
+                result.returncode, (result.stderr or result.stdout or "").strip()[:500],
+            )
+        else:
+            logger.info("wsd: setup-storage-mounts.sh completed container=%s", container_id)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("wsd: setup-storage-mounts.sh failed: %s", exc)
+
+
 def _validated_dict_list(value: object, *, field_name: str) -> list[dict]:
     if value is None:
         return []
@@ -878,6 +908,13 @@ def _resume_desk(
         in_container_folder = _read_workspace_folder_from_overlay(str(overlay_path))
         seed_workspace_trust(container_id, in_container_folder)
 
+        # Re-mount any storage_mounts declared in the stored config. Resume
+        # is a fresh container start — the FUSE mounts from the prior run
+        # are gone with it.
+        stored_cfg = existing.config if isinstance(existing.config, dict) else {}
+        if stored_cfg.get("storage_mounts"):
+            _run_setup_storage_mounts(container_id)
+
     return {
         "desk_id": ws.id,
         "name": ws.name,
@@ -996,6 +1033,15 @@ def _perform_create(
         from drydock.core.trust import _read_workspace_folder_from_overlay, seed_workspace_trust
         in_container_folder = _read_workspace_folder_from_overlay(str(overlay_path))
         seed_workspace_trust(container_id, in_container_folder)
+
+        # Phase C: if storage_mounts declared, run setup-storage-mounts.sh
+        # via docker exec. Can't rely on the project's devcontainer.json
+        # postStartCommand knowing our script — users bring their own
+        # devcontainer.json from their repo. Daemon-side exec works for any
+        # project whose image derives from drydock-base (which bundles
+        # setup-storage-mounts.sh at /usr/local/bin/).
+        if spec.get("storage_mounts"):
+            _run_setup_storage_mounts(container_id)
 
     result = {
         "desk_id": ws.id,
