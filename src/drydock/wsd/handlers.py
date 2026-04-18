@@ -603,6 +603,10 @@ def _overlay_from_spec(spec: dict[str, object]) -> OverlayConfig:
     if isinstance(extra_env, dict) and extra_env:
         kwargs["extra_env"] = dict(extra_env)
 
+    storage_mounts = spec.get("storage_mounts")
+    if isinstance(storage_mounts, list) and storage_mounts:
+        kwargs["storage_mounts"] = list(storage_mounts)
+
     return OverlayConfig(**kwargs)
 
 
