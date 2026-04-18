@@ -53,6 +53,8 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["firewall_extra_domains"] = proj_cfg.firewall_extra_domains
     if proj_cfg.firewall_ipv6_hosts:
         params["firewall_ipv6_hosts"] = proj_cfg.firewall_ipv6_hosts
+    if proj_cfg.firewall_aws_ip_ranges:
+        params["firewall_aws_ip_ranges"] = proj_cfg.firewall_aws_ip_ranges
     if proj_cfg.forward_ports:
         params["forward_ports"] = proj_cfg.forward_ports
     if proj_cfg.claude_profile is not None:

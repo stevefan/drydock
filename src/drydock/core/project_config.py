@@ -18,6 +18,7 @@ KNOWN_KEYS = {
     "remote_control_name",
     "firewall_extra_domains",
     "firewall_ipv6_hosts",
+    "firewall_aws_ip_ranges",
     "forward_ports",
     "extra_mounts",
     "extra_env",
@@ -42,6 +43,12 @@ class ProjectConfig:
     remote_control_name: str | None = None
     firewall_extra_domains: list[str] = field(default_factory=list)
     firewall_ipv6_hosts: list[str] = field(default_factory=list)
+    # AWS ip-ranges.json CIDR additions, declared as "REGION:SERVICE" strings
+    # (e.g. "us-west-2:AMAZON"). init-firewall.sh fetches + filters +
+    # adds CIDRs to the allowed-domains ipset at container start. Closes the
+    # structural mismatch between hostname-based firewall and AWS's
+    # virtual-host-per-bucket S3 DNS + rotating STS/IAM regional endpoints.
+    firewall_aws_ip_ranges: list[str] = field(default_factory=list)
     forward_ports: list[int] = field(default_factory=list)
     extra_mounts: list[str] = field(default_factory=list)
     # containerEnv passthrough: declared env vars land in the devcontainer
@@ -104,6 +111,7 @@ def load_project_config(
         remote_control_name=raw.get("remote_control_name"),
         firewall_extra_domains=raw.get("firewall_extra_domains", []),
         firewall_ipv6_hosts=raw.get("firewall_ipv6_hosts", []),
+        firewall_aws_ip_ranges=raw.get("firewall_aws_ip_ranges", []),
         forward_ports=raw.get("forward_ports", []),
         extra_mounts=raw.get("extra_mounts", []),
         extra_env=raw.get("extra_env") or {},

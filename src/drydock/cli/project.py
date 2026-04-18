@@ -43,6 +43,7 @@ _CONFIG_FIELDS_FROM_YAML = (
     "remote_control_name",
     "firewall_extra_domains",
     "firewall_ipv6_hosts",
+    "firewall_aws_ip_ranges",
     "forward_ports",
     "claude_profile",
     "extra_mounts",

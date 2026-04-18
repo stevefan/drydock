@@ -205,6 +205,49 @@ for domain in "${ALL_DOMAINS[@]}"; do
     done < <(echo "$ips")
 done
 
+# AWS IP ranges (optional, declared per-project via `firewall_aws_ip_ranges`
+# in the project YAML). Fixes the structural mismatch between the ipset-of-
+# resolved-A-records approach and AWS's virtual-host-per-bucket S3 DNS + the
+# reality that STS/S3/IAM regional endpoints sit on rotating IP pools. The
+# ip-ranges.json data is AWS's authoritative source for service/region CIDRs;
+# we fetch before lockdown so `ipset add` works.
+#
+# Env var format (space-separated): "REGION:SERVICE [REGION:SERVICE ...]"
+# e.g. "us-west-2:AMAZON us-west-2:S3". SERVICE=AMAZON is the broad set
+# (covers STS, IAM, management APIs); narrower services (S3, EC2, etc.) are
+# subsets you can add if you want to scope harder than region.
+FIREWALL_AWS_IP_RANGES="${FIREWALL_AWS_IP_RANGES:-}"
+if [ -n "$FIREWALL_AWS_IP_RANGES" ]; then
+    echo "Fetching AWS ip-ranges.json..."
+    aws_ranges=$(curl -s --connect-timeout 15 https://ip-ranges.amazonaws.com/ip-ranges.json)
+    if [ -z "$aws_ranges" ]; then
+        echo "WARNING: Failed to fetch ip-ranges.json (continuing without AWS CIDRs)"
+    else
+        IFS=' ' read -ra AWS_FILTERS <<< "$FIREWALL_AWS_IP_RANGES"
+        for filter in "${AWS_FILTERS[@]}"; do
+            region="${filter%%:*}"
+            service="${filter##*:}"
+            if [ -z "$region" ] || [ -z "$service" ] || [ "$region" = "$service" ]; then
+                echo "ERROR: Invalid firewall_aws_ip_ranges entry '$filter' (expected REGION:SERVICE)"
+                exit 1
+            fi
+            echo "AWS ranges: region=$region service=$service"
+            count=0
+            while read -r cidr; do
+                if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+                    echo "ERROR: Invalid CIDR from ip-ranges.json: $cidr"
+                    exit 1
+                fi
+                ipset add allowed-domains "$cidr" -exist
+                count=$((count + 1))
+            done < <(echo "$aws_ranges" | jq -r \
+                --arg region "$region" --arg service "$service" \
+                '.prefixes[] | select(.region == $region and .service == $service) | .ip_prefix')
+            echo "  added $count CIDRs"
+        done
+    fi
+fi
+
 # 5. Whitelist built — NOW lock down
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
 iptables -P INPUT DROP

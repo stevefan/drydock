@@ -48,6 +48,7 @@ _OVERLAY_PARAM_FIELDS = (
     "remote_control_name",
     "firewall_extra_domains",
     "firewall_ipv6_hosts",
+    "firewall_aws_ip_ranges",
     "forward_ports",
     "claude_profile",
     "extra_env",
@@ -329,6 +330,10 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         params.get("firewall_ipv6_hosts"),
         field_name="firewall_ipv6_hosts",
     )
+    firewall_aws_ip_ranges = _validated_string_list(
+        params.get("firewall_aws_ip_ranges"),
+        field_name="firewall_aws_ip_ranges",
+    )
     secret_entitlements = _validated_string_list(
         params.get("secret_entitlements"),
         field_name="secret_entitlements",
@@ -397,6 +402,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "remote_control_name": remote_control_name,
         "firewall_extra_domains": firewall_extra_domains,
         "firewall_ipv6_hosts": firewall_ipv6_hosts,
+        "firewall_aws_ip_ranges": firewall_aws_ip_ranges,
         "forward_ports": forward_ports,
         "claude_profile": claude_profile,
         "extra_env": extra_env,
@@ -527,6 +533,10 @@ def _overlay_from_spec(spec: dict[str, object]) -> OverlayConfig:
     firewall_ipv6_hosts = spec.get("firewall_ipv6_hosts")
     if isinstance(firewall_ipv6_hosts, list) and firewall_ipv6_hosts:
         kwargs["firewall_ipv6_hosts"] = firewall_ipv6_hosts
+
+    firewall_aws_ip_ranges = spec.get("firewall_aws_ip_ranges")
+    if isinstance(firewall_aws_ip_ranges, list) and firewall_aws_ip_ranges:
+        kwargs["firewall_aws_ip_ranges"] = firewall_aws_ip_ranges
 
     forward_ports = spec.get("forward_ports")
     if isinstance(forward_ports, list) and forward_ports:

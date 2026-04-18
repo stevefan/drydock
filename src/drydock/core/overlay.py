@@ -40,6 +40,7 @@ class OverlayConfig:
     secrets_container_dir: str = DEFAULT_SECRETS_CONTAINER_DIR
     firewall_extra_domains: list[str] = field(default_factory=list)
     firewall_ipv6_hosts: list[str] = field(default_factory=list)
+    firewall_aws_ip_ranges: list[str] = field(default_factory=list)
     tailscale_hostname: str = ""
     tailscale_authkey: str = ""
     tailscale_serve_port: int = 3000
@@ -213,6 +214,8 @@ def regenerate_overlay_from_workspace(
         kwargs["firewall_extra_domains"] = list(cfg["firewall_extra_domains"])
     if cfg.get("firewall_ipv6_hosts"):
         kwargs["firewall_ipv6_hosts"] = list(cfg["firewall_ipv6_hosts"])
+    if cfg.get("firewall_aws_ip_ranges"):
+        kwargs["firewall_aws_ip_ranges"] = list(cfg["firewall_aws_ip_ranges"])
     if cfg.get("forward_ports"):
         kwargs["forward_ports"] = list(cfg["forward_ports"])
     if cfg.get("claude_profile"):
@@ -266,6 +269,9 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
 
     if config.firewall_ipv6_hosts:
         env["FIREWALL_IPV6_HOSTS"] = " ".join(config.firewall_ipv6_hosts)
+
+    if config.firewall_aws_ip_ranges:
+        env["FIREWALL_AWS_IP_RANGES"] = " ".join(config.firewall_aws_ip_ranges)
 
     # Workspace identity labels as env vars for container introspection
     env["DRYDOCK_WORKSPACE_ID"] = ws.id
