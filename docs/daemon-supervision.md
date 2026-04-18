@@ -61,7 +61,7 @@ Write `~/.config/systemd/user/wsd.service`:
 
 ```ini
 [Unit]
-Description=Drydock workspace daemon
+Description=Drydock Harbor daemon
 After=default.target
 
 [Service]

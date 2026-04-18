@@ -1,8 +1,10 @@
-# Host bootstrap — provisioning a fresh Linux drydock host
+# Harbor bootstrap — provisioning a fresh Linux box as a Drydock Harbor
 
 Captures everything a fresh Linux box (Hetzner, EC2, bare metal, anything that can run Docker) needs before `ws create` will work. Tested on Ubuntu 24.04 LTS; Debian-family should be straightforward; other distros need adapter steps.
 
-The deterministic parts are scripted at [`scripts/bootstrap-linux-host.sh`](../scripts/bootstrap-linux-host.sh). The auth steps (Tailscale, GitHub, Claude) are interactive device flows — one-time per host.
+A **Harbor** is the machine that runs `wsd` and hosts drydocks (see [v2-design-vocabulary.md](v2-design-vocabulary.md)). This doc is about standing up that Linux host so it can become a Harbor. Low-level "host" terminology (linux host, docker host, host uid, `ws host init/check`) stays — those are OS-level concepts. "Harbor" is the product-level role the host plays.
+
+The deterministic parts are scripted at [`scripts/bootstrap-linux-host.sh`](../scripts/bootstrap-linux-host.sh). The auth steps (Tailscale, GitHub, Claude) are interactive device flows — one-time per Harbor.
 
 ---
 
@@ -12,7 +14,7 @@ The deterministic parts are scripted at [`scripts/bootstrap-linux-host.sh`](../s
 - Your SSH public key authorized on it
 - A Tailscale account
 - A GitHub account (HTTPS access via `gh` for cloning private repos)
-- A claude.ai subscription account (for in-desk Claude Code remote-control / interactive sessions)
+- A claude.ai subscription account (for in-drydock Claude Code remote-control / interactive sessions by Workers)
 
 ## What the bootstrap script does
 
@@ -28,66 +30,66 @@ Idempotent. Safe to re-run.
 
 After the script, `which ws && ws --version` should work.
 
-## Interactive steps (one-time per host)
+## Interactive steps (one-time per Harbor)
 
 ```bash
 # Tailscale — joins the tailnet
 tailscale up --hostname=<box-name>
 # (device flow — opens a URL; do it on your phone or any browser)
-# Once the tailnet ACL permits it, SSH into any desk with:
-#   tailscale ssh node@<desk>
+# Once the tailnet ACL permits it, SSH into any drydock with:
+#   tailscale ssh node@<drydock>
 
 # GitHub — for private-repo clones
 gh auth login --hostname github.com --git-protocol https --web
 gh auth setup-git    # configures git's credential helper
 
 # Claude Code (after your first ws create) — persists to the
-# `claude-code-config` named volume; subsequent desks on this host inherit
-docker exec -u node <container-id-of-any-desk> claude /login
+# `claude-code-config` named volume; subsequent drydocks on this Harbor inherit
+docker exec -u node <container-id-of-any-drydock> claude /login
 # (device flow)
 ```
 
-Why three separate logins: Tailscale, GitHub, and Anthropic are independent identity providers. Claude on Mac auto-shares its keychain credentials with you locally; on a remote box each gets a fresh device-flow auth.
+Why three separate logins: Tailscale, GitHub, and Anthropic are independent identity providers. Claude on Mac auto-shares its keychain credentials with you locally; on a remote Harbor each gets a fresh device-flow auth.
 
 ## Optional: Claude Code auth (for claude remote-control = Remote Sessions UI)
 
-The `claude remote-control` server (what surfaces a desk in your claude.ai Remote Sessions sidebar) requires **full-scope claude.ai OAuth state**. `ANTHROPIC_API_KEY` doesn't satisfy it; `claude setup-token` tokens (inference-only) don't either. The only way to produce that state is running `claude auth login` on some machine with a TTY.
+The `claude remote-control` server (what surfaces a drydock's Worker in your claude.ai Remote Sessions sidebar) requires **full-scope claude.ai OAuth state**. `ANTHROPIC_API_KEY` doesn't satisfy it; `claude setup-token` tokens (inference-only) don't either. The only way to produce that state is running `claude auth login` on some machine with a TTY.
 
-Good news: once you've done that on any machine (e.g. your Mac), you can **transplant the auth state to any drydock host** via two drydock secrets. `sync-claude-auth.sh` (in drydock-base v1.0.6+) picks them up at container startup, materializes them in the `claude-code-config` shared volume, and marks `/workspace` as trusted.
+Good news: once you've done that on any machine (e.g. your Mac), you can **transplant the auth state to any Harbor** via two drydock secrets. `sync-claude-auth.sh` (in drydock-base v1.0.6+) picks them up at container startup, materializes them in the `claude-code-config` shared volume, and marks `/workspace` as trusted.
 
 **Important: newer Claude Code versions no longer store credentials on disk.** On macOS, Claude Code now stores OAuth credentials exclusively in the macOS Keychain (service name `Claude Code-credentials`). The file `~/.claude/.credentials.json` no longer exists. Extract credentials from the keychain instead.
 
 The account-state file `~/.claude.json` (contains `organizationUuid`, selected model, etc.) still exists on disk and is still needed.
 
-**One-time per host (and re-run whenever your token refreshes):**
+**One-time per Harbor (and re-run whenever your token refreshes):**
 
 ```bash
 # On your Mac — extract credentials from macOS Keychain (always has the freshest tokens):
-security find-generic-password -s "Claude Code-credentials" -w | ws secret set <desk> claude_credentials
+security find-generic-password -s "Claude Code-credentials" -w | ws secret set <drydock> claude_credentials
 
 # Account state still lives on disk:
-ws secret set <desk> claude_account_state < ~/.claude.json
+ws secret set <drydock> claude_account_state < ~/.claude.json
 
-# Push both to the remote host:
-ws secret push <desk> --to root@<host>
+# Push both to the remote Harbor:
+ws secret push <drydock> --to root@<host>
 ```
 
-**Token refresh — empirical result (2026-04-17):** the container's `claude remote-control` refreshes tokens **in memory only** — the process stays alive past the file's `expiresAt`, but `.credentials.json` is NOT updated on disk. File-based consumers (other desks via `RequestCapability`, any process reading `/run/secrets/claude_credentials`) get stale tokens after ~8 hours.
+**Token refresh — empirical result (2026-04-17):** the container's `claude remote-control` refreshes tokens **in memory only** — the process stays alive past the file's `expiresAt`, but `.credentials.json` is NOT updated on disk. File-based consumers (other drydocks via `RequestCapability`, any process reading `/run/secrets/claude_credentials`) get stale tokens after ~8 hours.
 
 **Designed refresh mechanism:** periodic re-extraction from Mac keychain:
 ```bash
-security find-generic-password -s "Claude Code-credentials" -w | ws secret set <desk> claude_credentials
-ws secret push <desk> --to root@<host>
+security find-generic-password -s "Claude Code-credentials" -w | ws secret set <drydock> claude_credentials
+ws secret push <drydock> --to root@<host>
 ```
 Run every 6 hours via Mac launchd, or manually when remote-control auth errors surface. The Mac is the credential source of truth for file-based consumers. Remote-control itself self-sustains and doesn't need this.
 
 **Why not `claude auth login` inside the container?** `claude auth login` requires Ink raw-mode TTY support. Most SSH and `docker exec` PTY combinations do not satisfy this — the login flow hangs or renders garbled output. The keychain-extraction pattern above bypasses this limitation entirely.
 
-After the first container restart (or `ws create --force`) the desk registers with claude.ai. The `claude-code-config` volume is shared across all desks on a host, so any sibling desk gets the auth for free.
+After the first container restart (or `ws create --force`) the drydock registers with claude.ai. The `claude-code-config` volume is shared across all drydocks on a Harbor, so any sibling drydock gets the auth for free.
 
-**Per-desk?** Technically the secrets are per-desk in drydock's store, but the materialized auth lives in the host-shared `claude-code-config` volume. So you only *need* to do it once per host — on any desk — and all desks on that host share the login. Putting it on the first desk you create each host is the simplest mental model.
+**Per-drydock?** Technically the secrets are per-drydock in drydock's store, but the materialized auth lives in the Harbor-shared `claude-code-config` volume. So you only *need* to do it once per Harbor — on any drydock — and all drydocks on that Harbor share the login. Putting it on the first drydock you create each Harbor is the simplest mental model.
 
-**Without this:** `claude remote-control` loops with "must be logged in." Other claude usage inside the desk (scripted `claude --print`, smart operator via `--bare`) still works via `ANTHROPIC_API_KEY` independently.
+**Without this:** `claude remote-control` loops with "must be logged in." Other claude usage inside the drydock (scripted `claude --print`, smart operator via `--bare`) still works via `ANTHROPIC_API_KEY` independently.
 
 ## Optional: Tailscale admin API token
 
@@ -104,17 +106,17 @@ chmod 400 /root/.drydock/daemon-secrets/*
 
 See [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md) for the full lifecycle story.
 
-## Tailscale SSH into desks
+## Tailscale SSH into drydocks
 
-Once your tailnet ACL permits SSH, `tailscale ssh node@<desk>` is the canonical way to remote into a running desk. Notes from the auction-crawl deployment (2026-04-14 through 2026-04-16):
+Once your tailnet ACL permits SSH, `tailscale ssh node@<drydock>` is the canonical way to remote into a running drydock. Notes from the auction-crawl deployment (2026-04-14 through 2026-04-16):
 
-- **`safe.directory = *`** — drydock-base v1.0.8 sets `git config --global safe.directory '*'` inside desks. Without this, git refuses to operate in `/workspace` when the UID of the SSH session doesn't match the repo owner. The wildcard is acceptable in single-tenant agent containers; do not carry this pattern to shared hosts.
-- **ACL `check` vs `accept`** — Tailscale SSH ACLs support `action: "check"` (requires the connecting user to re-authenticate via the admin panel) and `action: "accept"` (trusts the tailnet identity directly). For personal drydock hosts, `accept` is simpler; for shared hosts or sensitive desks, `check` adds an interactive gate. Choose based on your threat model.
-- **PTY quality** — Tailscale SSH provides a better PTY than raw `docker exec -it`, which matters for tools like `claude` that use Ink/raw-mode rendering. If you need interactive Claude sessions inside a desk, prefer Tailscale SSH over docker exec.
+- **`safe.directory = *`** — drydock-base v1.0.8 sets `git config --global safe.directory '*'` inside drydocks. Without this, git refuses to operate in `/workspace` when the UID of the SSH session doesn't match the repo owner. The wildcard is acceptable in single-tenant agent containers; do not carry this pattern to shared hosts.
+- **ACL `check` vs `accept`** — Tailscale SSH ACLs support `action: "check"` (requires the connecting user to re-authenticate via the admin panel) and `action: "accept"` (trusts the tailnet identity directly). For personal Harbors, `accept` is simpler; for shared hosts or sensitive drydocks, `check` adds an interactive gate. Choose based on your threat model.
+- **PTY quality** — Tailscale SSH provides a better PTY than raw `docker exec -it`, which matters for tools like `claude` that use Ink/raw-mode rendering. If you need interactive Claude sessions inside a drydock, prefer Tailscale SSH over docker exec.
 
-## What's per-project (NOT host bootstrap)
+## What's per-project (NOT Harbor bootstrap)
 
-Once the host is bootstrapped, each project that wants a desk needs:
+Once the Harbor is bootstrapped, each project that wants a drydock needs:
 
 ```bash
 # Clone the project repo (via gh-mediated HTTPS)
@@ -126,7 +128,7 @@ repo_path: /root/src/<project>
 workspace_subdir: <subdir-if-monorepo>
 tailscale_hostname: <project>
 firewall_extra_domains:
-  - <hosts the desk legitimately needs>
+  - <hosts the drydock legitimately needs>
 extra_mounts:
   - source=ws-<project>-data,target=/workspace/data,type=volume
 EOF
@@ -139,7 +141,7 @@ echo -n "$ANTHROPIC_API_KEY" | ws secret set <project> anthropic_api_key
 ws create <project>
 ```
 
-If the project has source-of-truth state on another host (e.g. a SQLite DB on your Mac), seed the named volume before `ws create` — see `~/Notebooks/ops-personal/projects/Auction Crawl.md` (or your equivalent) for an example using `docker run --rm -v <vol>:/dst alpine cp ...`.
+If the project has source-of-truth state on another Harbor (e.g. a SQLite DB on your Mac), seed the named volume before `ws create` — see `~/Notebooks/ops-personal/projects/Auction Crawl.md` (or your equivalent) for an example using `docker run --rm -v <vol>:/dst alpine cp ...`.
 
 ## What drydock could automate (but doesn't yet)
 
@@ -152,10 +154,10 @@ If the project has source-of-truth state on another host (e.g. a SQLite DB on yo
 | Tailscale device API token | Must be generated in the tailnet admin UI (no programmatic flow today). | Could prompt with the URL when the token file is missing; eventually OAuth client tokens auto-rotate. |
 | Claude `/login` | Interactive device flow inside the container. | Could prompt "Run `claude /login` in this container before ws exec --interactive"; not much more drydock can add. |
 
-The honest split: drydock owns desk lifecycle. Host setup is one layer below. The bootstrap script bridges that gap, and `ws host init` / `ws host check` would be the modest drydock-side extensions worth landing in v1.x or v2.
+The honest split: drydock owns drydock lifecycle. Harbor setup is one layer below. The bootstrap script bridges that gap, and `ws host init` / `ws host check` would be the modest drydock-side extensions worth landing in v1.x or v2.
 
 ## Reference deployment
 
-`drydock-hillsboro` — Hetzner Cloud, Hillsboro OR. Documented at `~/Notebooks/ops-personal/tech/Drydock Fleet.md`. Used for the auction-crawl daily scraper. End-to-end deployment story in `~/Notebooks/ops-personal/projects/Auction Crawl.md`.
+Harbor `drydock-hillsboro` — Hetzner Cloud, Hillsboro OR. Documented at `~/Notebooks/ops-personal/tech/Drydock Fleet.md`. Used for the auction-crawl daily scraper. End-to-end deployment story in `~/Notebooks/ops-personal/projects/Auction Crawl.md`.
 
-Bootstrap-to-first-desk on a fresh CX22-class box: ~15 minutes, mostly waiting on docker/tailscale apt installs.
+Bootstrap-to-first-drydock on a fresh CX22-class box: ~15 minutes, mostly waiting on docker/tailscale apt installs.

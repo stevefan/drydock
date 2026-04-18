@@ -1,6 +1,6 @@
 # V2 Design — Tailnet Identity Lifecycle
 
-**Purpose.** Pin the daemon's responsibility for **tailnet device records** as part of desk lifecycle. Today drydock owns per-node tailnet auth (`tailscale up --authkey`) and per-node logout (`tailscale logout`) but **not** the device record on Tailscale's control plane. Logging a node out doesn't delete its device record — that requires an explicit Tailscale API call. V2's daemon, as authoritative owner of desk lifecycle, closes this loop.
+**Purpose.** Pin the daemon's responsibility for **tailnet device records** as part of drydock lifecycle. Today drydock owns per-node tailnet auth (`tailscale up --authkey`) and per-node logout (`tailscale logout`) but **not** the device record on Tailscale's control plane. Logging a node out doesn't delete its device record — that requires an explicit Tailscale API call. V2's daemon, as authoritative owner of drydock lifecycle, closes this loop.
 
 Extends `v2-scope.md` — adds tailnet identity cleanup to the V2 deliverables list.
 Extends `v2-design-state.md` §1a — adds two audit events to the schema.
@@ -11,34 +11,34 @@ Extends `v2-design-state.md` §1a — adds two audit events to the schema.
 
 Tailscale's `tailscale logout` releases the node-side auth state. It does **not** delete the device record from the tailnet admin. Per Tailscale's design, the device remains as an "offline" record indefinitely until explicitly removed via the admin UI or the Tailscale API.
 
-Concrete symptom (observed 2026-04-14): the Mac auction-crawl desk was `ws stop`'d, drydock called `tailscale logout` correctly, but the `auction-crawl` device record remained in the tailnet admin. When a new desk on Hetzner came up with the same configured hostname, Tailscale auto-renamed it to `auction-crawl-1`. Identity continuity broken; canonical hostname lost.
+Concrete symptom (observed 2026-04-14): the Mac auction-crawl drydock was `ws stop`'d, drydock called `tailscale logout` correctly, but the `auction-crawl` device record remained in the tailnet admin. When a new drydock on Hetzner came up with the same configured hostname, Tailscale auto-renamed it to `auction-crawl-1`. Identity continuity broken; canonical hostname lost.
 
-Drydock owns desk lifecycle in V2. Tailnet identity IS desk identity (the per-node hostname IS the audit principal in tailnet logs, the SSH target, the firewall identity). Letting it linger contradicts the "desks as durable addressable places" promise.
+The daemon owns drydock lifecycle in V2. Tailnet identity IS drydock identity (the per-node hostname IS the audit principal in tailnet logs, the SSH target, the firewall identity). Letting it linger contradicts the "drydocks as durable addressable places" promise.
 
 ## 2. Scope
 
 V2 adds:
 
 - **Daemon-side tailnet device deletion** as part of `DestroyDesk` cleanup (and cascaded child destroys).
-- **Daemon-level admin credential** (Tailscale API token), stored as daemon-internal infrastructure — NOT a per-desk capability.
+- **Daemon-level admin credential** (Tailscale API token), stored as daemon-internal infrastructure — NOT a per-drydock capability.
 - **Two new audit events** (`tailnet.device_deleted`, `tailnet.device_delete_failed`) extending the schema in `v2-design-state.md` §1a.
 - **One admin RPC** (`PruneStaleTailnetDevices`) for batch cleanup of orphaned records.
-- **V1 coexistence**: host-mode `ws destroy` calls the same primitive when daemon is configured with a token; behavior unchanged when no token is configured.
+- **V1 coexistence**: Harbor-mode `ws destroy` calls the same primitive when daemon is configured with a token; behavior unchanged when no token is configured.
 
 V2 does **not** add:
 
-- Tailnet ACL management (separate concern, multi-host policy surface).
-- Per-desk Tailscale-side device authorization workflows.
+- Tailnet ACL management (separate concern, multi-Harbor policy surface).
+- Per-drydock Tailscale-side device authorization workflows.
 - A `TAILNET_DEVICE` capability type. See §3 for why this is the wrong abstraction.
 
 ## 3. Why the API token is daemon-level, not a capability
 
-The admin token grants "delete any device on this tailnet." No desk should hold that authority — it's a fleet-wide sysadmin credential. Modeling it as a `CapabilityType.TAILNET_ADMIN` lease (per the capability-broker shape) would either:
+The admin token grants "delete any device on this tailnet." No drydock should hold that authority — it's a fleet-wide sysadmin credential. Modeling it as a `CapabilityType.TAILNET_ADMIN` lease (per the capability-broker shape) would either:
 
-(a) require every desk to hold the lease — wrong, blast-radius explosion, and
-(b) require special-casing to ensure no desk holds it — exactly the "scoped entitlements that aren't in `DeskPolicy`" anti-pattern Codex flagged in the rule-5 review.
+(a) require every drydock to hold the lease — wrong, blast-radius explosion, and
+(b) require special-casing to ensure no drydock holds it — exactly the "scoped entitlements that aren't in `DeskPolicy`" anti-pattern Codex flagged in the rule-5 review.
 
-The cleaner framing: the token is **daemon-internal infrastructure**, like the daemon's own SQLite database access. The daemon uses it on behalf of the lifecycle operations it owns; no desk-facing API exposes it.
+The cleaner framing: the token is **daemon-internal infrastructure**, like the daemon's own SQLite database access. The daemon uses it on behalf of the lifecycle operations it owns; no drydock-facing API exposes it.
 
 ## 4. Credential storage
 
@@ -81,13 +81,13 @@ def destroy_desk(desk_id):
             # Destroy still succeeds — daemon-side teardown completed.
 ```
 
-**Failure semantics**: best-effort. Tailnet API failure does not roll back the destroy. The desk is gone from drydock's authoritative state; the orphaned tailnet record is recoverable via `PruneStaleTailnetDevices`.
+**Failure semantics**: best-effort. Tailnet API failure does not roll back the destroy. The drydock is gone from Harbor's authoritative state; the orphaned tailnet record is recoverable via `PruneStaleTailnetDevices`.
 
 ### 5.2 `CreateDesk` — optional device-id caching (defer to V2.1)
 
 V2.0: don't cache device ID. The destroy-time `find_device_by_hostname` lookup is one Tailscale API call; cheap.
 
-V2.1+: optionally cache `tailnet_device_id` in the `desks` table after `tailscale up` succeeds. Avoids the lookup, but adds registry state and a write-after-up-succeeds step. Not load-bearing for V2.
+V2.1+: optionally cache `tailnet_device_id` in the `workspaces` table after `tailscale up` succeeds. Avoids the lookup, but adds registry state and a write-after-up-succeeds step. Not load-bearing for V2.
 
 ### 5.3 `PruneStaleTailnetDevices` (admin RPC)
 
@@ -109,7 +109,7 @@ PruneStaleTailnetDevices {
 }
 ```
 
-Logic: enumerate `GET /api/v2/tailnet/{tailnet}/devices`, match each against `desks` registry by hostname, mark for deletion any whose hostname matches the drydock pattern but doesn't correspond to a live desk.
+Logic: enumerate `GET /api/v2/tailnet/{tailnet}/devices`, match each against the `workspaces` registry by hostname, mark for deletion any whose hostname matches the drydock pattern but doesn't correspond to a live drydock.
 
 CLI: `ws tailnet prune` (alias of dry-run); `ws tailnet prune --apply`. Both list candidates first, before action.
 
@@ -129,9 +129,9 @@ Both extend the existing audit framework. No new audit primitives. The `result` 
 | Mode | Behavior |
 |---|---|
 | Pure V1 (no daemon) | `ws destroy` → `tailscale logout` → tailnet record persists. Same as today. |
-| V2 daemon + token configured | `ws destroy` (host-mode CLI routes to daemon) → daemon executes destroy → tailnet device deleted. |
+| V2 daemon + token configured | `ws destroy` (Harbor-mode CLI routes to daemon) → daemon executes destroy → tailnet device deleted. |
 | V2 daemon, no token configured | Same as V1: logout but no device delete. Daemon logs the absence at startup. |
-| V1 → V2 migration | Per the V2 on-ramp (`destroy + create` — see overview's Decisions deferred), V1 desks are destroyed and re-created. The destroy step under V2 deletes the tailnet record. V1-era device records orphaned by previous force-removed containers are cleaned up via `ws tailnet prune --apply`. |
+| V1 → V2 migration | Per the V2 on-ramp (`destroy + create` — see overview's Decisions deferred), V1 drydocks are destroyed and re-created. The destroy step under V2 deletes the tailnet record. V1-era device records orphaned by previous force-removed containers are cleaned up via `ws tailnet prune --apply`. |
 
 ## 8. V1.x backport path
 
@@ -158,7 +158,7 @@ This backport is **scoped as a separate v1.x release**, not part of the v2 daemo
 
 ## 10. Open questions deferred
 
-- **Multi-tailnet support**: a daemon handling desks across multiple tailnets. V2 assumes one tailnet per daemon, configured in `wsd.toml`. Revisit if the need surfaces.
+- **Multi-tailnet support**: a daemon handling drydocks across multiple tailnets. V2 assumes one tailnet per daemon, configured in `wsd.toml`. Revisit if the need surfaces.
 - **Tailscale OAuth client tokens vs. user API tokens**: OAuth clients (auto-issued from a tailnet) avoid manual rotation. V2 accepts user API tokens; OAuth-client integration is a v2.1 ergonomic improvement, not architectural.
 - **Reauth flow when admin token expires mid-destroy**: V2 logs and proceeds (best-effort). An alerting hook can be added later if this becomes noisy.
 

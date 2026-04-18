@@ -1,74 +1,83 @@
-# V2 Design — Vocabulary Reconciliation
+# Drydock — Vocabulary
 
-**Purpose.** Pin the vocabulary V2 uses consistently across code, docs, and RPC surface. This is a narrow but load-bearing decision: it fixes how the daemon names what it owns, how the registry schema is organized, and how audit entries read.
+**Purpose.** Pin the vocabulary Drydock uses consistently across product docs, design specs, and the RPC surface. Code identifiers (`ws`, `wsd`, `ws_<slug>`, `Workspace` class, `workspaces` SQLite table) are frozen — renaming them would be cosmetic churn — but every human-facing surface uses the vocabulary below.
 
-## Current inconsistency
-
-Three sets of terms coexist across the corpus:
-
-| Source | Terms used |
-|---|---|
-| `vision.md`, `v2-scope.md` | "workspace" (technical artifact) / "agent-desk" (conceptual framing); used somewhat interchangeably |
-| CLI + registry | `workspace`, `ws_<name_slug>` ids, `workspaces` SQLite table |
-| Slip-box note `Drydock vocabulary - project desk session.md` | **Project → Desk → Session** as three distinct layers |
-| Limitless transcript `Drydock — Agent Workspace Orchestration` | "workspace" as the durable unit |
-
-The slip-box three-layer split is the most structured proposal and is foundational enough that several other design decisions (policy scoping, audit principal, RPC namespace) depend on which vocabulary V2 commits to.
-
-## Decision
-
-V2 adopts the three-layer model from the slip-box, with one concession to the v1 codebase: **"workspace" remains the technical-artifact identifier** (`ws_<name>`, `workspaces` table) because renaming is cosmetic churn and v1 has already shipped the term. At every other level — user-facing docs, daemon RPC surface, audit log — the three layers are named explicitly.
+## The four layers
 
 | Layer | Canonical name | What it is | What it owns |
 |---|---|---|---|
-| 1 | **Project** | YAML description + work-identity | Immutable config template (`drydock/projects/<project>.yaml`), repo path, policy template, declared capabilities and secrets. Multiple desks can derive from one project. |
-| 2 | **Desk** | Concrete runtime instance — a durable addressable place | Container lifecycle, git worktree, policy scope, registry row (aka "workspace" technically), named volumes, audit principal, token, branch, accumulated state |
-| 3 | **Session** | An attached client (agent or human) connected to a desk | Ephemeral. Multiple sessions may attach to one desk concurrently. Drydock does not own session state |
+| 1 | **Harbor** | The host machine (laptop, home server, Hetzner VM) running `wsd`. Authority lives here. | The daemon, the registry, policy state, capability-broker leases, audit log, daemon-level admin secrets. One `wsd` per harbor. |
+| 2 | **Project** | YAML description + work-identity. | Immutable config template (`~/.drydock/projects/<project>.yaml`), repo path, policy template, declared capabilities, entitlements, and delegations. Multiple drydocks can derive from one project. |
+| 3 | **DryDock** | A durable, bounded work environment — the runtime unit. | Container lifecycle, git worktree, policy scope, registry row, named volumes, audit principal, bearer token, branch, accumulated tooling state. Persistent across container rebuilds. |
+| 4 | **Worker** | The agent bound to a drydock — the thing that actually does work. | Claude Code remote-control process, cron-invoked operator, research agent, schedule job. A worker is durable per-drydock but containers are its body, not its identity. |
 
-The v1 identifier `ws_<slug>` remains. Read it as **"workspace id"** = **"desk id"** — same thing.
+Sessions (ephemeral human or agent attachments to a drydock — IDE windows, SSH connections, claude.ai/code sessions) are explicitly *not* first-class. Multiple sessions can attach concurrently; Drydock does not track them.
 
-## What each layer owns — implications
+## The metaphor
 
-### Project
-- Lives in YAML only; no runtime representation.
-- Multiple desks per project is `ws create <project> <desk-name-2>`.
-- `<desk-name>` defaults to `<project>` when omitted (common case: one desk per project).
-
-### Desk (the daemon's primary entity)
-- Policy scoping happens at **desk** level. Capability grants, firewall allowlists, delegatable-secrets lists, delegatable-firewall-domains — all keyed on desk id.
-- Audit principal = desk id. "Desk `scraper-desk` requested `ebay.com` at 14:23" is the canonical log shape.
-- Parent-child relationships live between desks. A parent desk spawns a child desk. Sessions don't spawn anything.
-- Bearer tokens are issued per desk. Multiple sessions attached to the same desk present the same token.
-
-### Session
-- Explicitly **out of Drydock's scope.** Agent-to-agent coordination within a desk (two Claudes editing the same repo, pair-agent patterns, reviewer/actor) is a substrate/orchestrator problem, not a daemon problem.
-- The daemon does not track session count, session attribution, or per-session policy. If two sessions on one desk both call `RequestCapability`, the daemon sees both calls as coming from the same desk with the same token.
-- **Multi-user note (deferred):** when principals become explicit, a session carries a `principal_id`. The token → `(principal_id, desk_id)` lookup remains at desk-level; per-session policy is never added.
+A harbor contains multiple drydocks. A drydock is a bounded place where work gets done on a vessel, fitted with what that work needs. A worker operates in the drydock. The vessel (project code, data, in-flight tasks) stays across many sessions of work.
 
 ## Canonical phrasings
 
-- "Spawn a desk" / "create a desk" — correct.
-- "Spawn a session" — wrong; sessions attach, not spawn.
-- "Desk X is a child of desk Y" — correct.
-- "Workspace X" — acceptable in code and registry contexts; prefer "desk X" in user-facing docs.
-- "Project microfoundry has three desks" — correct.
-- "Session has a policy" — wrong; desk has the policy.
+- "Harbor `drydock-hillsboro` runs `wsd`" — correct.
+- "Create a drydock" / "spawn a drydock" — correct.
+- "DryDock `auction-crawl` has a worker named remote-control" — correct.
+- "The worker requested a lease" — correct (audit records `desk_id` but the *agent* doing it is a worker).
+- "Workspace X" — acceptable in code and registry contexts where the technical artifact is what's meant; in product docs prefer "drydock".
+- "Employee worker" — a specific class of Worker: long-running, permissioned, judgment-capable, lives on Harbor infra (distinct from interactive Claude on a laptop and from deterministic cron). The original `drydock-employee` pattern.
 
-## Migration of existing docs
+## Mapping to code / registry / RPC (unchanged)
 
-Low-priority follow-up, not V2 blocker:
+| Product term | Code identifier |
+|---|---|
+| Harbor | the host running `wsd`; no separate identifier |
+| Project | `ProjectConfig` dataclass; `~/.drydock/projects/<name>.yaml` |
+| DryDock | `Workspace` class; `workspaces` SQLite table; `ws_<slug>` ids |
+| Worker | not first-class in v2 code; represented by the processes running inside a drydock (remote-control supervisor, cron job invocations, etc.) |
+| Session | not first-class; implicit in any attached client |
 
-- `vision.md` already introduces both terms. Amend to explicitly cite the three-layer split with a pointer here.
-- `v2-scope.md` uses "desk" consistently in the V2 section. Fine.
-- `getting-started.md` uses "workspace" throughout. Acceptable — that's a user-facing CLI doc and `ws` is the command.
-- `secrets-design.md`, `secrets-roadmap.md` use "workspace" in `per-workspace` constructions. Keep — it's the v1 scoping keyword.
+The v1 identifier `ws_<slug>` remains. Read it as **"workspace id"** = **"drydock id"** — same thing. CLI commands (`ws create`, `ws stop`, etc.) keep the `ws` prefix because `drydock` as a CLI prefix would collide with the project name and add no value.
 
-No rename of identifiers (`ws_<slug>`, `workspaces` table). Pure documentation alignment.
+## Why these layers earn their naming
+
+- **Harbor vs DryDock.** The daemon runs on a host; the host contains multiple work environments; separating them linguistically mirrors what Drydock's design enforces (host-authoritative state vs drydock-scoped state).
+- **DryDock vs Worker.** A drydock is a *place*; a worker is an *agent*. The same drydock can have successive workers (as tokens rotate, as agent generations replace each other) or a long-lived worker (the employee pattern). Separating them prevents the "is the desk the agent?" confusion the earlier `desk` + `occupant` split tried to patch.
+- **Project vs DryDock.** A project declares what a drydock should be; drydocks are instances. Many drydocks can share one project (`ws create microfoundry auction-crawl` and `ws create microfoundry experimental-auction-crawl` are two drydocks of the same project).
+
+## Implications that earn explicit callouts
+
+### Harbor owns authority
+- Policy validation, capability leases, audit emission, token issuance — all Harbor-level operations performed by `wsd`. The drydock is *subject* to these; it doesn't make them.
+- Fleet-level admin secrets (`~/.drydock/daemon-secrets/`) live at Harbor scope — not per-drydock.
+- One `wsd` per Harbor. Multi-daemon single-host is out of scope.
+
+### DryDock owns durable state
+- Policy scoping happens at drydock level. Capability grants, firewall allowlists, delegatable secrets, delegatable firewall domains — all keyed on drydock id.
+- Audit principal = drydock id. "DryDock `auction-crawl` requested `ebay.com` at 14:23" is the canonical log shape.
+- Parent-child relationships live between drydocks. A parent drydock spawns a child drydock. Workers don't spawn anything directly — they ask Harbor (via `wsd`) to spawn on their behalf.
+- Bearer tokens are issued per drydock. Multiple workers / sessions inside the same drydock present the same token.
+
+### Worker is the agent abstraction
+- A Worker is who's actually doing work — Claude Code remote-control, a cron-invoked scraper, a smart operator. Always bound to exactly one drydock.
+- Worker lifetime is independent of container lifetime: the drydock can rebuild its container (base image bump, upgrade) without losing the Worker's logical identity.
+- Worker classes emerge as a useful product abstraction: `employee-worker` (long-running, high-trust, narrow capabilities), `interactive-worker` (short-lived, human-driven), `batch-worker` (scheduled, deterministic). V2 doesn't formalize these as daemon types; product surfaces may.
+
+### Session is explicitly out of scope
+- Agent-to-agent coordination within a drydock (two Claudes editing the same repo, pair-agent patterns, reviewer/actor) is a substrate/orchestrator problem, not a Harbor problem.
+- The daemon does not track session count, session attribution, or per-session policy. If two sessions on one drydock both call `RequestCapability`, `wsd` sees both calls as coming from the same drydock with the same token.
+- **Multi-user note (deferred):** when principals become explicit, a session carries a `principal_id`. The token → `(principal_id, desk_id)` lookup remains at drydock-level; per-session policy is never added.
+
+## Historical note
+
+Earlier drafts of these docs used **workspace** / **desk** / **agent-desk** for the concept now called **DryDock**, and **occupant** for what's now called **Worker**. The older vocabulary came from a slip-box note titled *Drydock vocabulary — project desk session*; the three-layer split that doc pushed is preserved here (Project / DryDock / Worker), just renamed. The language shift landed 2026-04-17 after a session exploring the Harbor/DryDock/Worker framing and finding it cleaner than the desk/occupant anthropomorphism. Code identifiers (`ws_<slug>`, `workspaces` table, `Workspace` class) were intentionally left unchanged.
+
+In-flight references in archived documents (notably `_archive/migration-vision.md`) and in older agent-session logs use the older terms. They are correct for their point in time; don't mass-rewrite them.
 
 ## Reversibility
 
-| Decision | Cost of reversing | Notes |
-|---|---|---|
-| Three-layer Project/Desk/Session split | **Medium** | Once daemon RPC surface encodes the split (capabilities keyed on desk, audit principal = desk, tokens per desk), the layering is expensive to change. The split itself is load-bearing; the naming on top of it is cheap. |
-| Keeping `ws_<slug>` as the technical id | Low | Pure naming; can alias later if needed. |
-| Session as explicitly out-of-scope | Medium | If session-level policy becomes required (per-user secrets scoping, per-session audit), we'd need to extend the token model from desk-only to desk-plus-principal. Multi-user sketch already reserves this extension. |
+| Decision | Cost of reversing |
+|---|---|
+| Harbor / DryDock / Worker product vocabulary | Low — pure documentation. Code identifiers untouched. |
+| Three-layer Project / DryDock / (Worker\|Session) split | Medium — the daemon RPC surface encodes the split (capabilities keyed on drydock, audit principal = drydock, tokens per drydock). The split is load-bearing; the naming on top of it is cheap. |
+| Keeping `ws_<slug>` as technical id | Low — pure naming; can alias later if needed. |
+| Session as explicitly out of scope | Medium — if session-level policy becomes required, the token model extends from drydock-only to drydock-plus-principal. Multi-user sketch already reserves this extension. |

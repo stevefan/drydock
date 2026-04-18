@@ -2,7 +2,7 @@
 
 ## drydock-base:v1.0.7 — postStart chain breaks silently in verify block
 
-**Observed:** 2026-04-16, ASI workspace, drydock-base:v1.0.7. Reproduced across two destroy/recreate cycles of the same workspace on the same host.
+**Observed:** 2026-04-16, ASI drydock, drydock-base:v1.0.7. Reproduced across two destroy/recreate cycles of the same drydock on the same Harbor.
 
 **Symptom:** After `ws create`, container is running and firewall is applied, but `tailscale` is `disconnected` and `supervisor` / `refresh_supervisor` are `dead` — the postStart `&&` chain never reaches `start-tailscale.sh` or `start-remote-control.sh`.
 
@@ -20,7 +20,7 @@ No `Firewall verification passed ...`, no `ERROR:`, no `=== Firewall init comple
 
 **To diagnose:** run `sudo bash -x /usr/local/bin/init-firewall.sh 2>&1 | tee /tmp/fw-trace.log` inside a fresh v1.0.7 container with ASI's `FIREWALL_EXTRA_DOMAINS` set. The `-x` trace will show the exact failing line.
 
-**Workaround (per-workspace, non-persistent):**
+**Workaround (per-drydock, non-persistent):**
 ```
 docker exec <container> /usr/local/bin/start-tailscale.sh
 docker exec -d <container> /usr/local/bin/start-remote-control.sh
@@ -42,6 +42,6 @@ docker exec -d <container> /usr/local/bin/start-remote-control.sh
 
 **Verified:** Fresh v1.0.9 container with full ASI `FIREWALL_EXTRA_DOMAINS` env runs end-to-end with the new "Firewall verification passed - able to reach pypi.org (HTTP 200)" line + "init-firewall EXIT rc=0" trap message at the tail. Trap mechanism independently verified by deliberate `false` injection (ERR caught line + cmd, EXIT caught rc=1, both reached the log file before process exit).
 
-**To consume on asi:** bump `~/Unified Workspaces/asi/.devcontainer/drydock/Dockerfile` FROM line to `:v1.0.9` and recreate the workspace. (asi's bump committed separately in the asi repo.)
+**To consume on asi:** bump `~/Unified Workspaces/asi/.devcontainer/drydock/Dockerfile` FROM line to `:v1.0.9` and recreate the drydock. (asi's bump committed separately in the asi repo.)
 
-**Future bug recurrence:** if the asi (or any other) workspace fails postStart on v1.0.9+, `/tmp/firewall.log` will contain either an `=== init-firewall EXIT rc=N` line (with N = exit code) and probably an `!!! ERR line=L rc=R cmd=[…]` line above it. That data will pin the failing command for the next round of investigation.
+**Future bug recurrence:** if the asi (or any other) drydock fails postStart on v1.0.9+, `/tmp/firewall.log` will contain either an `=== init-firewall EXIT rc=N` line (with N = exit code) and probably an `!!! ERR line=L rc=R cmd=[…]` line above it. That data will pin the failing command for the next round of investigation.

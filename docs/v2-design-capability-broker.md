@@ -8,7 +8,7 @@ Extends `v2-scope.md` §Policy validation, `secrets-design.md` §End state, `sec
 
 ## 1. Why generalize from day one
 
-V2's immediate need is secrets. V4's need (per `project_v4_cloud_fabric.md`) is storage mounts, compute quotas, network reachability tokens — all the same shape: daemon issues a time-bounded lease; desk presents it to use the capability; lease expires or is revoked.
+V2's immediate need is secrets. V4's need (per `project_v4_cloud_fabric.md`) is storage mounts, compute quotas, network reachability tokens — all the same shape: daemon issues a time-bounded lease; drydock presents it to use the capability; lease expires or is revoked.
 
 The cost of a secrets-only API in V2 is a mandatory breaking change in V4. The cost of generalizing is one extra abstraction — `Capability` as a sum type, `SECRET` as one variant. V2 ships only `SECRET`; later types plug in additively.
 
@@ -30,8 +30,8 @@ class CapabilityLease:
 
 **Notes.**
 
-- `expiry` for V2 `SECRET` leases: **None by default** — leases live until desk destroy or explicit `ReleaseCapability`. Matches Phase-1 file-backed semantics (files are readable for the life of the desk). Finite-expiry + auto-renew machinery is reserved for V4 cloud credentials, which need rotation by design; V2 secrets don't. Clients may pass an explicit `ttl` for test scenarios, but no V2 caller relies on it.
-- `issuer` field preserved for forward-compat (e.g., `wsd@hostname` if a thin multi-host case surfaces). V2 always emits `"wsd"`.
+- `expiry` for V2 `SECRET` leases: **None by default** — leases live until drydock destroy or explicit `ReleaseCapability`. Matches Phase-1 file-backed semantics (files are readable for the life of the drydock). Finite-expiry + auto-renew machinery is reserved for V4 cloud credentials, which need rotation by design; V2 secrets don't. Clients may pass an explicit `ttl` for test scenarios, but no V2 caller relies on it.
+- `issuer` field preserved for forward-compat (e.g., `wsd@harbor` if a thin multi-Harbor case surfaces). V2 always emits `"wsd"`.
 - **No `parent_lease_id` field** in V2. Earlier drafts reserved it for a "parent sub-lets to child" flow, but V2 enforces narrowness at `SpawnChild` time via the validator — children get independent leases against their own entitlements. If sub-letting ever becomes needed, add the field then.
 - **No `scope_version` field** in V2. Codex review flagged the unversioned `dict` as a HIGH-reversibility risk. Mitigation in V2: treat `scope` as **append-only per type** (never rename keys, never narrow value types). When V4 ships its first new type, that iteration defines the versioning model.
 
@@ -41,7 +41,7 @@ V2 implements one; the rest are enum-reserved.
 
 | Type | V2 status | Notes |
 |---|---|---|
-| `SECRET` | **Implemented** | `scope = {secret_name: str}`. Phase 2 broker; exposed to desk as file at `/run/secrets/<secret_name>`. |
+| `SECRET` | **Implemented** | `scope = {secret_name: str}`. Phase 2 broker; exposed to the drydock as file at `/run/secrets/<secret_name>`. |
 | `STORAGE_MOUNT` | Enum-reserved | V4 cloud storage. Daemon rejects with `capability_unsupported`. Scope shape not committed. |
 | `COMPUTE_QUOTA` | Enum-reserved | V4. Scope shape not committed — real quotas need metering, not just numeric subset. |
 | `NETWORK_REACH` | Enum-reserved | V4. Scope shape not committed — needs external services, ports, egress classes. |
@@ -83,7 +83,7 @@ def validate_spawn(
 3. **Capability narrowness:** `child.capabilities ⊆ parent.capabilities`.
 4. **Mount narrowness:** `child.extra_mounts ⊆ parent.extra_mounts`. The parent can only pass on mounts it already has. This covers the forcing-function case (parent has vault mount; child-scraper doesn't declare it → child can't reach vault).
 
-**Resource budgets deferred.** `v2-scope.md` mentioned a rule 4 "resource limits" (parent CPU/memory/child-count budget debited on spawn). Dropped from V2: the V2 forcing function is a single monorepo with a handful of children; budget caps are premature. Reinstate when a desk genuinely burns shared host resources. Until then, container-level resource limits are the mechanism.
+**Resource budgets deferred.** `v2-scope.md` mentioned a rule 4 "resource limits" (parent CPU/memory/child-count budget debited on spawn). Dropped from V2: the V2 forcing function is a single monorepo with a handful of children; budget caps are premature. Reinstate when a drydock genuinely burns shared Harbor resources. Until then, container-level resource limits are the mechanism.
 
 **Return shape:**
 ```python
@@ -126,7 +126,7 @@ Not worth writing: default-value assertions on dataclass fields, mock verificati
 ## 6. Capability revocation and policy change (addresses OQ#4)
 
 ### 6a. Parent destroyed → cascade
-- Child desks destroyed first (existing `v2-scope.md` cascade).
+- Child drydocks destroyed first (existing `v2-scope.md` cascade).
 - Outstanding child leases invalidated in memory + persisted `revoked=true`.
 - Post-destroy capability requests from children return `parent_destroyed`.
 
@@ -139,7 +139,7 @@ Operator edits project YAML. V2 does **not** do live cascade reconciliation:
 
 ### 6c. Lease expiry
 - Expiries indexed in SQLite; background sweeper every 30s marks expired leases revoked and emits audit event.
-- Desk's next request for an expired lease sees `lease_expired` and can renew.
+- Drydock's next request for an expired lease sees `lease_expired` and can renew.
 
 **Why not re-validate on parent grant.** Grants only widen the parent's delegatable set; children with narrower entitlements remain valid.
 
@@ -177,7 +177,7 @@ Default `file`. Unknown backend: `ws create` rejects with `unknown_secrets_backe
 
 Lease semantics are backend-independent: `RequestCapability(type=SECRET, ...)` returns the same `CapabilityLease` shape regardless of backend.
 
-**Threat-model note for file-backed.** The "personal-fleet scale" framing of the V2.0 secrets-backend decision (see status block in `v2-design-overview.md`, 2026-04-16 entry) is right for backend choice but undersells secret density per host. The drydock-employee pattern (see `project_drydock_employee_pattern.md`) means N permissioned long-running agents per host, each holding its own entitlement set — `~/.drydock/secrets/` grows in agents × secrets, not in hosts. 0400 perms + OS-level disk encryption (FileVault on Mac, LUKS on Linux) are the load-bearing controls; daemon-level encryption-at-rest is defense-in-depth against root processes only. Worth restating in any future explicit threat-model doc.
+**Threat-model note for file-backed.** The "personal-fleet scale" framing of the V2.0 secrets-backend decision (see status block in `v2-design-overview.md`, 2026-04-16 entry) is right for backend choice but undersells secret density per Harbor. The drydock-employee pattern (see `project_drydock_employee_pattern.md`) means N permissioned long-running workers per Harbor, each holding its own entitlement set — `~/.drydock/secrets/` grows in workers × secrets, not in Harbors. 0400 perms + OS-level disk encryption (FileVault on Mac, LUKS on Linux) are the load-bearing controls; daemon-level encryption-at-rest is defense-in-depth against root processes only. Worth restating in any future explicit threat-model doc.
 
 ## 8. Reversibility audit
 

@@ -1,5 +1,7 @@
 # Changelog
 
+> **Vocabulary note (2026-04-17):** Entries below predate the Harbor / DryDock / Worker product-vocabulary shift and are preserved verbatim as history. In current vocabulary: "host" (the machine running `wsd`) is a **Harbor**, "agent-desk" / "workspace" (product concept) is a **DryDock**, and the agent running inside is a **Worker**. Code identifiers (`ws_<slug>`, `workspaces` table, `Workspace` class, CLI `ws` prefix) are unchanged. See [v2-design-vocabulary.md](v2-design-vocabulary.md).
+
 ## v0.1.0 — 2026-04-13
 
 First tagged release. V1 + V1.5 shipped. Covers the full "spawn sandboxed agent-desks and use them from anywhere" use case for a single user on a single host.

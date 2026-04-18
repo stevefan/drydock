@@ -6,13 +6,13 @@ Sibling to `docs/secrets-roadmap.md` (Phase 1 → 4) and `docs/v2-scope.md`. Thi
 
 ## The problem
 
-Drydock desks need to restrict outbound network access to a per-project allowlist (the `firewall_extra_domains` + base allowlist plumbing that already exists). Today's implementation is `init-firewall.sh` inside each desk: iptables with a default-DROP OUTPUT policy and an ipset-based allowlist, baked into the desk's devcontainer.
+Drydocks need to restrict outbound network access to a per-project allowlist (the `firewall_extra_domains` + base allowlist plumbing that already exists). Today's implementation is `init-firewall.sh` inside each drydock: iptables with a default-DROP OUTPUT policy and an ipset-based allowlist, baked into the drydock's devcontainer.
 
 Two things motivated capturing a decision here:
 
 1. **The 2026-04-15 blanket-443 bug** — a blanket `iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT` rule (originally added because AWS VPN uses 443) was silently defeating the ipset allowlist for ALL HTTPS destinations. Diagnostic logs showed 227+ packets hitting the blanket rule; the DROP terminator saw zero. Fix (restricting 443 to AWS VPN CIDRs only) was applied to the affected asi project. But the class of bug — "one overly-permissive rule quietly negates the rest" — is inherent to iptables-only enforcement and hard to catch without careful review.
 
-2. **A conntrack hypothesis during diagnosis was wrong.** Initial guess: Docker-for-Mac's networking layer breaks conntrack state tracking inside containers. Direct testing inside a running asi desk refuted this: `nf_conntrack_count` increments correctly, INPUT ESTABLISHED rule has real hit counters. Conntrack works on Mac. What DOES have known issues on Docker-for-Mac: Intel-emulated containers on Apple Silicon (iptables can fail entirely), VPNKit userland proxy interactions, and some OUTPUT rule patterns that can destabilize the LinuxKit VM. These are real but are not the primary driver for belt+suspenders.
+2. **A conntrack hypothesis during diagnosis was wrong.** Initial guess: Docker-for-Mac's networking layer breaks conntrack state tracking inside containers. Direct testing inside a running asi drydock refuted this: `nf_conntrack_count` increments correctly, INPUT ESTABLISHED rule has real hit counters. Conntrack works on Mac. What DOES have known issues on Docker-for-Mac: Intel-emulated containers on Apple Silicon (iptables can fail entirely), VPNKit userland proxy interactions, and some OUTPUT rule patterns that can destabilize the LinuxKit VM. These are real but are not the primary driver for belt+suspenders.
 
 The primary driver: **layered enforcement is stronger than any single layer, especially when policy mistakes in one layer (like blanket-443) are easy to introduce and hard to detect from inside that layer.**
 
@@ -32,12 +32,12 @@ Both layers reference the SAME allowlist source (project YAML's `firewall_extra_
 
 **B. egress-proxy-only.** Rejected because raw-TCP or TLS-without-SNI tools would bypass it entirely. Belt stays for coverage that the proxy can't enforce.
 
-**C. Tailscale exit node + internal docker network.** Interesting; considered. Rejected for now because it adds latency on ALL egress (not just policy-enforced destinations), couples every drydock desk to Tailscale ACL management, and pushes the enforcement point off-host (harder local reasoning). Revisit if desk density on a single host makes per-desk proxies expensive.
+**C. Tailscale exit node + internal docker network.** Interesting; considered. Rejected for now because it adds latency on ALL egress (not just policy-enforced destinations), couples every drydock to Tailscale ACL management, and pushes the enforcement point off the Harbor (harder local reasoning). Revisit if drydock density on a single Harbor makes per-drydock proxies expensive.
 
 ## Architecture (when built)
 
 ```
-Desk container
+Drydock container
 ├── iptables OUTPUT chain         ← belt: drops packets to non-allowlist IPs
 ├── egress-proxy (localhost:8118) ← suspenders: returns 403 for non-allowlist SNIs
 │     ├── HTTP_PROXY env set globally (shells, language runtimes pick up)
@@ -58,18 +58,18 @@ Leaning toward Squid with a narrow ACL config. "Boring is good" for security-adj
 
 - **Outbound UDP.** Currently DNS (port 53) + tailscale (41641). Nothing else. Belt blocks the rest. Suspenders is HTTP-only. If UDP allowlisting becomes needed (QUIC? HTTP/3?), belt has to handle it; suspenders can't.
 
-- **DNS tunneling.** An attacker with code-execution inside a desk could exfiltrate data via DNS queries (UDP 53 is always open). This is a fundamental limit; realistic mitigation is monitoring (suspenders logs), not blocking.
+- **DNS tunneling.** An attacker with code-execution inside a drydock could exfiltrate data via DNS queries (UDP 53 is always open). This is a fundamental limit; realistic mitigation is monitoring (suspenders logs), not blocking.
 
 - **TLS without SNI.** Rare in modern TLS 1.3, but possible. Suspenders can't inspect; belt catches at IP layer.
 
-- **Proxy crash = blast radius.** If the egress proxy dies, legitimate HTTPS traffic stops working inside the desk. Restart semantics and healthcheck needed. A stuck proxy is worse than no proxy (silent hang vs. explicit fail); watchdog + fail-loud on proxy exit.
+- **Proxy crash = blast radius.** If the egress proxy dies, legitimate HTTPS traffic stops working inside the drydock. Restart semantics and healthcheck needed. A stuck proxy is worse than no proxy (silent hang vs. explicit fail); watchdog + fail-loud on proxy exit.
 
 ## When to implement
 
 Implement as part of `drydock-base:v2` when one of:
 
 1. Another "blanket rule" class of bug is caught in review or production — signals iptables-only auditing isn't keeping up.
-2. A real need for HTTP-layer audit surfaces (e.g., "show me every external URL this desk reached this week" — unanswerable with iptables-only).
+2. A real need for HTTP-layer audit surfaces (e.g., "show me every external URL this drydock reached this week" — unanswerable with iptables-only).
 3. Shared-hosting allowlist precision becomes load-bearing (e.g., allowing access to one specific repo on github.com but not others, impossible at IP layer).
 
 Until then, the 2026-04-15 blanket-443 fix closes the most obvious immediate hole. `init-firewall.sh`'s verification step (the `curl https://example.com` check) stays as-is — it's a real guardrail against regressing the fix. It now passes.
@@ -84,4 +84,4 @@ Until then, the 2026-04-15 blanket-443 fix closes the most obvious immediate hol
 
 ## Provenance
 
-Decision made 2026-04-15 in response to the asi desk firewall investigation. Two Explore subagents ran diagnostics in parallel: one ruled out the conntrack hypothesis, the other surveyed egress-control patterns on Docker-for-Mac. Steven signed off on belt+suspenders as a directional commitment without scheduling the implementation.
+Decision made 2026-04-15 in response to the asi drydock firewall investigation. Two Explore subagents ran diagnostics in parallel: one ruled out the conntrack hypothesis, the other surveyed egress-control patterns on Docker-for-Mac. Steven signed off on belt+suspenders as a directional commitment without scheduling the implementation.

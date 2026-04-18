@@ -11,37 +11,37 @@ Thin command surface, backend evolves. Users write `ws secret set myapp anthropi
 Backend: `~/.drydock/secrets/<ws_id>/<key-name>` files with mode 400. Same mechanism drydock always had; now wrapped behind CLI commands.
 
 ```
-ws secret set <workspace> <key-name>     # stdin, write mode 400
-ws secret list <workspace>               # keys only, never values
-ws secret rm  <workspace> <key-name>
-ws secret push <workspace> --to <host>   # rsync scoped-dir to remote drydock host
+ws secret set <drydock> <key-name>     # stdin, write mode 400
+ws secret list <drydock>               # keys only, never values
+ws secret rm  <drydock> <key-name>
+ws secret push <drydock> --to <host>   # rsync scoped-dir to remote Harbor
 ```
 
 Invariants:
 
 - Values enter via stdin only. Never argv, never env var, never temp file.
 - `list` shows key names + mode + size + mtime, never content.
-- `push` is scoped per workspace; does not copy all of `~/.drydock/secrets/`.
+- `push` is scoped per drydock; does not copy all of `~/.drydock/secrets/`.
 - No `get`/`show` command that echoes values. Users who need the value `cat` the file themselves.
 - No log line anywhere echoes content.
 
 ## Phase 2 — daemon-mediated broker (v2 daemon era)
 
-Backend: `wsd` daemon holds secrets via a pluggable backend (file-backed in V2.0) and issues capability leases to containers. Leases default to `expiry: None` — live until desk destroy or explicit release. Same CLI; daemon replaces the file-backed store's direct-path operations.
+Backend: `wsd` daemon on the Harbor holds secrets via a pluggable backend (file-backed in V2.0) and issues capability leases to containers. Leases default to `expiry: None` — live until drydock destroy or explicit release. Same CLI; daemon replaces the file-backed store's direct-path operations.
 
 New capabilities the CLI gains:
 
-- **Scoped delegation**: `ws secret set <parent-ws> <key> --delegatable-to <child-ws>` — parent desk declares which secrets it may hand to spawned children. Enforces narrowness (child can request a subset, never more).
+- **Scoped delegation**: `ws secret set <parent-ws> <key> --delegatable-to <child-ws>` — parent drydock declares which secrets it may hand to spawned children. Enforces narrowness (child can request a subset, never more).
 - **Immediate revocation**: `ws secret rm` → daemon kills leases; running containers lose access next request.
-- **Scoping per principal**: in multi-user era (deferred), secrets are scoped to owner; one user's secrets don't leak to another user's desks.
+- **Scoping per principal**: in multi-user era (deferred), secrets are scoped to owner; one user's secrets don't leak to another user's drydocks.
 
-Rotation (live re-materialization of running-desk secret files on a cadence) is reserved for Phase 4 / V4 where cloud credentials make it load-bearing.
+Rotation (live re-materialization of running-drydock secret files on a cadence) is reserved for Phase 4 / V4 where cloud credentials make it load-bearing.
 
 Migration: `ws secret migrate --to broker` copies file-backed secrets into the daemon's store, updates mounts from bind-readonly-file to daemon-lease. One-time.
 
 ## Phase 3 — pluggable external brokers
 
-Backend: pluggable via flag or per-workspace YAML.
+Backend: pluggable via flag or per-project YAML.
 
 ```yaml
 # in a project YAML
@@ -59,8 +59,8 @@ Backend: the same daemon grown into a generalized capability broker. Secrets are
 
 - **API secrets** (ANTHROPIC_API_KEY, GitHub tokens)
 - **Cloud credentials** (S3 access keys scoped to specific buckets, bounded TTL)
-- **Compute quotas** (CPU-hours on a specific host, wall-clock budget for a desk)
-- **Network reachability tokens** (may-call-a-peer-desk, may-reach-a-specific-cross-workspace-endpoint)
+- **Compute quotas** (CPU-hours on a specific Harbor, wall-clock budget for a drydock)
+- **Network reachability tokens** (may-call-a-peer-drydock, may-reach-a-specific-cross-drydock-endpoint)
 - **Storage mounts** (may-mount `s3://bucket/path`, readonly)
 
 All issued via the same lease mechanism. The CLI becomes `ws cap` or `ws lease` (or stays as `ws secret` for backward compat + grows sibling commands). Command surface remains user-friendly; the broker's policy graph decides what's allowed.

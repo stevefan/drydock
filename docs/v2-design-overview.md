@@ -6,9 +6,9 @@
 
 **Further scope trim (2026-04-14, post-Steven review).** Budget narrowness, live `ws reconcile`, `ws adopt`, 24h auto-renew, HTTP transport, and `RotateDeskToken` were removed from V2 as premature-for-forcing-function. All reserved in design; reinstate when demonstrated need surfaces. See §Decisions deliberately deferred.
 
-**Tailnet identity lifecycle ADDED to V2 (2026-04-15, Steven sign-off).** Daemon authoritatively cleans up tailnet device records on `DestroyDesk` and exposes `PruneStaleTailnetDevices` for orphan cleanup. Justified by the same "forcing function surfaced" criterion the trim line uses — auction-crawl Mac→Hetzner deployment 2026-04-14 broke identity continuity (canonical hostname `auction-crawl` held by an offline ghost; new desk took `auction-crawl-1`). Bounded scope: one new admin RPC, two audit events, daemon-level admin token (NOT a per-desk capability — see design doc §3 for why). See [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md). Steven explicitly signed off on inclusion in V2 over a v1.x backport.
+**Tailnet identity lifecycle ADDED to V2 (2026-04-15, Steven sign-off).** Daemon authoritatively cleans up tailnet device records on `DestroyDesk` and exposes `PruneStaleTailnetDevices` for orphan cleanup. Justified by the same "forcing function surfaced" criterion the trim line uses — auction-crawl Mac→Hetzner deployment 2026-04-14 broke identity continuity (canonical hostname `auction-crawl` held by an offline ghost; new drydock took `auction-crawl-1`). Bounded scope: one new admin RPC, two audit events, daemon-level admin token (NOT a per-drydock capability — see design doc §3 for why). See [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md). Steven explicitly signed off on inclusion in V2 over a v1.x backport.
 
-**Secrets backend default CONFIRMED: file-backed (2026-04-16, Steven sign-off).** V2.0 ships with `FileBackend` as the only concrete `SecretsBackend` implementation, per `v2-design-capability-broker.md` §7. Plugin protocol reserved; 1Password, Vault, cloud secret managers are additive future backends, no RPC changes required. Rationale: personal-fleet scale doesn't yet demand centralized rotation; 1P would require bootstrapping a service-account token per host (new secret-to-transport chicken-and-egg); file-backed inherits Phase 1 conventions that already work. `wsd.toml` should accept `[secrets] backend = "file"` (default) with future values rejected as `unknown_secrets_backend` until they ship. Drydock-employee patterns that need centralized rotation are V2.1+ (via additional backend) or cross-desk capability delegation in V3 — not a V2.0 blocker.
+**Secrets backend default CONFIRMED: file-backed (2026-04-16, Steven sign-off).** V2.0 ships with `FileBackend` as the only concrete `SecretsBackend` implementation, per `v2-design-capability-broker.md` §7. Plugin protocol reserved; 1Password, Vault, cloud secret managers are additive future backends, no RPC changes required. Rationale: personal-fleet scale doesn't yet demand centralized rotation; 1P would require bootstrapping a service-account token per Harbor (new secret-to-transport chicken-and-egg); file-backed inherits Phase 1 conventions that already work. `wsd.toml` should accept `[secrets] backend = "file"` (default) with future values rejected as `unknown_secrets_backend` until they ship. Drydock-employee patterns that need centralized rotation are V2.1+ (via additional backend) or cross-drydock capability delegation in V3 — not a V2.0 blocker.
 
 ---
 
@@ -19,28 +19,28 @@
 **Gotchas I surfaced during review worth addressing when convenient** (not blocking V2.0 ship, but on the docket):
 
 1. **Task-log LRU eviction not implemented** per protocol §3. Small pressure today; will grow with traffic. A cleanup pass on boot (drop entries older than 24h AND in terminal state) would handle it.
-2. **No rate-limit on `SpawnChild`**. A parent desk calling it 1000 times bottlenecks on DevcontainerCLI. Resource-budget rules deferred per capability-broker doc §4, but ops would benefit from a soft cap (N in-flight per parent) as a belt.
-3. **Nested spawn from desk-mode has no E2E test.** Socket is bind-mounted, token is readable; path exists but the smoke test only exercises host CLI. First real nested spawn attempt may surface socket-side issues (timeout tuning, error propagation). Low severity; design sound.
-4. **Uniform capability primitive** (per `project_v2_capability_primitive.md`): validator currently takes `(parent, child)`. Future occupant/session scoping (per `project_drydock_employee_pattern.md`) wants `(holder, requester)`. Adding the third case later has medium reversibility cost — worth parameterizing soon if you're touching the validator signature for other reasons.
+2. **No rate-limit on `SpawnChild`**. A parent drydock calling it 1000 times bottlenecks on DevcontainerCLI. Resource-budget rules deferred per capability-broker doc §4, but ops would benefit from a soft cap (N in-flight per parent) as a belt.
+3. **Nested spawn from drydock-mode has no E2E test.** Socket is bind-mounted, token is readable; path exists but the smoke test only exercises Harbor CLI. First real nested spawn attempt may surface socket-side issues (timeout tuning, error propagation). Low severity; design sound.
+4. **Uniform capability primitive** (per `project_v2_capability_primitive.md`): validator currently takes `(parent, child)`. Future worker/session scoping (per `project_drydock_employee_pattern.md`) wants `(holder, requester)`. Adding the third case later has medium reversibility cost — worth parameterizing soon if you're touching the validator signature for other reasons.
 
 **New pattern notes worth reading** (landed in `~/.claude/projects/.../memory/` and indexed in `MEMORY.md`):
 
-- `project_drydock_employee_pattern.md` — names what V2 is actually *for* operationally beyond nested-spawn. Articulates the tier between "interactive Claude on laptop" and "deterministic cron script." First concrete instance: a fleet-auth desk holding claude.ai OAuth + refreshing in place, serving via capability broker. V2.1+ practical target.
+- `project_drydock_employee_pattern.md` — names what V2 is actually *for* operationally beyond nested-spawn. Articulates the tier between "interactive Claude on laptop" and "deterministic cron script." First concrete instance: a fleet-auth drydock holding claude.ai OAuth + refreshing in place, serving via capability broker. V2.1+ practical target.
 - `project_secrets_backend_decision.md` — full rationale for today's file-backed commit + what the decision locks in for Slice 3 handler code (bytes-not-path contract, error taxonomy, DI shape).
 
-**Session side-effects outside drydock** (FYI, won't affect your work): auction-crawl desk force-recreated on `drydock-base:v1.0.7`; volume mount that silently unmounted over 28h is re-live; operator's govdeals challenge-page patch landed on microfoundry main; adaptive-cadence wrapper for smart operator installed on a 12h cron; remote-control currently 401-failing because the transplanted Mac `.credentials.json` expired (Mac uses keychain, not the file). Fix is `tailscale ssh node@auction-crawl-1` → `claude auth login` — Linux-native OAuth state will self-refresh from then on.
+**Session side-effects outside drydock** (FYI, won't affect your work): auction-crawl drydock force-recreated on `drydock-base:v1.0.7`; volume mount that silently unmounted over 28h is re-live; operator's govdeals challenge-page patch landed on microfoundry main; adaptive-cadence wrapper for smart operator installed on a 12h cron; remote-control currently 401-failing because the transplanted Mac `.credentials.json` expired (Mac uses keychain, not the file). Fix is `tailscale ssh node@auction-crawl-1` → `claude auth login` — Linux-native OAuth state will self-refresh from then on.
 
 ## Reading order
 
 Read in this order; each doc assumes the ones before it.
 
-1. **[v2-design-vocabulary.md](v2-design-vocabulary.md)** — Project / Desk / Session. Everything else uses these terms.
+1. **[v2-design-vocabulary.md](v2-design-vocabulary.md)** — Harbor / Project / DryDock / Worker. Everything else uses these terms.
 2. **[v2-design-protocol.md](v2-design-protocol.md)** — RPC surface, wire transport, auth model, daemon location, `ws attach` routing.
 3. **[v2-design-capability-broker.md](v2-design-capability-broker.md)** — Lease data model, policy validator as pure function, narrowness rules, revocation, plugin protocol for secret backends.
-4. **[v2-design-state.md](v2-design-state.md)** — State ownership (SQLite, daemon memory, host paths, container). Crash recovery. Devcontainer-CLI error handling. V1 coexistence contract.
+4. **[v2-design-state.md](v2-design-state.md)** — State ownership (SQLite, daemon memory, Harbor paths, container). Crash recovery. Devcontainer-CLI error handling. V1 coexistence contract.
 5. **[v2-design-tailnet-identity.md](v2-design-tailnet-identity.md)** — Tailnet device-record lifecycle (the daemon-side complement to per-node `tailscale logout`). Daemon-level admin credential, `PruneStaleTailnetDevices` admin RPC, `tailnet.*` audit events. Added 2026-04-15 with Steven sign-off after auction-crawl deployment surfaced the identity-continuity gap.
 
-Earlier drafts included a `v2-design-vault-bridge.md`. It was cut: vault-mount narrowness is now handled by the generic mount-narrowness rule in capability-broker §4 (rule 4); the vault-bridge reconciliation desk is not a daemon concern. Concept doc remains in the slip-box at `~/Notebooks/commonplace/slip-box/Vault bridge - when two substrates earn their complexity.md`.
+Earlier drafts included a `v2-design-vault-bridge.md`. It was cut: vault-mount narrowness is now handled by the generic mount-narrowness rule in capability-broker §4 (rule 4); the vault-bridge reconciliation drydock is not a daemon concern. Concept doc remains in the slip-box at `~/Notebooks/commonplace/slip-box/Vault bridge - when two substrates earn their complexity.md`.
 
 ## How this relates to `v2-scope.md`
 
@@ -48,9 +48,9 @@ Earlier drafts included a `v2-design-vault-bridge.md`. It was cut: vault-mount n
 
 | `v2-scope.md` point | Extended in |
 |---|---|
-| "Desks as first-class entities" | vocabulary (Project/Desk/Session layering), state (ownership split) |
+| "Desks as first-class entities" | vocabulary (Harbor/Project/DryDock/Worker layering), state (ownership split) |
 | "Policy graph with enforced narrowness" | capability-broker (validator contract + rules) |
-| "Bearer-token auth over Tailscale" | protocol (Unix socket transport, per-principal generalization reserved; HTTP transport and `RotateDeskToken` deferred, reinstate if a thin multi-host case surfaces) |
+| "Bearer-token auth over Tailscale" | protocol (Unix socket transport, per-principal generalization reserved; HTTP transport and `RotateDeskToken` deferred, reinstate if a thin multi-Harbor case surfaces) |
 | "Secrets broker (replaces V1 static mount)" | capability-broker (generalized lease shape) |
 | §Open questions 1–5 | All addressed: daemon location (protocol), devcontainer errors (state), attach routing (protocol), revocation on policy change (capability-broker), pluggable backends (capability-broker) |
 | Migration from V1 | state (V1 coexistence contract, destroy+create on-ramp, failure modes) |
@@ -89,7 +89,7 @@ Items marked **HIGH** = get it right the first time; changing after V2 ships is 
 - `RequestCapability` subject derived from token (trust-model contract).
 - `RequestCapability` as single-entry-point for leases.
 - Secrets-as-capability-type (not separate API).
-- Vocabulary (Project/Desk/Session).
+- Vocabulary (Harbor/Project/DryDock/Worker).
 - File-backed lease materialization at `~/.drydock/secrets/`.
 - Audit event schema (event names + required `details` keys).
 - Exact-string-only firewall domains (no wildcards).
@@ -105,7 +105,7 @@ Items marked **HIGH** = get it right the first time; changing after V2 ships is 
 - `ws attach` bypasses daemon.
 - Structured `Reject` shape.
 - Destroy+create as v1→v2 on-ramp (no `ws adopt`).
-- Unix socket only (HTTP transport deferred; additive if a thin multi-host case surfaces).
+- Unix socket only (HTTP transport deferred; additive if a thin multi-Harbor case surfaces).
 
 ## Thin-slice implementation plan
 
@@ -114,20 +114,20 @@ Thinnest end-to-end first, then layer.
 **Slice 1: `CreateDesk` over RPC, no policy.** Daemon accepts `CreateDesk(spec)`, executes exactly as V1 does today, returns `DeskRef`. Unix socket only. No policy validator, no leases, no nested spawn.
 - **Proves:** daemon shape, wire protocol, state-ownership boundary, task-log-based crash recovery.
 
-**Slice 2: `SpawnChild` + policy validator.** Desk-mode CLI gets a bearer token, authenticates, calls `SpawnChild`. Validator runs all 4 narrowness rules (firewall, secret, capability, mount). Parent-child cascade on destroy.
+**Slice 2: `SpawnChild` + policy validator.** Drydock-mode CLI gets a bearer token, authenticates, calls `SpawnChild`. Validator runs all 4 narrowness rules (firewall, secret, capability, mount). Parent-child cascade on destroy.
 - **Proves:** trust boundary. Narrowness tests pass.
 
-**Slice 3: Secrets broker (Phase 2 migration).** `RequestCapability(type=SECRET, ...)` returns leases with `expiry: None` (live until desk destroy or release). File-backed Phase 1 secrets migrate into daemon-managed store.
+**Slice 3: Secrets broker (Phase 2 migration).** `RequestCapability(type=SECRET, ...)` returns leases with `expiry: None` (live until drydock destroy or release). File-backed Phase 1 secrets migrate into daemon-managed store.
 - **Proves:** capability-lease pattern end-to-end. Revocation-on-destroy. Finite-expiry + auto-renew machinery NOT exercised here; reserved for V4.
 
 **Slice 4: Audit surface.** `GetAudit` streams structured events. Daemon writes to JSONL.
 - **Proves:** observability boundary; closes V2's scope list.
 
 **Not in V2:**
-- Cross-host migration, suspend/resume, fleet-aware daemon. Archived — see `_archive/migration-vision.md`.
+- Cross-Harbor migration, suspend/resume, fleet-aware daemon. Archived — see `_archive/migration-vision.md`.
 - V4 cloud capability types (`STORAGE_MOUNT`, `COMPUTE_QUOTA`, `NETWORK_REACH`) — enum-reserved only, YAML rejects.
 - Multi-user per-principal tokens (reserved in auth model, not implemented).
-- Vault-bridge reconciliation desk (not a daemon feature).
+- Vault-bridge reconciliation drydock (not a daemon feature).
 - Vault-specific capability type or YAML — vault mounts go through generic `extra_mounts` with narrowness rule 4.
 
 ## Verification checklist — before writing first daemon line of code
@@ -147,14 +147,14 @@ Thinnest end-to-end first, then layer.
 - **Live `ws reconcile` on parent policy change.** V2 flow is narrow → destroy → respawn. Live per-child cascade deferred; reinstate if the destroy+respawn cost becomes painful.
 - **`ws adopt` / `ws disown`.** V1 → V2 on-ramp is destroy+create. Simpler, same outcome; revisit if an in-place upgrade becomes necessary.
 - **24h auto-renew on SECRET leases.** V2 ships `expiry: None` (matches Phase-1 file-backed semantics). Finite-expiry + auto-renew machinery reserved for V4 cloud credentials where rotation is load-bearing.
-- **HTTP/Tailscale transport.** V2 ships Unix socket only. HTTP transport is a natural extension if a second host ever wants its `ws` CLI to target a remote daemon over tailnet — additive, same JSON-RPC envelope.
+- **HTTP/Tailscale transport.** V2 ships Unix socket only. HTTP transport is a natural extension if a second Harbor ever wants its `ws` CLI to target a remote daemon over tailnet — additive, same JSON-RPC envelope.
 - **`RotateDeskToken` method.** Reserved in the design; no V2 caller. Ship in V2.5 if operational need surfaces.
 - **Audit storage format** (JSONL vs. SQLite table). Default JSONL (v1 convention); revisit if query shape demands.
 - **Per-lease file-mount vs. single `/run/secrets/` dir materialization.** V1 uses single dir; keep. Revisit if dynamic lease adds/removes surface friction.
 - **`wsd.toml` config reload mechanism.** Default: restart daemon.
 - **`scope_version` field** on `CapabilityLease`. First real V4 type defines the versioning model.
 - **Admin impersonation method** (`AdminRequestCapability`). No V2 callers; defer until needed.
-- **Vault-bridge reconciliation desk.** Hit wall, then build.
+- **Vault-bridge reconciliation drydock.** Hit wall, then build.
 
 ## Codex review — findings and resolutions (2026-04-14)
 
@@ -165,7 +165,7 @@ Independent pass by Codex focused on reversibility, V4 forward-compat of the cap
 | Finding | Resolution |
 |---|---|
 | Validator rule 5 referenced scoped entitlements that weren't in `DeskPolicy`. Biggest trust-boundary hole | Simplified: rule 5 is now generic mount narrowness (`child.extra_mounts ⊆ parent.extra_mounts`). No scoped-capability-scopes machinery in V2 — only one implemented capability type (SECRET) whose narrowness is already covered by rule 2 |
-| Narrowness only ran on `SpawnChild`; a desk could request broader leases via `RequestCapability` | Post-spawn narrowness is now a trivial lookup: `RequestCapability` checks `requested_secret ∈ desk.secret_entitlements`, already pinned by `validate_spawn`. No parallel validator function needed in V2 |
+| Narrowness only ran on `SpawnChild`; a drydock could request broader leases via `RequestCapability` | Post-spawn narrowness is now a trivial lookup: `RequestCapability` checks `requested_secret ∈ desk.secret_entitlements`, already pinned by `validate_spawn`. No parallel validator function needed in V2 |
 | Domain canonicalization missed IDNA/punycode — visually-equivalent Unicode could bypass subset checks | Canonicalization mandates ASCII-only + IDNA/punycode; non-ASCII rejected with `invalid_domain_format`. See capability-broker §4.1 |
 | Mount-path subset using raw string prefix would let `foo` vs. `foo-bar` slip through | Mount strings canonicalize to `(source_abs_path, target_abs_path, mode)` tuples via `os.path.normpath`; subset compares tuples |
 | `RequestCapability(desk_id, ...)` accepted caller-supplied subject — confused-deputy risk | Removed `desk_id` arg; subject derived from bearer token. Admin impersonation is a separate future method |
@@ -191,7 +191,7 @@ Independent pass by Codex focused on reversibility, V4 forward-compat of the cap
 
 ### What Codex confirmed was correctly classified
 
-- HIGH: lease shape, validator purity, no-host-state-in-containers.
+- HIGH: lease shape, validator purity, no-Harbor-state-in-containers.
 - Correct shape: wildcard/regex/CIDR ban in delegatable firewall domains.
 - Audit event schema at Medium.
 
@@ -202,7 +202,7 @@ Codex flagged `COMPUTE_QUOTA` and `NETWORK_REACH` scope shapes as likely-wrong. 
 ## Cross-references
 
 - `v2-scope.md` — the shipping spec V2 implements.
-- `vision.md` — fabric framing; introduces `agent-desk` vocabulary.
+- `vision.md` — fabric framing; introduces the Harbor/DryDock/Worker vocabulary.
 - `secrets-roadmap.md` Phase 2+ — aligns with the capability-broker doc.
 - `secrets-design.md` — Phase 1 file-backed convention that Phase 2 broker inherits.
 - `CLAUDE.md` §Tests must justify their existence — binding test discipline for the policy validator.

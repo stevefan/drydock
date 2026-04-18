@@ -1,21 +1,30 @@
 # Drydock — Personal Agent Fabric
 
-Drydock provisions, connects, and governs sandboxed workspaces where Claude agents do work. The host-side CLI (`ws`) orchestrates devcontainer-based workspaces; the `wsd` daemon mediates lifecycle operations, policy enforcement, audit, and nested spawn. See [docs/vision.md](docs/vision.md) for the fabric framing and [docs/v2-scope.md](docs/v2-scope.md) for the daemon design.
+Drydock provisions, connects, and governs bounded work environments (**drydocks**) where Claude **workers** do work. The Harbor-side CLI (`ws`) orchestrates devcontainer-based drydocks; the `wsd` daemon mediates lifecycle operations, policy enforcement, audit, and nested spawn. See [docs/vision.md](docs/vision.md) for the fabric framing and [docs/v2-scope.md](docs/v2-scope.md) for the daemon design.
+
+**Vocabulary** (full definitions in [docs/v2-design-vocabulary.md](docs/v2-design-vocabulary.md)):
+
+- **Harbor** — the host machine running `wsd`. Authority lives here.
+- **DryDock** — a durable, bounded work environment (the runtime unit). Persistent across container rebuilds.
+- **Worker** — the agent bound to a drydock; the thing that actually does work (Claude remote-control, scheduled operator, etc.).
+- **Project** — YAML template declaring what a drydock should be.
+
+Code identifiers (`ws`, `wsd`, `ws_<slug>`, `Workspace` class, `workspaces` SQLite table) are frozen from V1 — renaming would be cosmetic churn. Product-level prose uses the above vocabulary.
 
 **New users: start with [docs/getting-started.md](docs/getting-started.md).** This file is agent-facing; the getting-started doc walks through install, project YAML config, and a concrete walkthrough.
 
 ## Repo structure
 
 ```
-base/                   # drydock-base image (Dockerfile, firewall/tailscale/remote-control scripts)
-.devcontainer/          # Workspace template (devcontainer.json, Dockerfile, project configs)
+base/                   # drydock-base image (Dockerfile, firewall/tailscale/remote-control scripts) + systemd units
+.devcontainer/          # DryDock template (devcontainer.json, Dockerfile, project configs)
 src/drydock/
   cli/                  # Click commands (see CLI reference below)
   core/                 # Registry (SQLite), workspace model, overlay, checkout, policy, secrets, schedule, audit, tailnet, trust, compliance
   output/               # JSON/human output formatting
   wsd/                  # Daemon: server, handlers, auth, config, recovery, audit/capability handlers
   templates/            # Bundled devcontainer template for `ws new`
-scripts/                # bootstrap-linux-host.sh, smoke-v2-daemon.sh
+scripts/                # bootstrap-linux-host.sh, install-linux-services.sh, drydock-resume-desks, drydock-stop-desks
 tests/                  # pytest tests
 docs/                   # Specs and design docs
 .claude/skills/         # Claude Code skill for /ws
@@ -23,39 +32,39 @@ docs/                   # Specs and design docs
 
 ## CLI reference
 
-Install on the host (not inside a container):
+Install on the Harbor (not inside a container):
 ```bash
 pip install -e .       # or: pipx install --editable .
 ```
 
-### Workspace lifecycle
+### DryDock lifecycle
 
 | Command | Description |
 |---|---|
-| `ws create <project> [name]` | Provision a workspace (worktree, overlay, container). Routes through daemon when available. |
-| `ws stop <name>` | Stop and remove the container; volumes and worktree preserved. |
-| `ws destroy <name> --force` | Remove workspace entirely (container, worktree, overlay, tailnet device record). |
-| `ws upgrade <name> [--tag TAG]` | Bump drydock-base tag in the workspace's Dockerfile and recreate. |
+| `ws create <project> [name]` | Provision a drydock (worktree, overlay, container). Routes through daemon when available. Resumes if already suspended. |
+| `ws stop <name>` | Stop and remove the container; volumes and worktree preserved (state → suspended). |
+| `ws destroy <name> --force` | Remove drydock entirely (container, worktree, overlay, tailnet device record). |
+| `ws upgrade <name> [--tag TAG]` | Bump drydock-base tag in the drydock's Dockerfile and recreate. |
 | `ws new <project>` | Scaffold `.devcontainer/drydock/` in a project repo from the bundled template. |
 
-### Workspace interaction
+### DryDock interaction
 
 | Command | Description |
 |---|---|
-| `ws list [--project P] [--state S]` | List workspaces (filterable). |
-| `ws inspect <name>` | Show full workspace details. |
-| `ws status <name>` | Per-workspace health: container, tailscale, firewall, remote-control, compliance. |
-| `ws attach <name> [--editor code]` | Open VS Code / Cursor attached to a running workspace. |
-| `ws exec <name> [-- CMD...]` | Shell into (or run a command in) a running workspace container. |
+| `ws list [--project P] [--state S]` | List drydocks (filterable). |
+| `ws inspect <name>` | Show full drydock details. |
+| `ws status <name>` | Per-drydock health: container, tailscale, firewall, remote-control, compliance. |
+| `ws attach <name> [--editor code]` | Open VS Code / Cursor attached to a running drydock. |
+| `ws exec <name> [-- CMD...]` | Shell into (or run a command in) a running drydock container. |
 
 ### Secrets
 
 | Command | Description |
 |---|---|
-| `ws secret set <ws> <key>` | Store a secret (value from stdin). Files land in `~/.drydock/secrets/<ws_id>/`. |
-| `ws secret list <ws>` | List secret key names (never shows values). |
-| `ws secret rm <ws> <key>` | Remove a secret. |
-| `ws secret push <ws> --to <host>` | Rsync workspace secrets to a remote host over SSH. |
+| `ws secret set <drydock> <key>` | Store a secret (value from stdin). Files land in `~/.drydock/secrets/<ws_id>/`. |
+| `ws secret list <drydock>` | List secret key names (never shows values). |
+| `ws secret rm <drydock> <key>` | Remove a secret. |
+| `ws secret push <drydock> --to <harbor>` | Rsync drydock secrets to a remote Harbor over SSH. |
 
 Secrets are mounted into containers at `/run/secrets/` (readonly bind-mount of `~/.drydock/secrets/<ws_id>/`).
 
@@ -74,13 +83,13 @@ When the daemon is running, `ws create`, `ws destroy`, and `ws upgrade` route op
 
 | Command | Description |
 |---|---|
-| `ws host init` | Idempotent post-install setup: state dirs, gitconfig stub. |
+| `ws host init` | Idempotent post-install setup: state dirs, gitconfig stub. (CLI keeps `host` for lower-level plumbing; Harbor is the product-level name for the same thing.) |
 | `ws host check` | Preflight: verify docker, devcontainer CLI, tailscale, gh auth, state dirs. Exits 1 on required-check failure. |
 | `ws tailnet prune [--apply]` | List (or delete) orphan drydock-style tailnet device records. Dry-run by default. |
 | `ws audit [--limit N] [--event E]` | Paginated query over the audit log (daemon RPC or direct file read). |
-| `ws schedule sync <desk>` | Sync `deploy/schedule.yaml` from a workspace to host-native cron/launchd. |
-| `ws schedule list <desk>` | List installed schedule entries for a workspace. |
-| `ws schedule remove <desk>` | Remove all host-native schedule entries for a workspace. |
+| `ws schedule sync <drydock>` | Sync `deploy/schedule.yaml` from a drydock to Harbor-native cron/launchd. |
+| `ws schedule list <drydock>` | List installed schedule entries for a drydock. |
+| `ws schedule remove <drydock>` | Remove all Harbor-native schedule entries for a drydock. |
 
 Global flags: `--json` (force JSON output), `--dry-run` (preview without executing).
 Output is JSON automatically when piped or called by an agent.
@@ -98,15 +107,15 @@ Output is JSON automatically when piped or called by an agent.
 - Pre-created volume mount targets (`~/.claude`, `~/.vscode-server`, `~/.npm`, `~/.cache/pip`) with correct ownership
 - `git config --system safe.directory '*'` (container is the trust boundary)
 
-## Workspace template
+## DryDock template
 
-The `.devcontainer/` directory is the fallback workspace template. Projects can have their own (scaffolded via `ws new`); if they don't, this one is used. `ws create` layers an override JSON on top for per-workspace identity, secrets mount, and networking config.
+The `.devcontainer/` directory is the fallback template. Projects can have their own (scaffolded via `ws new`); if they don't, this one is used. `ws create` layers an override JSON on top for per-drydock identity, secrets mount, and networking config.
 
 ## The wsd daemon
 
-`src/drydock/wsd/` implements the daemon process. It listens on a Unix socket (`~/.drydock/wsd.sock`) and exposes JSON-RPC methods for workspace lifecycle, policy enforcement, capability grants, and audit. Bearer-token auth scopes each desk's access. The CLI is one client; Claude Code inside a desk is another.
+`src/drydock/wsd/` implements the daemon process running on a Harbor. It listens on a Unix socket (`~/.drydock/wsd.sock`) and exposes JSON-RPC methods for drydock lifecycle, policy enforcement, capability grants, and audit. Bearer-token auth scopes each drydock's access. The CLI is one client; workers running inside a drydock are another.
 
-Start with `ws daemon start`. Check health with `ws daemon status`. Logs at `~/.drydock/wsd.log`.
+Start with `ws daemon start`, or enable the systemd unit on Linux (`scripts/install-linux-services.sh`). Check health with `ws daemon status`. Logs at `~/.drydock/wsd.log`.
 
 Design details live in [docs/v2-scope.md](docs/v2-scope.md) and the `docs/v2-design-*.md` files.
 
@@ -129,7 +138,7 @@ Configuration (NOT secrets) set via project YAML, overlay, or `.env.devcontainer
 
 ## Secrets
 
-`ws secret set` is the single entry point for all credentials. Secrets are stored at `~/.drydock/secrets/<ws_id>/` (mode 0400) on the host and bind-mounted at `/run/secrets/` (read-only) inside the container. Per-desk isolation: each desk sees ONLY its own secrets.
+`ws secret set` is the single entry point for all credentials. Secrets are stored at `~/.drydock/secrets/<ws_id>/` (mode 0400) on the Harbor and bind-mounted at `/run/secrets/` (read-only) inside the drydock's container. Per-drydock isolation: each drydock sees ONLY its own secrets. V2.1 cross-drydock delegation: a drydock can request a lease for a secret held by a different drydock (via `RequestCapability` with `source_desk_id`); the daemon validates the entitlement and materializes the bytes into the caller's secret dir.
 
 Auto-materialization scripts in drydock-base read from `/run/secrets/` at container start:
 - `sync-claude-auth.sh` → writes `~/.claude/.credentials.json` + `~/.claude.json`
@@ -138,10 +147,10 @@ Auto-materialization scripts in drydock-base read from `/run/secrets/` at contai
 
 | Path | Mode | Purpose |
 |---|---|---|
-| `~/.drydock/secrets/<ws_id>/` | 0700 | Per-workspace secrets (bind-mounted to `/run/secrets/`) |
-| `~/.drydock/daemon-secrets/` | 0700 | Fleet-level admin tokens (tailscale_admin_token, tailscale_tailnet) |
+| `~/.drydock/secrets/<ws_id>/` | 0700 | Per-drydock secrets (bind-mounted to `/run/secrets/`) |
+| `~/.drydock/daemon-secrets/` | 0700 | Harbor-level admin tokens (tailscale_admin_token, tailscale_tailnet) |
 
-Use `ws secret set/list/rm` to manage per-workspace secrets. Use `ws secret push --to <host>` to replicate secrets to a remote Linux host.
+Use `ws secret set/list/rm` to manage per-drydock secrets. Use `ws secret push --to <harbor>` to replicate secrets to a remote Linux Harbor.
 
 Common secret keys:
 
@@ -154,11 +163,11 @@ Common secret keys:
 | `aws_access_key_id` | AWS IAM console | `sync-aws-auth.sh` |
 | `aws_secret_access_key` | AWS IAM console | `sync-aws-auth.sh` |
 
-## Host bootstrap
+## Harbor bootstrap
 
-Fresh Linux host setup is scripted at `scripts/bootstrap-linux-host.sh` (idempotent). After running it, complete the interactive auth steps (Tailscale, GitHub, Claude). See [docs/host-bootstrap.md](docs/host-bootstrap.md) for the full walkthrough.
+Fresh Linux Harbor setup is scripted at `scripts/bootstrap-linux-host.sh` (idempotent). After running it, complete the interactive auth steps (Tailscale, GitHub, Claude) and install the systemd units with `scripts/install-linux-services.sh`. See [docs/host-bootstrap.md](docs/host-bootstrap.md) for the full walkthrough.
 
-On any host, `ws host init` + `ws host check` gets drydock state dirs right and verifies prerequisites.
+On any Harbor, `ws host init` + `ws host check` gets drydock state dirs right and verifies prerequisites.
 
 ## Tests must justify their existence
 
