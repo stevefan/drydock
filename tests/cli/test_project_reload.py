@@ -114,6 +114,27 @@ def test_project_reload_updates_v2_policy_columns(tmp_path, monkeypatch):
     registry.close()
 
 
+def test_project_reload_picks_up_extra_env(tmp_path, monkeypatch):
+    """extra_env from YAML flows to registry config AND into the regenerated
+    overlay's containerEnv. Enables AWS_CONFIG_FILE / AWS_SHARED_CREDENTIALS_FILE
+    style redirects without per-feature YAML knobs."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _seed(tmp_path, (
+        "repo_path: /srv/code/myproj\n"
+        "extra_env:\n"
+        "  AWS_CONFIG_FILE: /opt/aws-config/config\n"
+        "  AWS_SHARED_CREDENTIALS_FILE: /opt/aws-config/credentials\n"
+    ))
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "project", "reload", "myws"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    overlay = json.loads(Path(data["overlay_path"]).read_text())
+    env = overlay.get("containerEnv", {})
+    assert env.get("AWS_CONFIG_FILE") == "/opt/aws-config/config"
+    assert env.get("AWS_SHARED_CREDENTIALS_FILE") == "/opt/aws-config/credentials"
+
+
 def test_project_reload_regenerates_overlay(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     _seed(tmp_path, (

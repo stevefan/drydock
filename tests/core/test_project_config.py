@@ -164,6 +164,29 @@ class TestLoadProjectConfig:
             "rw:s3://lab-data/output/*",
         ]
 
+    # extra_env passthrough: general containerEnv knob for project YAML.
+    # Motivating case: pointing AWS_CONFIG_FILE at a readonly bind-mount
+    # so the CLI cache dir stays writable in a separate path.
+    def test_extra_env_parsed(self, tmp_path):
+        (tmp_path / "infra.yaml").write_text(
+            "repo_path: /srv/infra\n"
+            "extra_env:\n"
+            "  AWS_CONFIG_FILE: /opt/aws-config/config\n"
+            "  AWS_SHARED_CREDENTIALS_FILE: /opt/aws-config/credentials\n"
+        )
+        cfg = load_project_config("infra", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.extra_env == {
+            "AWS_CONFIG_FILE": "/opt/aws-config/config",
+            "AWS_SHARED_CREDENTIALS_FILE": "/opt/aws-config/credentials",
+        }
+
+    def test_extra_env_defaults_empty(self, tmp_path):
+        (tmp_path / "x.yaml").write_text("repo_path: /srv/x\n")
+        cfg = load_project_config("x", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.extra_env == {}
+
     def test_delegatable_storage_scopes_default_empty(self, tmp_path):
         # Regression: back-compat invariant. A project YAML without the
         # field must not raise and must produce an empty list, so existing

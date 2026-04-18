@@ -20,6 +20,7 @@ KNOWN_KEYS = {
     "firewall_ipv6_hosts",
     "forward_ports",
     "extra_mounts",
+    "extra_env",
     "claude_profile",
     "capabilities",
     "secret_entitlements",
@@ -43,6 +44,12 @@ class ProjectConfig:
     firewall_ipv6_hosts: list[str] = field(default_factory=list)
     forward_ports: list[int] = field(default_factory=list)
     extra_mounts: list[str] = field(default_factory=list)
+    # containerEnv passthrough: declared env vars land in the devcontainer
+    # overlay's containerEnv block alongside drydock-emitted ones
+    # (DRYDOCK_WORKSPACE_ID, FIREWALL_EXTRA_DOMAINS, etc.). Useful for
+    # pointing tools at specific config file paths — e.g. AWS_CONFIG_FILE
+    # for drydocks that bind-mount a readonly AWS profile dir.
+    extra_env: dict[str, str] = field(default_factory=dict)
     claude_profile: str | None = None
     capabilities: list[str] = field(default_factory=list)
     secret_entitlements: list[str] = field(default_factory=list)
@@ -99,6 +106,7 @@ def load_project_config(
         firewall_ipv6_hosts=raw.get("firewall_ipv6_hosts", []),
         forward_ports=raw.get("forward_ports", []),
         extra_mounts=raw.get("extra_mounts", []),
+        extra_env=raw.get("extra_env") or {},
         claude_profile=raw.get("claude_profile"),
         capabilities=raw.get("capabilities", []),
         secret_entitlements=raw.get("secret_entitlements", []),

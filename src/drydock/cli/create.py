@@ -67,6 +67,8 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["delegatable_firewall_domains"] = proj_cfg.delegatable_firewall_domains
     if proj_cfg.delegatable_storage_scopes:
         params["delegatable_storage_scopes"] = proj_cfg.delegatable_storage_scopes
+    if proj_cfg.extra_env:
+        params["extra_env"] = proj_cfg.extra_env
     return params
 
 

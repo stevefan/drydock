@@ -219,6 +219,8 @@ def regenerate_overlay_from_workspace(
         kwargs["claude_profile"] = cfg["claude_profile"]
     if cfg.get("extra_mounts"):
         kwargs["extra_mounts"] = list(cfg["extra_mounts"])
+    if cfg.get("extra_env"):
+        kwargs["extra_env"] = dict(cfg["extra_env"])
 
     overlay_config = OverlayConfig(**kwargs)
     devcontainer_subpath = cfg.get("devcontainer_subpath") or ".devcontainer"

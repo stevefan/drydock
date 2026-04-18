@@ -46,6 +46,7 @@ _CONFIG_FIELDS_FROM_YAML = (
     "forward_ports",
     "claude_profile",
     "extra_mounts",
+    "extra_env",
     "workspace_subdir",
     "devcontainer_subpath",
 )

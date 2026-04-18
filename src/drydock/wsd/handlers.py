@@ -50,6 +50,7 @@ _OVERLAY_PARAM_FIELDS = (
     "firewall_ipv6_hosts",
     "forward_ports",
     "claude_profile",
+    "extra_env",
 )
 
 
@@ -376,6 +377,10 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         params.get("claude_profile"),
         field_name="claude_profile",
     )
+    extra_env = _validated_str_map(
+        params.get("extra_env"),
+        field_name="extra_env",
+    )
 
     return {
         "project": project,
@@ -394,6 +399,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "firewall_ipv6_hosts": firewall_ipv6_hosts,
         "forward_ports": forward_ports,
         "claude_profile": claude_profile,
+        "extra_env": extra_env,
         "secret_entitlements": secret_entitlements,
         "extra_mounts": extra_mounts,
         "delegatable_firewall_domains": delegatable_firewall_domains,
@@ -448,6 +454,25 @@ def _validated_int_list(value: object, *, field_name: str) -> list[int]:
             data={"field": field_name, "reason": "expected list[int]"},
         )
     return value
+
+
+def _validated_str_map(value: object, *, field_name: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"field": field_name, "reason": "expected dict[str, str]"},
+        )
+    for k, v in value.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            raise _RpcError(
+                code=-32602,
+                message="invalid_params",
+                data={"field": field_name, "reason": "expected dict[str, str]"},
+            )
+    return dict(value)
 
 
 def _validated_optional_string(value: object, *, field_name: str) -> str | None:
@@ -510,6 +535,10 @@ def _overlay_from_spec(spec: dict[str, object]) -> OverlayConfig:
     claude_profile = spec.get("claude_profile")
     if isinstance(claude_profile, str):
         kwargs["claude_profile"] = claude_profile
+
+    extra_env = spec.get("extra_env")
+    if isinstance(extra_env, dict) and extra_env:
+        kwargs["extra_env"] = dict(extra_env)
 
     return OverlayConfig(**kwargs)
 
