@@ -786,6 +786,10 @@ def _materialize_storage_credentials(
     payload = cred.to_files()
     for name, value in payload.items():
         target = desk_dir / name
+        # Unlink first: the prior lease left files at 0400, which blocks
+        # in-place rewrite on non-root Harbors (root bypasses perms; tests
+        # and future non-root Harbors don't).
+        target.unlink(missing_ok=True)
         target.write_bytes(value)
         _chown_for_container(target)
         os.chmod(target, 0o400)

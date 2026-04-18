@@ -72,7 +72,7 @@ Secrets are mounted into containers at `/run/secrets/` (readonly bind-mount of `
 
 | Command | Description |
 |---|---|
-| `ws daemon start [--foreground]` | Start the `wsd` daemon (Unix socket at `~/.drydock/wsd.sock`). |
+| `ws daemon start [--foreground]` | Start the `wsd` daemon (Unix socket at `~/.drydock/run/wsd.sock`). |
 | `ws daemon stop` | Stop the daemon (SIGTERM, then SIGKILL after timeout). |
 | `ws daemon status` | Show daemon health (pid, socket, RPC responsiveness). Exit 0 if healthy, 1 otherwise. |
 | `ws daemon logs [-n N] [-f]` | Show (or follow) daemon log output. |
@@ -115,7 +115,7 @@ The `.devcontainer/` directory is the fallback template. Projects can have their
 
 ## The wsd daemon
 
-`src/drydock/wsd/` implements the daemon process running on a Harbor. It listens on a Unix socket (`~/.drydock/wsd.sock`) and exposes JSON-RPC methods for drydock lifecycle, policy enforcement, capability grants, and audit. Bearer-token auth scopes each drydock's access. The CLI is one client; workers running inside a drydock are another.
+`src/drydock/wsd/` implements the daemon process running on a Harbor. It listens on a Unix socket (`~/.drydock/run/wsd.sock`) and exposes JSON-RPC methods for drydock lifecycle, policy enforcement, capability grants, and audit. Bearer-token auth scopes each drydock's access. The CLI is one client; workers running inside a drydock are another.
 
 Start with `ws daemon start`, or enable the systemd unit on Linux (`scripts/install-linux-services.sh`). Check health with `ws daemon status`. Logs at `~/.drydock/wsd.log`.
 
@@ -132,7 +132,8 @@ Configuration (NOT secrets) set via project YAML, overlay, or `.env.devcontainer
 | `REMOTE_CONTROL_NAME` | `Claude Dev` | Remote control display name |
 | `FIREWALL_EXTRA_DOMAINS` | *(empty)* | Additional domains to whitelist |
 | `FIREWALL_IPV6_HOSTS` | *(empty)* | IPv6 hosts to allow (`host:port`) |
-| `DRYDOCK_WSD_SOCKET` | `~/.drydock/wsd.sock` | Daemon socket path |
+| `FIREWALL_AWS_IP_RANGES` | *(empty)* | AWS ip-ranges.json filters (`REGION:SERVICE` space-separated, e.g. `us-west-2:AMAZON`) |
+| `DRYDOCK_WSD_SOCKET` | `~/.drydock/run/wsd.sock` | Daemon socket path |
 | `DRYDOCK_WSD_REGISTRY` | `~/.drydock/registry.db` | Daemon registry DB path |
 | `DRYDOCK_WSD_LOG` | `~/.drydock/wsd.log` | Daemon log file path |
 
@@ -164,6 +165,7 @@ Common secret keys:
 | `claude_account_state` | `~/.claude.json` on Mac | `sync-claude-auth.sh` |
 | `aws_access_key_id` | AWS IAM console | `sync-aws-auth.sh` |
 | `aws_secret_access_key` | AWS IAM console | `sync-aws-auth.sh` |
+| `drydock-token` | auto-issued by `wsd` on drydock create | bearer auth for in-desk `drydock-rpc` (not a user-managed secret) |
 
 ## Harbor bootstrap
 

@@ -310,3 +310,45 @@ class TestStorageScopeMatching:
             with pytest.raises(InvalidStorageScopeFormat):
                 parse_storage_scope(bad)
 
+
+
+# Phase B: INFRA_PROVISION narrowness matcher — fnmatch-based IAM action
+# globs. Default-permissive-when-empty (consistent with storage scopes).
+class TestMatchesProvisionActions:
+    def test_empty_grants_permit_all(self):
+        from drydock.core.policy import matches_provision_actions
+        # Pre-narrowness drydocks only had REQUEST_PROVISION_LEASES with no
+        # specific scopes; empty list must stay permissive or upgrade breaks
+        # their existing workflow.
+        assert matches_provision_actions(["s3:CreateBucket"], []) is True
+
+    def test_exact_match(self):
+        from drydock.core.policy import matches_provision_actions
+        assert matches_provision_actions(["s3:CreateBucket"], ["s3:CreateBucket"]) is True
+
+    def test_service_wildcard(self):
+        from drydock.core.policy import matches_provision_actions
+        assert matches_provision_actions(
+            ["s3:CreateBucket", "s3:DeleteBucket"], ["s3:*"],
+        ) is True
+
+    def test_global_wildcard(self):
+        from drydock.core.policy import matches_provision_actions
+        assert matches_provision_actions(["anything:Goes"], ["*"]) is True
+
+    def test_rejects_undeclared_service(self):
+        from drydock.core.policy import matches_provision_actions
+        # Key security property: a drydock granted only s3:* cannot slip
+        # an iam: call past the broker.
+        assert matches_provision_actions(
+            ["s3:CreateBucket", "iam:CreateRole"], ["s3:*"],
+        ) is False
+
+    def test_all_requested_must_match_some_grant(self):
+        from drydock.core.policy import matches_provision_actions
+        assert matches_provision_actions(
+            ["s3:CreateBucket", "iam:ListRoles"], ["s3:*", "iam:List*"],
+        ) is True
+        assert matches_provision_actions(
+            ["s3:CreateBucket", "iam:CreateRole"], ["s3:*", "iam:List*"],
+        ) is False

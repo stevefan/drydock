@@ -15,6 +15,7 @@ from drydock.core.storage import (
     StorageCredential,
     StsAssumeRoleBackend,
     StubStorageBackend,
+    build_provision_session_policy,
     build_session_policy,
     build_storage_backend,
 )
@@ -51,6 +52,32 @@ class TestBuildSessionPolicy:
     def test_invalid_mode_raises(self):
         with pytest.raises(StorageBackendConfigError, match="unknown mode"):
             build_session_policy("mybucket", "", "admin")
+
+
+# Phase B: provision session policy is the minimal STS statement — grants
+# caller's declared action list on Resource:*. Pin the shape so future
+# callers can't accidentally widen it (e.g., adding a second statement with
+# broader resources).
+class TestBuildProvisionSessionPolicy:
+    def test_renders_exact_shape(self):
+        policy = build_provision_session_policy(["s3:CreateBucket", "iam:PutRolePolicy"])
+        assert policy == {
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Sid": "ScopedProvisionAccess",
+                "Effect": "Allow",
+                "Action": ["s3:CreateBucket", "iam:PutRolePolicy"],
+                "Resource": ["*"],
+            }],
+        }
+
+    def test_empty_actions_raises(self):
+        with pytest.raises(StorageBackendConfigError):
+            build_provision_session_policy([])
+
+    def test_invalid_action_type_raises(self):
+        with pytest.raises(StorageBackendConfigError):
+            build_provision_session_policy(["s3:CreateBucket", ""])
 
 
 class TestStubStorageBackend:

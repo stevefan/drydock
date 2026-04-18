@@ -605,3 +605,173 @@ class TestStorageMount:
         assert not (desk_dir / "aws_secret_access_key").exists()
         assert not (desk_dir / "aws_session_token").exists()
         assert not (desk_dir / "aws_session_expiration").exists()
+
+
+# Phase B: INFRA_PROVISION leases — scoped STS creds narrowed to an IAM
+# action allow-list. Pins:
+# - reject when REQUEST_PROVISION_LEASES not granted
+# - reject when requested actions escape delegatable_provision_scopes
+# - default-permissive-when-empty (consistent with storage scopes)
+# - STORAGE_MOUNT and INFRA_PROVISION share aws_* slots — issuing either
+#   supersedes the prior lease of either type (registry.find_active_aws_lease)
+class TestInfraProvision:
+    @pytest.fixture
+    def env(self, tmp_path):
+        from drydock.core.storage import StubStorageBackend
+
+        db = tmp_path / "registry.db"
+        secrets_root = tmp_path / "secrets"
+        secrets_root.mkdir()
+
+        registry = Registry(db_path=db)
+        ws = Workspace(
+            name="infra-worker",
+            project="p",
+            repo_path="/tmp/repo",
+            worktree_path="/tmp/wt-iw",
+            branch="ws/infra-worker",
+            state="running",
+            container_id="cid_iw",
+        )
+        registry.create_workspace(ws)
+        registry.update_desk_delegations(
+            ws.name,
+            capabilities=[CapabilityKind.REQUEST_PROVISION_LEASES.value],
+        )
+
+        yield {
+            "db": db,
+            "secrets_root": secrets_root,
+            "registry": registry,
+            "desk_id": ws.id,
+            "backend": StubStorageBackend(),
+        }
+        registry.close()
+
+    def _params(self, actions=("s3:CreateBucket",)):
+        return {"type": "INFRA_PROVISION", "scope": {"actions": list(actions)}}
+
+    def test_happy_path_materializes_aws_files(self, env):
+        result = request_capability(
+            self._params(["s3:*", "iam:CreateRole"]),
+            "rid-prov-1",
+            env["desk_id"],
+            registry_path=env["db"],
+            secrets_root=env["secrets_root"],
+            storage_backend=env["backend"],
+        )
+        assert result["type"] == "INFRA_PROVISION"
+        assert result["scope"]["actions"] == ["s3:*", "iam:CreateRole"]
+        assert result["expiry"] is not None
+
+        desk_dir = env["secrets_root"] / env["desk_id"]
+        assert (desk_dir / "aws_access_key_id").read_bytes().decode().startswith("STUB-")
+
+    def test_rejects_when_capability_not_granted(self, env):
+        env["registry"].update_desk_delegations("infra-worker", capabilities=[])
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._params(),
+                "rid", env["desk_id"],
+                registry_path=env["db"],
+                secrets_root=env["secrets_root"],
+                storage_backend=env["backend"],
+            )
+        assert exc.value.message == "capability_not_granted"
+        assert "request_provision_leases" in exc.value.data["missing"]
+
+    def test_narrowness_empty_list_permissive(self, env):
+        # Default-permissive-when-empty preserves pre-narrowness behavior.
+        result = request_capability(
+            self._params(["iam:DeleteUser"]),
+            "rid", env["desk_id"],
+            registry_path=env["db"],
+            secrets_root=env["secrets_root"],
+            storage_backend=env["backend"],
+        )
+        assert result["type"] == "INFRA_PROVISION"
+
+    def test_narrowness_allowed_by_glob(self, env):
+        env["registry"].update_desk_delegations(
+            "infra-worker", delegatable_provision_scopes=["s3:*"],
+        )
+        result = request_capability(
+            self._params(["s3:CreateBucket", "s3:PutBucketPolicy"]),
+            "rid", env["desk_id"],
+            registry_path=env["db"],
+            secrets_root=env["secrets_root"],
+            storage_backend=env["backend"],
+        )
+        assert result["type"] == "INFRA_PROVISION"
+
+    def test_narrowness_denied_for_undeclared_action(self, env):
+        env["registry"].update_desk_delegations(
+            "infra-worker", delegatable_provision_scopes=["s3:*"],
+        )
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._params(["s3:CreateBucket", "iam:CreateRole"]),
+                "rid", env["desk_id"],
+                registry_path=env["db"],
+                secrets_root=env["secrets_root"],
+                storage_backend=env["backend"],
+            )
+        assert exc.value.message == "narrowness_violated"
+        assert exc.value.data["rule"] == "provision_actions"
+
+    def test_invalid_action_format_rejected(self, env):
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._params(["not-an-iam-action"]),
+                "rid", env["desk_id"],
+                registry_path=env["db"],
+                secrets_root=env["secrets_root"],
+                storage_backend=env["backend"],
+            )
+        assert exc.value.message == "invalid_params"
+
+    def test_empty_actions_list_rejected(self, env):
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                {"type": "INFRA_PROVISION", "scope": {"actions": []}},
+                "rid", env["desk_id"],
+                registry_path=env["db"],
+                secrets_root=env["secrets_root"],
+                storage_backend=env["backend"],
+            )
+        assert exc.value.message == "invalid_params"
+
+    def test_supersedes_prior_storage_lease(self, env):
+        # Single-active-lease semantics span STORAGE_MOUNT + INFRA_PROVISION
+        # (both materialize the same 4 aws_* files). Regression guard against
+        # a future split that would leave stale "active" rows in the registry.
+        env["registry"].update_desk_delegations(
+            "infra-worker",
+            capabilities=[
+                CapabilityKind.REQUEST_STORAGE_LEASES.value,
+                CapabilityKind.REQUEST_PROVISION_LEASES.value,
+            ],
+        )
+        storage_result = request_capability(
+            {"type": "STORAGE_MOUNT",
+             "scope": {"bucket": "lab-data", "prefix": "", "mode": "ro"}},
+            "rid-s", env["desk_id"],
+            registry_path=env["db"],
+            secrets_root=env["secrets_root"],
+            storage_backend=env["backend"],
+        )
+        provision_result = request_capability(
+            self._params(["s3:*"]),
+            "rid-p", env["desk_id"],
+            registry_path=env["db"],
+            secrets_root=env["secrets_root"],
+            storage_backend=env["backend"],
+        )
+
+        prior = env["registry"].get_lease(storage_result["lease_id"])
+        assert prior.revoked is True
+        assert prior.revocation_reason == "superseded"
+
+        still_active = env["registry"].find_active_aws_lease(env["desk_id"])
+        assert still_active is not None
+        assert still_active.lease_id == provision_result["lease_id"]
