@@ -554,10 +554,15 @@ def _materialize_storage_credentials(
     ~/.drydock/secrets/<desk_id>/ read-only at /run/secrets/ inside the
     container, so these become immediately visible to the worker.
 
-    Each file is mode 0400 (matches ws secret set convention). Writes
-    are not atomic across the 4 files — a worker reading mid-write could
-    see inconsistent state. Acceptable today: workers poll on
-    aws_session_expiration to check freshness.
+    Files are chowned to the container's node uid (1000) with mode 0400
+    — the daemon runs as root on the Harbor, but the worker inside the
+    drydock is uid 1000. Writing as root + mode 0400 would block the
+    worker from reading its own leased credential (learned the hard way
+    during the first in-desk STORAGE_MOUNT test).
+
+    Writes are not atomic across the 4 files — a worker reading
+    mid-write could see inconsistent state. Acceptable today: workers
+    poll on aws_session_expiration to check freshness.
     """
     desk_dir = secrets_root / desk_id
     desk_dir.mkdir(parents=True, exist_ok=True)
@@ -565,7 +570,23 @@ def _materialize_storage_credentials(
     for name, value in payload.items():
         target = desk_dir / name
         target.write_bytes(value)
+        _chown_for_container(target)
         os.chmod(target, 0o400)
+
+
+def _chown_for_container(path: Path) -> None:
+    """chown to the drydock-base container's node uid/gid. No-op if not root.
+
+    Non-root Harbor (dev Mac) cannot chown; the file stays owned by the
+    Harbor user, which happens to align with the container user only on
+    Linux Harbors running as root (Hetzner convention).
+    """
+    try:
+        os.chown(path, CONTAINER_REMOTE_UID, CONTAINER_REMOTE_GID)
+    except PermissionError:
+        # Mac Harbor / non-root tests — chown needs root. Fine; file
+        # ownership only matters when a real container mounts and reads.
+        logger.debug("skipped chown on %s (not root)", path)
 
 
 def _remove_storage_credentials(secrets_root: Path, desk_id: str) -> None:
@@ -623,12 +644,16 @@ def _materialize_to_host_secret_dir(
     For cross-desk file-backed delegation: the source desk's bytes get
     written into the CALLER's secret dir on the host. The overlay's bind
     mount at /run/secrets/ picks them up immediately inside the container.
-    Mode 0400 matches the `ws secret set` convention.
+
+    File is chowned to the container's node uid (1000) with mode 0400.
+    Without chown the worker inside the drydock can't read a root-owned
+    0400 file — same class as the STORAGE_MOUNT materialization gotcha.
     """
     desk_dir = secrets_root / desk_id
     desk_dir.mkdir(parents=True, exist_ok=True)
     target = desk_dir / secret_name
     target.write_bytes(payload)
+    _chown_for_container(target)
     os.chmod(target, 0o400)
     logger.info(
         "wsd: cross-desk secret materialized at %s (%d bytes)",
