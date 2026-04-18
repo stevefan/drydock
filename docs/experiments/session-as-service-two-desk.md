@@ -123,5 +123,5 @@ Half a day to a full day once both desks are up. Most of the time is in evaluati
 
 - `~/Notebooks/commonplace/slip-box/Substrate as precipitate - dialogues compose the graph.md` — the conceptual frame
 - `~/Unified Workspaces/substrate/experiments/hypergraph/EXPERIMENT-dialogue-unification.md` — sibling experiment on the substrate side (precipitate, not live-query)
-- `docs/v2-design-capability-broker.md` — where a future `SESSION_QUERY` capability would live
-- `docs/v2-design-tailnet-identity.md` — the peer-reachability primitive this experiment rides on
+- `docs/design/capability-broker.md` — where a future `SESSION_QUERY` capability would live
+- `docs/design/tailnet-identity.md` — the peer-reachability primitive this experiment rides on

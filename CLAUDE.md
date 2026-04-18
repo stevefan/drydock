@@ -1,8 +1,8 @@
 # Drydock — Personal Agent Fabric
 
-Drydock provisions, connects, and governs bounded work environments (**drydocks**) where Claude **workers** do work. The Harbor-side CLI (`ws`) orchestrates devcontainer-based drydocks; the `wsd` daemon mediates lifecycle operations, policy enforcement, audit, and nested spawn. See [docs/vision.md](docs/vision.md) for the fabric framing and [docs/v2-scope.md](docs/v2-scope.md) for the daemon design.
+Drydock provisions, connects, and governs bounded work environments (**drydocks**) where Claude **workers** do work. The Harbor-side CLI (`ws`) orchestrates devcontainer-based drydocks; the `wsd` daemon mediates lifecycle operations, policy enforcement, audit, and nested spawn. See [docs/vision.md](docs/vision.md) for the fabric framing and [docs/design/](docs/design/) for feature design docs.
 
-**Vocabulary** (full definitions in [docs/v2-design-vocabulary.md](docs/v2-design-vocabulary.md)):
+**Vocabulary** (full definitions in [docs/design/vocabulary.md](docs/design/vocabulary.md)):
 
 - **Harbor** — the host machine running `wsd`. Authority lives here.
 - **DryDock** — a durable, bounded work environment (the runtime unit). Persistent across container rebuilds.
@@ -117,7 +117,7 @@ The `.devcontainer/` directory is the fallback template. Projects can have their
 
 Start with `ws daemon start`, or enable the systemd unit on Linux (`scripts/install-linux-services.sh`). Check health with `ws daemon status`. Logs at `~/.drydock/wsd.log`.
 
-Design details live in [docs/v2-scope.md](docs/v2-scope.md) and the `docs/v2-design-*.md` files.
+Design details live in [docs/design/](docs/design/): `capability-broker.md`, `narrowness.md`, `in-desk-rpc.md`, `storage-mount.md`, `persistence.md`, `tailnet-identity.md`, `vocabulary.md`, `employee-worker.md`, `egress-enforcement.md`.
 
 ## Environment variables
 
@@ -165,7 +165,7 @@ Common secret keys:
 
 ## Harbor bootstrap
 
-Fresh Linux Harbor setup is scripted at `scripts/bootstrap-linux-host.sh` (idempotent). After running it, complete the interactive auth steps (Tailscale, GitHub, Claude) and install the systemd units with `scripts/install-linux-services.sh`. See [docs/host-bootstrap.md](docs/host-bootstrap.md) for the full walkthrough.
+Fresh Linux Harbor setup is scripted at `scripts/bootstrap-linux-host.sh` (idempotent). After running it, complete the interactive auth steps (Tailscale, GitHub, Claude) and install the systemd units with `scripts/install-linux-services.sh`. See [docs/operations/harbor-bootstrap.md](docs/operations/harbor-bootstrap.md) + [docs/operations/systemd-units.md](docs/operations/systemd-units.md) for the full walkthrough.
 
 On any Harbor, `ws host init` + `ws host check` gets drydock state dirs right and verifies prerequisites.
 

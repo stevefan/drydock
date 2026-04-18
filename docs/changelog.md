@@ -1,6 +1,6 @@
 # Changelog
 
-> **Vocabulary note (2026-04-17):** Entries below predate the Harbor / DryDock / Worker product-vocabulary shift and are preserved verbatim as history. In current vocabulary: "host" (the machine running `wsd`) is a **Harbor**, "agent-desk" / "workspace" (product concept) is a **DryDock**, and the agent running inside is a **Worker**. Code identifiers (`ws_<slug>`, `workspaces` table, `Workspace` class, CLI `ws` prefix) are unchanged. See [v2-design-vocabulary.md](v2-design-vocabulary.md).
+> **Vocabulary note (2026-04-17):** Entries below predate the Harbor / DryDock / Worker product-vocabulary shift and are preserved verbatim as history. In current vocabulary: "host" (the machine running `wsd`) is a **Harbor**, "agent-desk" / "workspace" (product concept) is a **DryDock**, and the agent running inside is a **Worker**. Code identifiers (`ws_<slug>`, `workspaces` table, `Workspace` class, CLI `ws` prefix) are unchanged. See [design/vocabulary.md](design/vocabulary.md).
 
 ## v1.0.0 — 2026-04-18
 
@@ -14,7 +14,7 @@ V2 architecturally complete + V4 Phase 1 (STORAGE_MOUNT) live end-to-end.
 - **V4 Phase 1b narrowness.** `delegatable_storage_scopes` YAML field + registry column + validator. Scope format `"s3://bucket/prefix/*"` with optional `rw:` prefix. Default-permissive-when-empty for back-compat.
 - **V2.1 cross-drydock secret delegation.** `source_desk_id` on `RequestCapability` lets a drydock receive a secret held by another; daemon-mediated file copy into caller's secret dir.
 - **Resume regenerates overlay.** Overlay-code changes land on `ws create <suspended-name>` without `--force`-destroying the worktree.
-- **Product vocabulary refactor.** Harbor / DryDock / Worker as the product three-layer model; code identifiers unchanged. See `docs/v2-design-vocabulary.md`.
+- **Product vocabulary refactor.** Harbor / DryDock / Worker as the product three-layer model; code identifiers unchanged. See `docs/design/vocabulary.md`.
 - **project_config accepts V2 fields.** `capabilities`, `secret_entitlements`, `delegatable_secrets`, `delegatable_firewall_domains`, `delegatable_storage_scopes` all supported in YAML + forwarded via CLI→daemon.
 - **ws daemon status under systemd.** Health-derives-from-socket, not pid-file.
 - **Container-uid chown on materialized secrets.** Fixes the class of "daemon writes as root, node worker can't read" bugs for both cross-desk SECRET and STORAGE_MOUNT.

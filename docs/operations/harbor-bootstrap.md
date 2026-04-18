@@ -2,9 +2,9 @@
 
 Captures everything a fresh Linux box (Hetzner, EC2, bare metal, anything that can run Docker) needs before `ws create` will work. Tested on Ubuntu 24.04 LTS; Debian-family should be straightforward; other distros need adapter steps.
 
-A **Harbor** is the machine that runs `wsd` and hosts drydocks (see [v2-design-vocabulary.md](v2-design-vocabulary.md)). This doc is about standing up that Linux host so it can become a Harbor. Low-level "host" terminology (linux host, docker host, host uid, `ws host init/check`) stays — those are OS-level concepts. "Harbor" is the product-level role the host plays.
+A **Harbor** is the machine that runs `wsd` and hosts drydocks (see [../design/vocabulary.md](../design/vocabulary.md)). This doc is about standing up that Linux host so it can become a Harbor. Low-level "host" terminology (linux host, docker host, host uid, `ws host init/check`) stays — those are OS-level concepts. "Harbor" is the product-level role the host plays.
 
-The deterministic parts are scripted at [`scripts/bootstrap-linux-host.sh`](../scripts/bootstrap-linux-host.sh). The auth steps (Tailscale, GitHub, Claude) are interactive device flows — one-time per Harbor.
+The deterministic parts are scripted at [`scripts/bootstrap-linux-host.sh`](../../scripts/bootstrap-linux-host.sh). The auth steps (Tailscale, GitHub, Claude) are interactive device flows — one-time per Harbor. Systemd unit installation is scripted at [`scripts/install-linux-services.sh`](../../scripts/install-linux-services.sh); see [systemd-units.md](systemd-units.md).
 
 ---
 
@@ -104,7 +104,7 @@ echo -n "<your-tailnet-name>" > /root/.drydock/daemon-secrets/tailscale_tailnet
 chmod 400 /root/.drydock/daemon-secrets/*
 ```
 
-See [v2-design-tailnet-identity.md](v2-design-tailnet-identity.md) for the full lifecycle story.
+See [../design/tailnet-identity.md](../design/tailnet-identity.md) for the full lifecycle story.
 
 ## Tailscale SSH into drydocks
 

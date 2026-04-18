@@ -1,9 +1,8 @@
-# V2 Design — Tailnet Identity Lifecycle
+# Tailnet identity lifecycle
 
-**Purpose.** Pin the daemon's responsibility for **tailnet device records** as part of drydock lifecycle. Today drydock owns per-node tailnet auth (`tailscale up --authkey`) and per-node logout (`tailscale logout`) but **not** the device record on Tailscale's control plane. Logging a node out doesn't delete its device record — that requires an explicit Tailscale API call. V2's daemon, as authoritative owner of drydock lifecycle, closes this loop.
+The daemon owns Tailscale device-record cleanup as part of drydock lifecycle. Drydock owns per-node tailnet auth (`tailscale up --authkey`) and per-node logout (`tailscale logout`), but logout doesn't delete the device record on Tailscale's control plane — that requires an explicit Tailscale API call. Without the daemon closing this loop, stale records accumulate and canonical hostnames get held by offline ghosts.
 
-Extends `v2-scope.md` — adds tailnet identity cleanup to the V2 deliverables list.
-Extends `v2-design-state.md` §1a — adds two audit events to the schema.
+See [vocabulary.md](vocabulary.md) for Harbor / DryDock / Worker. See [persistence.md](persistence.md) for the audit event schema (`tailnet.device_deleted`, `tailnet.device_delete_failed`).
 
 ---
 
@@ -17,15 +16,15 @@ The daemon owns drydock lifecycle in V2. Tailnet identity IS drydock identity (t
 
 ## 2. Scope
 
-V2 adds:
+What ships:
 
 - **Daemon-side tailnet device deletion** as part of `DestroyDesk` cleanup (and cascaded child destroys).
-- **Daemon-level admin credential** (Tailscale API token), stored as daemon-internal infrastructure — NOT a per-drydock capability.
-- **Two new audit events** (`tailnet.device_deleted`, `tailnet.device_delete_failed`) extending the schema in `v2-design-state.md` §1a.
-- **One admin RPC** (`PruneStaleTailnetDevices`) for batch cleanup of orphaned records.
-- **V1 coexistence**: Harbor-mode `ws destroy` calls the same primitive when daemon is configured with a token; behavior unchanged when no token is configured.
+- **Daemon-level admin credential** (Tailscale API token), stored as daemon-internal infrastructure at `~/.drydock/daemon-secrets/` — not a per-drydock capability.
+- **Two audit events** (`tailnet.device_deleted`, `tailnet.device_delete_failed`) in the schema — see [persistence.md](persistence.md).
+- **One admin RPC** (`PruneStaleTailnetDevices`) for batch cleanup of orphaned records. CLI surface: `ws tailnet prune [--apply]`.
+- **Harbor-mode parity**: Harbor-mode `ws destroy` calls the same primitive when the daemon is configured with a token; behavior unchanged when no token is configured.
 
-V2 does **not** add:
+Not in scope:
 
 - Tailnet ACL management (separate concern, multi-Harbor policy surface).
 - Per-drydock Tailscale-side device authorization workflows.
@@ -113,59 +112,29 @@ Logic: enumerate `GET /api/v2/tailnet/{tailnet}/devices`, match each against the
 
 CLI: `ws tailnet prune` (alias of dry-run); `ws tailnet prune --apply`. Both list candidates first, before action.
 
-Useful after: force-removed containers, daemon crashes mid-destroy, V1→V2 migration via `ws adopt` (which doesn't retroactively prune V1-era ghosts).
+Useful after: force-removed containers, daemon crashes mid-destroy, stale records left by ad-hoc operations.
 
-## 6. Audit events (extends `v2-design-state.md` §1a)
+## 6. Audit events
+
+Two events extend the schema in [persistence.md](persistence.md):
 
 | Event | Emitted on | Required `details` keys |
 |---|---|---|
 | `tailnet.device_deleted` | Successful API DELETE during `DestroyDesk` cleanup or `PruneStaleTailnetDevices` | `desk_id` (nullable for prune of orphan), `hostname`, `device_id` |
 | `tailnet.device_delete_failed` | API DELETE returns non-2xx or connection fails | `desk_id` (nullable), `hostname`, `device_id` (nullable if resolve failed), `error` (string excerpt) |
 
-Both extend the existing audit framework. No new audit primitives. The `result` field of the event envelope is `"ok"` for `tailnet.device_deleted` and `"error"` for `tailnet.device_delete_failed`.
+The `result` field of the event envelope is `"ok"` for deleted and `"error"` for delete_failed.
 
-## 7. V1 coexistence
+## 7. Operational modes
 
 | Mode | Behavior |
 |---|---|
-| Pure V1 (no daemon) | `ws destroy` → `tailscale logout` → tailnet record persists. Same as today. |
-| V2 daemon + token configured | `ws destroy` (Harbor-mode CLI routes to daemon) → daemon executes destroy → tailnet device deleted. |
-| V2 daemon, no token configured | Same as V1: logout but no device delete. Daemon logs the absence at startup. |
-| V1 → V2 migration | Per the V2 on-ramp (`destroy + create` — see overview's Decisions deferred), V1 drydocks are destroyed and re-created. The destroy step under V2 deletes the tailnet record. V1-era device records orphaned by previous force-removed containers are cleaned up via `ws tailnet prune --apply`. |
+| Daemon + token configured | `ws destroy` → daemon executes destroy → tailnet device deleted. |
+| Daemon, no token configured | `ws destroy` → `tailscale logout`, tailnet record persists. Daemon logs the absence at startup. |
 
-## 8. V1.x backport path
+## 8. Open questions
 
-The `delete_tailnet_device(hostname, tailnet, api_token)` function is self-contained — no daemon dependency. V1.x can ship it standalone:
-
-- New module `src/drydock/core/tailnet.py`.
-- `cli/destroy.py` calls it after the existing `tailnet_logout`, when an admin token is present at `~/.drydock/daemon-secrets/tailscale_admin_token` (or `~/.drydock/tailscale-admin-token` for v1.x).
-- New `cli/tailnet.py` wraps `ws tailnet prune`.
-
-V2's daemon then calls the same `core/tailnet.py` function — different caller, same code path. Clean v1→v2 path; no rewrite when the daemon lands.
-
-This backport is **scoped as a separate v1.x release**, not part of the v2 daemon work. V2's design just commits that the daemon will adopt the same primitive when it ships.
-
-## 9. Reversibility
-
-| Decision | Class | Notes |
-|---|---|---|
-| Daemon-level token (vs. capability-typed) | **Medium** | Reflects architectural commitment that this is daemon infrastructure, not user state. Reversing means moving to capability model after consumers depend on direct admin RPC; breaking. |
-| Audit event names (`tailnet.device_deleted`, `tailnet.device_delete_failed`) | Medium | Stable string contracts per `v2-design-state.md` §1a commitment. |
-| Admin RPC name + signature (`PruneStaleTailnetDevices`) | Medium | Additive method; rename breaking once clients depend. |
-| Best-effort failure semantics (don't block destroy) | Low | Could tighten to fail-on-error later via opt-in flag. |
-| Hostname-based device lookup at destroy (vs. cached device ID) | Medium | Switching to cached ID requires registry migration. V2.1 may add caching as an additive optimization. |
-| `~/.drydock/daemon-secrets/` path for admin token | Low | Can move; just an installer convention. |
-
-## 10. Open questions deferred
-
-- **Multi-tailnet support**: a daemon handling drydocks across multiple tailnets. V2 assumes one tailnet per daemon, configured in `wsd.toml`. Revisit if the need surfaces.
-- **Tailscale OAuth client tokens vs. user API tokens**: OAuth clients (auto-issued from a tailnet) avoid manual rotation. V2 accepts user API tokens; OAuth-client integration is a v2.1 ergonomic improvement, not architectural.
-- **Reauth flow when admin token expires mid-destroy**: V2 logs and proceeds (best-effort). An alerting hook can be added later if this becomes noisy.
-
-## Cross-references
-
-- `v2-scope.md` — feature listed under "What V2 delivers".
-- `v2-design-state.md` §1a — audit event schema extended with the two new events above.
-- `v2-design-overview.md` — decision log entry recording the addition + Steven sign-off (2026-04-15).
-- `v2-design-protocol.md` — `PruneStaleTailnetDevices` RPC method to be added to the surface enumeration.
+- **Multi-tailnet support**: a daemon handling drydocks across multiple tailnets. Today assumes one tailnet per daemon, configured in `wsd.toml`. Revisit if the need surfaces.
+- **Tailscale OAuth client tokens vs. user API tokens**: OAuth clients (auto-issued from a tailnet) avoid manual rotation. Today accepts user API tokens; OAuth-client integration is an ergonomic improvement, not architectural.
+- **Reauth flow when admin token expires mid-destroy**: logs and proceeds (best-effort). Alerting hook addable if this becomes noisy.
 - Drydock memory: `project_v2_tailnet_lifecycle.md`.

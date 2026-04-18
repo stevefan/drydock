@@ -4,7 +4,7 @@ Drydock is a host-side CLI (`ws`) that provisions sandboxed Claude Code drydocks
 
 A *drydock* is a durable addressable place where a Worker (an agent) does work — not a throwaway container. It has a stable name, a scoped policy, a git worktree, and (once the container is up) a Claude Code session you can attach to from anywhere on your tailnet. The container can come and go; the drydock persists.
 
-Your laptop or server running `wsd` is the **Harbor**; each drydock you create lives on that Harbor. See [v2-design-vocabulary.md](v2-design-vocabulary.md) for the full vocabulary.
+Your laptop or server running `wsd` is the **Harbor**; each drydock you create lives on that Harbor. See [design/vocabulary.md](design/vocabulary.md) for the full vocabulary.
 
 This guide walks you from zero to a running drydock. If you're using Drydock for a monorepo with heterogeneous sub-projects, the per-project YAML section is the part that matters most.
 
@@ -35,7 +35,7 @@ ws secret list myproject                     # show what's set
 ws secret push myproject --to root@host      # sync to a remote Harbor
 ```
 
-The drydock id is `ws_<name_slug>` — deterministic from the `ws create` args (dashes and spaces in the name become underscores). Secret names are validated (alphanumeric + underscores only). See [secrets-design.md](secrets-design.md) for the full convention and the v2 broker direction.
+The drydock id is `ws_<name_slug>` — deterministic from the `ws create` args (dashes and spaces in the name become underscores). Secret names are validated (alphanumeric + underscores only). See [operations/secrets.md](operations/secrets.md) for the operator's guide and [design/capability-broker.md](design/capability-broker.md) for the lease model.
 
 ## Install `ws`
 
@@ -206,7 +206,7 @@ See the auction-crawl project for a working example with three scheduled jobs.
 
 ## The v2 daemon
 
-The v2 daemon (`ws daemon`) adds RPC-mediated drydock management, enabling nested spawning (a Worker inside a drydock calling `ws create` to spawn a child drydock), cross-drydock secret delegation, and Harbor-wide policy enforcement. Slices 1-3 are complete with 11 RPC methods. See [v2-scope.md](v2-scope.md) for the design.
+The `wsd` daemon mediates every lifecycle operation, enforces narrowness, brokers capability leases, and audits. Workers inside drydocks reach it via a bind-mounted socket + the embedded `drydock-rpc` client. See [design/in-desk-rpc.md](design/in-desk-rpc.md) and [design/capability-broker.md](design/capability-broker.md).
 
 ### What is *not* yet shipped
 
@@ -239,7 +239,11 @@ Reinstall: `pip install -e ".[dev]" --force-reinstall`. The editable install cac
 ## Where to go next
 
 - [CLAUDE.md](../CLAUDE.md) — agent-facing conventions for Drydock development
-- [v2-design-vocabulary.md](v2-design-vocabulary.md) — Harbor / DryDock / Worker vocabulary (the canonical reference)
 - [vision.md](vision.md) — the fabric framing and long-form design rationale
-- [v2-scope.md](v2-scope.md) — the `ws` daemon for nested orchestration (slices 1-3 shipped)
-- [secrets-design.md](secrets-design.md) — secrets convention and the v2 broker direction
+- [design/vocabulary.md](design/vocabulary.md) — Harbor / DryDock / Worker vocabulary (canonical reference)
+- [design/capability-broker.md](design/capability-broker.md) — lease model, SECRET and STORAGE_MOUNT, cross-drydock delegation
+- [design/in-desk-rpc.md](design/in-desk-rpc.md) — how workers reach the daemon
+- [design/persistence.md](design/persistence.md) — state ownership, reboot recovery, audit event schema
+- [operations/harbor-bootstrap.md](operations/harbor-bootstrap.md) — standing up a fresh Linux Harbor
+- [operations/systemd-units.md](operations/systemd-units.md) — `drydock-wsd` + `drydock-desks` service lifecycle
+- [operations/secrets.md](operations/secrets.md) — operator's guide to secret files and refresh flows

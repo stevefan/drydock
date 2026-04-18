@@ -2,7 +2,7 @@
 
 **Status:** accepted 2026-04-15. Belt (in-container iptables) is current. Suspenders (egress proxy baked into `drydock-base`) is a committed direction for `drydock-base:v2`. Not yet implemented.
 
-Sibling to `docs/secrets-roadmap.md` (Phase 1 → 4) and `docs/v2-scope.md`. This doc captures the egress-control architecture separately because its failure modes are different from the secrets broker's and it ships on its own cadence.
+This doc captures the egress-control architecture separately because its failure modes are different from the capability broker's and it ships on its own cadence. See [capability-broker.md](capability-broker.md) and [narrowness.md](narrowness.md) for the firewall-domain narrowness rule at lease time.
 
 ## The problem
 
@@ -76,9 +76,8 @@ Until then, the 2026-04-15 blanket-443 fix closes the most obvious immediate hol
 
 ## References
 
-- `docs/secrets-roadmap.md` — complementary decision doc (phases + evolution)
-- `docs/v2-design-state.md` §1a — audit event schema; egress-proxy accept/reject events would extend this
-- `docs/v2-scope.md` — V2 ships without this; v2-scope.md's "Scope trim" section explicitly defers broader networking controls to V4
+- [capability-broker.md](capability-broker.md) — the lease primitive; a future `NETWORK_REACH` capability type would route here
+- [persistence.md](persistence.md) — audit event schema; egress-proxy accept/reject events would extend it
 - 2026-04-15 diagnostic confirming conntrack works on Docker-for-Mac, blanket-443 was the root cause of apparent enforcement failure (see session log)
 - AWS IP ranges reference: https://ip-ranges.amazonaws.com/ip-ranges.json
 
