@@ -73,6 +73,8 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["delegatable_provision_scopes"] = proj_cfg.delegatable_provision_scopes
     if proj_cfg.extra_env:
         params["extra_env"] = proj_cfg.extra_env
+    if proj_cfg.storage_mounts:
+        params["storage_mounts"] = proj_cfg.storage_mounts
     return params
 
 

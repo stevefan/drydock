@@ -29,6 +29,7 @@ KNOWN_KEYS = {
     "delegatable_firewall_domains",
     "delegatable_storage_scopes",
     "delegatable_provision_scopes",
+    "storage_mounts",
 }
 
 
@@ -65,6 +66,15 @@ class ProjectConfig:
     delegatable_firewall_domains: list[str] = field(default_factory=list)
     delegatable_storage_scopes: list[str] = field(default_factory=list)
     delegatable_provision_scopes: list[str] = field(default_factory=list)
+    # Declarative S3 mounts. Each entry: {source, target, mode, region?}.
+    # source is an s3://bucket/prefix URL; target is the in-container
+    # mount point (e.g. /mnt/data); mode is "ro" or "rw" (default "ro");
+    # region defaults to us-west-2 (matches the infra drydock deployment).
+    # `capabilities`, `delegatable_storage_scopes`, and
+    # `firewall_aws_ip_ranges` are auto-extended from these entries —
+    # see expand_storage_mounts() below. A drydock that doesn't declare
+    # storage_mounts gets no FUSE cap / no mount work at startup.
+    storage_mounts: list[dict] = field(default_factory=list)
 
 
 def default_projects_dir() -> Path:
@@ -112,7 +122,7 @@ def load_project_config(
             fix=f"Valid keys: {', '.join(sorted(KNOWN_KEYS))}",
         )
 
-    return ProjectConfig(
+    cfg = ProjectConfig(
         repo_path=raw.get("repo_path"),
         image=raw.get("image"),
         workspace_subdir=raw.get("workspace_subdir"),
@@ -134,4 +144,73 @@ def load_project_config(
         delegatable_firewall_domains=raw.get("delegatable_firewall_domains", []),
         delegatable_storage_scopes=raw.get("delegatable_storage_scopes", []),
         delegatable_provision_scopes=raw.get("delegatable_provision_scopes", []),
+        storage_mounts=raw.get("storage_mounts", []),
     )
+    return expand_storage_mounts(cfg)
+
+
+_DEFAULT_STORAGE_REGION = "us-west-2"
+
+
+def expand_storage_mounts(cfg: ProjectConfig) -> ProjectConfig:
+    """Derive capabilities + storage scopes + firewall ranges from storage_mounts.
+
+    One declaration → full wiring. User-provided values on the dependent
+    fields are preserved (additive); duplicates are de-dup'd.
+
+    For each entry in `cfg.storage_mounts`:
+      - adds `request_storage_leases` capability (idempotent)
+      - adds `<rw:?>s3://bucket/prefix/*` to delegatable_storage_scopes
+      - adds `<region>:AMAZON` to firewall_aws_ip_ranges
+    """
+    if not cfg.storage_mounts:
+        return cfg
+
+    caps = list(cfg.capabilities)
+    scopes = list(cfg.delegatable_storage_scopes)
+    fw = list(cfg.firewall_aws_ip_ranges)
+
+    if "request_storage_leases" not in caps:
+        caps.append("request_storage_leases")
+
+    for entry in cfg.storage_mounts:
+        if not isinstance(entry, dict):
+            raise WsError(
+                message=f"storage_mounts entries must be mappings, got {type(entry).__name__}",
+                fix="Each entry needs at least 'source' and 'target' keys.",
+            )
+        source = entry.get("source", "")
+        if not isinstance(source, str) or not source.startswith("s3://"):
+            raise WsError(
+                message=f"storage_mounts[].source must be an s3:// URL, got {source!r}",
+                fix="Example: 'source: s3://my-bucket/my-prefix'",
+            )
+        mode = (entry.get("mode") or "ro").lower()
+        if mode not in ("ro", "rw"):
+            raise WsError(
+                message=f"storage_mounts[].mode must be 'ro' or 'rw', got {mode!r}",
+                fix="Use 'ro' for read-only (default) or 'rw' for read-write.",
+            )
+        target = entry.get("target", "")
+        if not isinstance(target, str) or not target.startswith("/"):
+            raise WsError(
+                message=f"storage_mounts[].target must be an absolute container path, got {target!r}",
+                fix="Example: 'target: /mnt/data'",
+            )
+        region = entry.get("region") or _DEFAULT_STORAGE_REGION
+
+        body = source[len("s3://"):].rstrip("/")
+        scope = f"s3://{body}/*" if body else source
+        if mode == "rw":
+            scope = f"rw:{scope}"
+        if scope not in scopes:
+            scopes.append(scope)
+
+        fw_entry = f"{region}:AMAZON"
+        if fw_entry not in fw:
+            fw.append(fw_entry)
+
+    cfg.capabilities = caps
+    cfg.delegatable_storage_scopes = scopes
+    cfg.firewall_aws_ip_ranges = fw
+    return cfg

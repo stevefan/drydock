@@ -23,6 +23,6 @@
     "FIREWALL_IPV6_HOSTS": "${localEnv:FIREWALL_IPV6_HOSTS:}"
   },
   "forwardPorts": [3000],
-  "postStartCommand": "test -f /workspace/.env.devcontainer && set -a && . /workspace/.env.devcontainer && set +a; sudo /usr/local/bin/init-firewall.sh && /usr/local/bin/start-tailscale.sh && nohup /usr/local/bin/start-remote-control.sh &",
+  "postStartCommand": "test -f /workspace/.env.devcontainer && set -a && . /workspace/.env.devcontainer && set +a; sudo /usr/local/bin/init-firewall.sh && /usr/local/bin/start-tailscale.sh && /usr/local/bin/setup-storage-mounts.sh; nohup /usr/local/bin/start-remote-control.sh &",
   "waitFor": "postStartCommand"
 }

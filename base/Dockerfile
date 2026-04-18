@@ -47,12 +47,13 @@ RUN case "${TARGETARCH:-amd64}" in \
     rm -rf /tmp/awscliv2.zip /tmp/aws && \
     aws --version
 
-COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh /usr/local/bin/
+COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh setup-storage-mounts.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh \
               /usr/local/bin/start-tailscale.sh \
               /usr/local/bin/start-remote-control.sh \
               /usr/local/bin/sync-claude-auth.sh \
-              /usr/local/bin/refresh-firewall-allowlist.sh
+              /usr/local/bin/refresh-firewall-allowlist.sh \
+              /usr/local/bin/setup-storage-mounts.sh
 
 RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/tailscaled" >> /etc/sudoers.d/node-drydock && \
@@ -89,6 +90,11 @@ VOLUME /home/node/.npm
 # Umbrella would shadow project-baked assets like Playwright browsers at
 # /home/node/.cache/ms-playwright.
 VOLUME /home/node/.cache/pip
+
+# /mnt is node-writable so storage_mounts (s3fs FUSE mounts) can create
+# target subdirs at container start without root help.
+RUN chown node:node /mnt && \
+    sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
 
 USER node
 WORKDIR /workspaces

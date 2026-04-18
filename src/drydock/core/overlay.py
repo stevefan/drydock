@@ -48,6 +48,12 @@ class OverlayConfig:
     remote_control_name: str = ""
     extra_env: dict[str, str] = field(default_factory=dict)
     extra_mounts: list[str] = field(default_factory=list)
+    # Declarative S3 mounts; setup-storage-mounts.sh reads STORAGE_MOUNTS_JSON
+    # at container start, issues STORAGE_MOUNT leases, and runs s3fs per entry.
+    # Requires FUSE in the container (drydock-base bundles s3fs + fuse) and
+    # FUSE device access via --cap-add SYS_ADMIN + --device /dev/fuse runArgs,
+    # which generate_overlay adds automatically when this list is non-empty.
+    storage_mounts: list[dict] = field(default_factory=list)
     forward_ports: list[int] = field(default_factory=list)
     claude_profile: str = ""
     # In-desk RPC wiring. Set to None to disable either bind-mount
@@ -73,6 +79,10 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
     # show a descriptive name instead of Docker's default container-id prefix.
     hostname = config.tailscale_hostname or _default_identity(ws)
     overlay["runArgs"] = [f"--hostname={hostname}"]
+    if config.storage_mounts:
+        # s3fs needs FUSE device access. SYS_ADMIN is the narrower cap set
+        # docker accepts for fuse mounts (full privileged: not needed).
+        overlay["runArgs"].extend(["--cap-add=SYS_ADMIN", "--device=/dev/fuse"])
 
     container_env = _build_container_env(ws, config)
     if container_env:
@@ -224,6 +234,8 @@ def regenerate_overlay_from_workspace(
         kwargs["extra_mounts"] = list(cfg["extra_mounts"])
     if cfg.get("extra_env"):
         kwargs["extra_env"] = dict(cfg["extra_env"])
+    if cfg.get("storage_mounts"):
+        kwargs["storage_mounts"] = list(cfg["storage_mounts"])
 
     overlay_config = OverlayConfig(**kwargs)
     devcontainer_subpath = cfg.get("devcontainer_subpath") or ".devcontainer"
@@ -272,6 +284,9 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
 
     if config.firewall_aws_ip_ranges:
         env["FIREWALL_AWS_IP_RANGES"] = " ".join(config.firewall_aws_ip_ranges)
+
+    if config.storage_mounts:
+        env["STORAGE_MOUNTS_JSON"] = json.dumps(config.storage_mounts)
 
     # Workspace identity labels as env vars for container introspection
     env["DRYDOCK_WORKSPACE_ID"] = ws.id

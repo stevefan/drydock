@@ -52,6 +52,7 @@ _OVERLAY_PARAM_FIELDS = (
     "forward_ports",
     "claude_profile",
     "extra_env",
+    "storage_mounts",
 )
 
 
@@ -390,6 +391,10 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         params.get("extra_env"),
         field_name="extra_env",
     )
+    storage_mounts = _validated_dict_list(
+        params.get("storage_mounts"),
+        field_name="storage_mounts",
+    )
 
     return {
         "project": project,
@@ -410,6 +415,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "forward_ports": forward_ports,
         "claude_profile": claude_profile,
         "extra_env": extra_env,
+        "storage_mounts": storage_mounts,
         "secret_entitlements": secret_entitlements,
         "extra_mounts": extra_mounts,
         "delegatable_firewall_domains": delegatable_firewall_domains,
@@ -465,6 +471,18 @@ def _validated_int_list(value: object, *, field_name: str) -> list[int]:
             data={"field": field_name, "reason": "expected list[int]"},
         )
     return value
+
+
+def _validated_dict_list(value: object, *, field_name: str) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(x, dict) for x in value):
+        raise _RpcError(
+            code=-32602,
+            message="invalid_params",
+            data={"field": field_name, "reason": "expected list[dict]"},
+        )
+    return [dict(x) for x in value]
 
 
 def _validated_str_map(value: object, *, field_name: str) -> dict[str, str]:

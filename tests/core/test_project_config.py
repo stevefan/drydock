@@ -195,3 +195,96 @@ class TestLoadProjectConfig:
         cfg = load_project_config("old", base_dir=tmp_path)
         assert cfg is not None
         assert cfg.delegatable_storage_scopes == []
+
+
+# Phase C: storage_mounts declarative shorthand. One YAML block expands to
+# capability + scope + firewall. Pin the expansion so regressions can't
+# silently widen (missing request_storage_leases) or narrow (missing scope).
+class TestStorageMountsExpansion:
+    def _load(self, tmp_path, yaml_text):
+        from drydock.core.project_config import load_project_config
+        (tmp_path / "p.yaml").write_text(yaml_text)
+        return load_project_config("p", base_dir=tmp_path)
+
+    def test_adds_capability_scope_firewall(self, tmp_path):
+        cfg = self._load(tmp_path, """
+storage_mounts:
+  - source: s3://my-bucket/data
+    target: /mnt/data
+    mode: ro
+""")
+        assert "request_storage_leases" in cfg.capabilities
+        assert "s3://my-bucket/data/*" in cfg.delegatable_storage_scopes
+        assert "us-west-2:AMAZON" in cfg.firewall_aws_ip_ranges
+
+    def test_rw_mode_wraps_scope(self, tmp_path):
+        cfg = self._load(tmp_path, """
+storage_mounts:
+  - source: s3://b/p
+    target: /mnt/p
+    mode: rw
+""")
+        assert "rw:s3://b/p/*" in cfg.delegatable_storage_scopes
+
+    def test_explicit_region_respected(self, tmp_path):
+        cfg = self._load(tmp_path, """
+storage_mounts:
+  - source: s3://b
+    target: /mnt/b
+    region: eu-central-1
+""")
+        assert "eu-central-1:AMAZON" in cfg.firewall_aws_ip_ranges
+
+    def test_user_scopes_preserved_additive(self, tmp_path):
+        # Explicit delegatable_storage_scopes survive expansion. Regression
+        # guard: a user might declare extra scopes outside storage_mounts
+        # for leases they'll request programmatically; expansion must not
+        # clobber them.
+        cfg = self._load(tmp_path, """
+delegatable_storage_scopes:
+  - s3://other-bucket/*
+storage_mounts:
+  - source: s3://my-bucket/data
+    target: /mnt/data
+""")
+        assert "s3://other-bucket/*" in cfg.delegatable_storage_scopes
+        assert "s3://my-bucket/data/*" in cfg.delegatable_storage_scopes
+
+    def test_duplicate_mount_dedups(self, tmp_path):
+        cfg = self._load(tmp_path, """
+storage_mounts:
+  - source: s3://b/p
+    target: /mnt/a
+  - source: s3://b/p
+    target: /mnt/aa
+""")
+        assert cfg.delegatable_storage_scopes.count("s3://b/p/*") == 1
+        assert cfg.firewall_aws_ip_ranges.count("us-west-2:AMAZON") == 1
+
+    def test_rejects_non_s3_source(self, tmp_path):
+        from drydock.core import WsError
+        with pytest.raises(WsError, match="s3:// URL"):
+            self._load(tmp_path, """
+storage_mounts:
+  - source: gs://bucket/data
+    target: /mnt/x
+""")
+
+    def test_rejects_invalid_mode(self, tmp_path):
+        from drydock.core import WsError
+        with pytest.raises(WsError, match="must be 'ro' or 'rw'"):
+            self._load(tmp_path, """
+storage_mounts:
+  - source: s3://b
+    target: /mnt/b
+    mode: admin
+""")
+
+    def test_rejects_non_absolute_target(self, tmp_path):
+        from drydock.core import WsError
+        with pytest.raises(WsError, match="absolute container path"):
+            self._load(tmp_path, """
+storage_mounts:
+  - source: s3://b
+    target: data
+""")

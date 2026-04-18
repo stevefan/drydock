@@ -383,3 +383,33 @@ class TestProjectYamlToOverlay:
         overlay_config = OverlayConfig(forward_ports=proj_cfg.forward_ports)
         overlay = generate_overlay(ws, overlay_config)
         assert overlay["forwardPorts"] == [8000, 3000]
+
+
+class TestStorageMounts:
+    """Overlay wiring for declarative S3 mounts.
+
+    generate_overlay emits STORAGE_MOUNTS_JSON env + FUSE runArgs when
+    OverlayConfig.storage_mounts is non-empty. The container-side
+    setup-storage-mounts.sh consumes both. Absence of either would leave
+    s3fs unable to mount (no device access) or the script with nothing
+    to do — regression guard.
+    """
+
+    def test_runargs_include_fuse_cap_when_mounts_declared(self, ws):
+        cfg = OverlayConfig(storage_mounts=[{"source": "s3://b/p", "target": "/mnt/p", "mode": "ro"}])
+        overlay = generate_overlay(ws, cfg)
+        assert "--cap-add=SYS_ADMIN" in overlay["runArgs"]
+        assert "--device=/dev/fuse" in overlay["runArgs"]
+
+    def test_runargs_no_fuse_when_no_mounts(self, ws):
+        overlay = generate_overlay(ws, OverlayConfig())
+        assert "--cap-add=SYS_ADMIN" not in overlay["runArgs"]
+
+    def test_storage_mounts_env_emitted_as_json(self, ws):
+        entries = [
+            {"source": "s3://b/p", "target": "/mnt/p", "mode": "ro"},
+            {"source": "s3://c", "target": "/mnt/c", "mode": "rw", "region": "us-east-1"},
+        ]
+        cfg = OverlayConfig(storage_mounts=entries)
+        overlay = generate_overlay(ws, cfg)
+        assert json.loads(overlay["containerEnv"]["STORAGE_MOUNTS_JSON"]) == entries

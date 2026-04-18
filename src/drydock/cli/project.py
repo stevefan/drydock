@@ -50,6 +50,7 @@ _CONFIG_FIELDS_FROM_YAML = (
     "extra_env",
     "workspace_subdir",
     "devcontainer_subpath",
+    "storage_mounts",
 )
 
 

@@ -71,6 +71,6 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
   "postCreateCommand": "SOCK_GID=$(stat -c '%g' /var/run/docker.sock) && sudo groupmod -g $SOCK_GID docker 2>/dev/null; pip install -e '.[dev]' 2>/dev/null || true",
-  "postStartCommand": "test -f /workspace/.env.devcontainer && set -a && . /workspace/.env.devcontainer && set +a; for f in /workspace/*/.env.devcontainer; do test -f \"$f\" && set -a && . \"$f\" && set +a; done; sudo /usr/local/bin/init-firewall.sh && /usr/local/bin/start-tailscale.sh && nohup /usr/local/bin/start-remote-control.sh &",
+  "postStartCommand": "test -f /workspace/.env.devcontainer && set -a && . /workspace/.env.devcontainer && set +a; for f in /workspace/*/.env.devcontainer; do test -f \"$f\" && set -a && . \"$f\" && set +a; done; sudo /usr/local/bin/init-firewall.sh && /usr/local/bin/start-tailscale.sh && /usr/local/bin/setup-storage-mounts.sh; nohup /usr/local/bin/start-remote-control.sh &",
   "waitFor": "postStartCommand"
 }
