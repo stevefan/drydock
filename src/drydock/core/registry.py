@@ -47,6 +47,9 @@ V2_WORKSPACE_COLUMNS = (
     ("delegatable_firewall_domains", "TEXT DEFAULT '[]'"),
     ("delegatable_secrets", "TEXT DEFAULT '[]'"),
     ("capabilities", "TEXT DEFAULT '[]'"),
+    # Phase 1b narrowness for STORAGE_MOUNT leases. Empty list = no
+    # narrowness declared (capability gate alone). See policy.DeskPolicy.
+    ("delegatable_storage_scopes", "TEXT DEFAULT '[]'"),
 )
 
 V2_TABLES = """
@@ -272,7 +275,8 @@ class Registry:
     def load_desk_policy(self, desk_id: str) -> dict | None:
         row = self._conn.execute(
             """
-            SELECT delegatable_firewall_domains, delegatable_secrets, capabilities, config
+            SELECT delegatable_firewall_domains, delegatable_secrets, capabilities,
+                   delegatable_storage_scopes, config
             FROM workspaces
             WHERE id = ?
             """,
@@ -289,6 +293,7 @@ class Registry:
         delegatable_firewall_domains: list[str] | None = None,
         delegatable_secrets: list[str] | None = None,
         capabilities: list[str] | None = None,
+        delegatable_storage_scopes: list[str] | None = None,
     ) -> None:
         fields: dict[str, str] = {}
         if delegatable_firewall_domains is not None:
@@ -297,6 +302,8 @@ class Registry:
             fields["delegatable_secrets"] = json.dumps(delegatable_secrets)
         if capabilities is not None:
             fields["capabilities"] = json.dumps(capabilities)
+        if delegatable_storage_scopes is not None:
+            fields["delegatable_storage_scopes"] = json.dumps(delegatable_storage_scopes)
         if not fields:
             return
         self.update_workspace(name, **fields)

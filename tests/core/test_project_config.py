@@ -146,3 +146,29 @@ class TestLoadProjectConfig:
         assert cfg.secret_entitlements == ["anthropic_api_key"]
         assert cfg.delegatable_secrets == ["claude_credentials", "anthropic_api_key"]
         assert cfg.delegatable_firewall_domains == ["api.anthropic.com"]
+
+    # Phase 1b: per-bucket narrowness for STORAGE_MOUNT. YAML passthrough.
+    def test_delegatable_storage_scopes_parsed(self, tmp_path):
+        (tmp_path / "lab.yaml").write_text(
+            "repo_path: /srv/lab\n"
+            "capabilities:\n"
+            "  - request_storage_leases\n"
+            "delegatable_storage_scopes:\n"
+            "  - 's3://lab-data/scraped/*'\n"
+            "  - 'rw:s3://lab-data/output/*'\n"
+        )
+        cfg = load_project_config("lab", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.delegatable_storage_scopes == [
+            "s3://lab-data/scraped/*",
+            "rw:s3://lab-data/output/*",
+        ]
+
+    def test_delegatable_storage_scopes_default_empty(self, tmp_path):
+        # Regression: back-compat invariant. A project YAML without the
+        # field must not raise and must produce an empty list, so existing
+        # drydocks keep their default-permissive (capability-only) gate.
+        (tmp_path / "old.yaml").write_text("repo_path: /srv/old\n")
+        cfg = load_project_config("old", base_dir=tmp_path)
+        assert cfg is not None
+        assert cfg.delegatable_storage_scopes == []

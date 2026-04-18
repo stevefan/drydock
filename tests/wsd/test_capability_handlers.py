@@ -509,6 +509,72 @@ class TestStorageMount:
             )
         assert exc.value.message == "invalid_params"
 
+    # Phase 1b: per-bucket narrowness. Empty granted list = permissive
+    # (back-compat); non-empty = must match.
+    def test_narrowness_empty_list_permissive(self, storage_env):
+        # Default-permissive-when-empty: storage_env sets no scopes, so
+        # the capability gate alone governs. Request for any bucket works.
+        result = request_capability(
+            self._storage_params(bucket="anything", prefix="at-all", mode="ro"),
+            "rid-empty",
+            storage_env["desk_id"],
+            registry_path=storage_env["db"],
+            secrets_root=storage_env["secrets_root"],
+            storage_backend=storage_env["backend"],
+        )
+        assert result["type"] == "STORAGE_MOUNT"
+
+    def test_narrowness_allowed_when_scope_matches(self, storage_env):
+        storage_env["registry"].update_desk_delegations(
+            "storage-worker",
+            delegatable_storage_scopes=["s3://lab-data/scraped/*"],
+        )
+        result = request_capability(
+            self._storage_params(bucket="lab-data", prefix="scraped/2026", mode="ro"),
+            "rid-ok",
+            storage_env["desk_id"],
+            registry_path=storage_env["db"],
+            secrets_root=storage_env["secrets_root"],
+            storage_backend=storage_env["backend"],
+        )
+        assert result["type"] == "STORAGE_MOUNT"
+
+    def test_narrowness_denied_for_undeclared_bucket(self, storage_env):
+        storage_env["registry"].update_desk_delegations(
+            "storage-worker",
+            delegatable_storage_scopes=["s3://lab-data/scraped/*"],
+        )
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._storage_params(bucket="other-bucket", prefix="x", mode="ro"),
+                "rid-deny",
+                storage_env["desk_id"],
+                registry_path=storage_env["db"],
+                secrets_root=storage_env["secrets_root"],
+                storage_backend=storage_env["backend"],
+            )
+        assert exc.value.message == "narrowness_violated"
+        assert exc.value.data["rule"] == "storage_scope"
+
+    def test_narrowness_denied_for_rw_on_ro_scope(self, storage_env):
+        # rw escalation past a ro-only scope is the exact attack
+        # surface Phase 1b closes. Keep this pinned.
+        storage_env["registry"].update_desk_delegations(
+            "storage-worker",
+            delegatable_storage_scopes=["s3://lab-data/*"],
+        )
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                self._storage_params(bucket="lab-data", prefix="scraped", mode="rw"),
+                "rid-rw-deny",
+                storage_env["desk_id"],
+                registry_path=storage_env["db"],
+                secrets_root=storage_env["secrets_root"],
+                storage_backend=storage_env["backend"],
+            )
+        assert exc.value.message == "narrowness_violated"
+        assert exc.value.data["rule"] == "storage_scope"
+
     def test_release_removes_materialized_aws_files(self, storage_env):
         result = request_capability(
             self._storage_params(),

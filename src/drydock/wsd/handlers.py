@@ -348,6 +348,10 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         params.get("capabilities"),
         field_name="capabilities",
     )
+    delegatable_storage_scopes = _validated_string_list(
+        params.get("delegatable_storage_scopes"),
+        field_name="delegatable_storage_scopes",
+    )
     tailscale_hostname = _validated_optional_string(
         params.get("tailscale_hostname"),
         field_name="tailscale_hostname",
@@ -395,6 +399,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "delegatable_firewall_domains": delegatable_firewall_domains,
         "delegatable_secrets": delegatable_secrets,
         "capabilities": capabilities,
+        "delegatable_storage_scopes": delegatable_storage_scopes,
     }
 
 
@@ -890,6 +895,7 @@ def _perform_create(
         delegatable_firewall_domains=list(spec["delegatable_firewall_domains"]),
         delegatable_secrets=list(spec["delegatable_secrets"]),
         capabilities=list(spec["capabilities"]),
+        delegatable_storage_scopes=list(spec.get("delegatable_storage_scopes") or []),
     )
     if parent_desk_id is not None:
         ws = registry.update_workspace(ws.name, parent_desk_id=parent_desk_id)

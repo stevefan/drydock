@@ -25,6 +25,7 @@ KNOWN_KEYS = {
     "secret_entitlements",
     "delegatable_secrets",
     "delegatable_firewall_domains",
+    "delegatable_storage_scopes",
 }
 
 
@@ -47,6 +48,7 @@ class ProjectConfig:
     secret_entitlements: list[str] = field(default_factory=list)
     delegatable_secrets: list[str] = field(default_factory=list)
     delegatable_firewall_domains: list[str] = field(default_factory=list)
+    delegatable_storage_scopes: list[str] = field(default_factory=list)
 
 
 DEFAULT_PROJECTS_DIR = Path.home() / ".drydock" / "projects"
@@ -102,4 +104,5 @@ def load_project_config(
         secret_entitlements=raw.get("secret_entitlements", []),
         delegatable_secrets=raw.get("delegatable_secrets", []),
         delegatable_firewall_domains=raw.get("delegatable_firewall_domains", []),
+        delegatable_storage_scopes=raw.get("delegatable_storage_scopes", []),
     )

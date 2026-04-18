@@ -34,7 +34,7 @@ from uuid import uuid4
 from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID
 from drydock.core.audit import emit_audit
 from drydock.core.capability import CapabilityLease, CapabilityType
-from drydock.core.policy import CapabilityKind
+from drydock.core.policy import CapabilityKind, matches_storage_scope
 from drydock.core.registry import Registry
 from drydock.core.secrets import (
     BackendPermissionDenied,
@@ -319,6 +319,30 @@ def _handle_storage_request(
                 data={
                     "missing": CapabilityKind.REQUEST_STORAGE_LEASES.value,
                     "fix": "Grant request_storage_leases in the desk's project YAML capabilities",
+                },
+            )
+
+        # Phase 1b: per-bucket narrowness. Empty list in the registry
+        # means "no narrowness declared" — capability gate alone governs,
+        # matching pre-Phase-1b behavior. Once declared, every request
+        # must match at least one scope.
+        granted_scopes = json.loads(policy_row.get("delegatable_storage_scopes") or "[]")
+        if not matches_storage_scope(
+            {"bucket": spec["bucket"], "prefix": spec["prefix"], "mode": spec["mode"]},
+            granted_scopes,
+        ):
+            raise _RpcError(
+                code=-32006, message="narrowness_violated",
+                data={
+                    "rule": "storage_scope",
+                    "requested": {
+                        "bucket": spec["bucket"],
+                        "prefix": spec["prefix"],
+                        "mode": spec["mode"],
+                    },
+                    "granted": granted_scopes,
+                    "fix": "Add a matching entry to delegatable_storage_scopes in the project YAML "
+                           "(e.g. 's3://bucket/prefix/*' or 'rw:s3://bucket/prefix/*')",
                 },
             )
 

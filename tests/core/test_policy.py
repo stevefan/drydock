@@ -215,3 +215,98 @@ def test_validate_spawn_is_deterministic():
     first = validate_spawn(parent, child)
     for _ in range(100):
         assert validate_spawn(parent, child) == first
+
+
+# ---------- Storage-scope matching (Phase 1b narrowness) ----------
+#
+# Pins the rules callers depend on:
+#   - empty granted = default-permissive (back-compat invariant)
+#   - prefix is a path-segment prefix, not a string prefix
+#     (so "data" matches "data/foo" but not "data2")
+#   - rw request requires explicit rw: scope; ro never does
+#   - malformed scope entries don't accidentally match-all
+
+
+class TestStorageScopeMatching:
+    def test_empty_granted_is_permissive(self):
+        from drydock.core.policy import matches_storage_scope
+        # Pre-1b behavior: capability-only gate. Documented default.
+        assert matches_storage_scope(
+            {"bucket": "anything", "prefix": "at/all", "mode": "rw"}, []
+        ) is True
+
+    def test_prefix_is_segment_not_substring(self):
+        from drydock.core.policy import matches_storage_scope
+        # "data" must not match "data2" — segment boundary matters.
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "data2", "mode": "ro"},
+            ["s3://b/data/*"],
+        ) is False
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "data/x", "mode": "ro"},
+            ["s3://b/data/*"],
+        ) is True
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "data", "mode": "ro"},
+            ["s3://b/data/*"],
+        ) is True
+
+    def test_whole_bucket_scope_matches_any_prefix(self):
+        from drydock.core.policy import matches_storage_scope
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "anywhere/deep", "mode": "ro"},
+            ["s3://b/*"],
+        ) is True
+
+    def test_bucket_mismatch_rejects(self):
+        from drydock.core.policy import matches_storage_scope
+        assert matches_storage_scope(
+            {"bucket": "other", "prefix": "p", "mode": "ro"},
+            ["s3://b/*"],
+        ) is False
+
+    def test_rw_request_requires_rw_scope(self):
+        from drydock.core.policy import matches_storage_scope
+        # ro-only scope rejects rw request.
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "p", "mode": "rw"},
+            ["s3://b/p/*"],
+        ) is False
+        # rw: scope allows both rw and ro.
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "p", "mode": "rw"},
+            ["rw:s3://b/p/*"],
+        ) is True
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "p", "mode": "ro"},
+            ["rw:s3://b/p/*"],
+        ) is True
+
+    def test_malformed_scope_does_not_match_all(self):
+        from drydock.core.policy import matches_storage_scope
+        # A garbage scope entry must not accidentally permit everything;
+        # it's skipped. If the only entry is garbage, nothing matches
+        # (NOT default-permissive — that's only for an empty list).
+        assert matches_storage_scope(
+            {"bucket": "b", "prefix": "p", "mode": "ro"},
+            ["not-a-scope-string"],
+        ) is False
+
+    def test_parse_storage_scope_forms(self):
+        from drydock.core.policy import parse_storage_scope
+        assert parse_storage_scope("s3://b/p/*") == {
+            "bucket": "b", "prefix": "p", "mode_max": "ro",
+        }
+        assert parse_storage_scope("rw:s3://b/p/*") == {
+            "bucket": "b", "prefix": "p", "mode_max": "rw",
+        }
+        assert parse_storage_scope("s3://b") == {
+            "bucket": "b", "prefix": "", "mode_max": "ro",
+        }
+
+    def test_parse_storage_scope_rejects_malformed(self):
+        from drydock.core.policy import InvalidStorageScopeFormat, parse_storage_scope
+        for bad in ["", "   ", "bucket-no-scheme", "s3://", "s3://*"]:
+            with pytest.raises(InvalidStorageScopeFormat):
+                parse_storage_scope(bad)
+

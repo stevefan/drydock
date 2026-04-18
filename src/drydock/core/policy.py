@@ -19,6 +19,10 @@ class InvalidMountFormat(ValueError):
     """Raised when a mount cannot be canonicalized safely."""
 
 
+class InvalidStorageScopeFormat(ValueError):
+    """Raised when a storage-scope string cannot be parsed."""
+
+
 class CapabilityKind(str, Enum):
     """Bare capability grants enforced by the pure spawn validator."""
 
@@ -37,6 +41,16 @@ class DeskPolicy:
     delegatable_secrets: frozenset[str] = field(default_factory=frozenset)
     capabilities: frozenset[CapabilityKind] = field(default_factory=frozenset)
     extra_mounts: frozenset[MountTuple] = field(default_factory=frozenset)
+    # Phase 1b (V4): per-bucket narrowness for STORAGE_MOUNT leases.
+    # Stored as the raw YAML strings; parsed on match.
+    # Format: "s3://bucket/prefix/*" (ro-only) or "rw:s3://bucket/prefix/*".
+    # Default-permissive-when-empty: an empty tuple means "no narrowness
+    # declared yet; capability gate alone governs" — preserves pre-1b
+    # behavior for existing drydocks. A non-empty tuple enables narrowness
+    # matching: requests must match at least one scope. Stricter
+    # empty=deny-all was considered and rejected because it would break
+    # every existing request_storage_leases user immediately.
+    delegatable_storage_scopes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -221,3 +235,109 @@ def _canonicalize_mount_tuple(value: Any, raw: str | None = None) -> MountTuple:
 
 def _has_parent_reference(path: str) -> bool:
     return any(segment == ".." for segment in path.split(os.sep))
+
+
+def parse_storage_scope(raw: str) -> dict:
+    """Parse a YAML storage-scope string into {bucket, prefix, mode_max}.
+
+    Accepted forms:
+      "s3://bucket/prefix/*"       -> ro-only
+      "s3://bucket/*"              -> ro-only, whole-bucket
+      "rw:s3://bucket/prefix/*"    -> rw allowed (ro also matches)
+      "s3://bucket"                -> ro-only, whole-bucket, no prefix
+
+    Trailing "/*" is optional sugar meaning "everything under this prefix".
+    The bucket is always required; empty prefix means whole-bucket access.
+
+    Raises InvalidStorageScopeFormat on a malformed string.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise InvalidStorageScopeFormat(f"invalid storage scope: {raw!r}")
+
+    value = raw.strip()
+    mode_max = "ro"
+    if value.startswith("rw:"):
+        mode_max = "rw"
+        value = value[3:]
+    elif value.startswith("ro:"):
+        # Tolerated for symmetry; equivalent to no prefix.
+        value = value[3:]
+
+    if not value.startswith("s3://"):
+        raise InvalidStorageScopeFormat(f"invalid storage scope: {raw!r}")
+    body = value[len("s3://"):]
+    if not body:
+        raise InvalidStorageScopeFormat(f"invalid storage scope: {raw!r}")
+
+    # Strip trailing "/*" sugar; it just means "match any suffix".
+    if body.endswith("/*"):
+        body = body[:-2]
+    elif body == "*":
+        raise InvalidStorageScopeFormat(f"invalid storage scope: {raw!r}")
+
+    if "/" in body:
+        bucket, prefix = body.split("/", 1)
+    else:
+        bucket, prefix = body, ""
+
+    bucket = bucket.strip()
+    prefix = prefix.strip("/")
+    if not bucket:
+        raise InvalidStorageScopeFormat(f"invalid storage scope: {raw!r}")
+
+    return {"bucket": bucket, "prefix": prefix, "mode_max": mode_max}
+
+
+def matches_storage_scope(requested: dict, granted: list[str] | tuple[str, ...]) -> bool:
+    """Return True iff `requested` matches at least one `granted` scope.
+
+    `requested` has shape {bucket, prefix, mode}. `granted` is the raw
+    YAML-level list (strings). See parse_storage_scope for format.
+
+    Default-permissive-when-empty: an empty `granted` list returns True
+    unconditionally. This preserves pre-Phase-1b behavior for existing
+    drydocks that were granted request_storage_leases without declaring
+    specific scopes. Once a drydock declares any scope, every request
+    must match one.
+
+    Match rules per scope:
+      - bucket must equal exactly
+      - requested.prefix must equal granted.prefix OR start with
+        granted.prefix + "/" (so scope "data" matches requested "data"
+        and "data/foo" but not "data2"). Empty granted.prefix matches
+        any requested prefix.
+      - requested.mode must be <= granted.mode_max ("ro" always OK;
+        "rw" requires explicit "rw:" prefix on the scope)
+    """
+    if not granted:
+        return True
+
+    req_bucket = requested.get("bucket", "")
+    req_prefix = (requested.get("prefix") or "").strip("/")
+    req_mode = requested.get("mode", "ro")
+
+    for raw in granted:
+        try:
+            scope = parse_storage_scope(raw)
+        except InvalidStorageScopeFormat:
+            # Malformed scopes never match. The YAML loader does not
+            # validate shape today; a typo in one entry must not silently
+            # allow everything, so we skip it rather than raise.
+            continue
+
+        if scope["bucket"] != req_bucket:
+            continue
+        if not _prefix_matches(req_prefix, scope["prefix"]):
+            continue
+        if req_mode == "rw" and scope["mode_max"] != "rw":
+            continue
+        return True
+    return False
+
+
+def _prefix_matches(requested: str, granted: str) -> bool:
+    if granted == "":
+        return True
+    if requested == granted:
+        return True
+    return requested.startswith(granted + "/")
