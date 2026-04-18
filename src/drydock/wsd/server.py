@@ -692,7 +692,19 @@ def serve(
         finally:
             registry.close()
     with _Server(str(socket_path), _Handler) as server:
-        logger.info("wsd: listening on %s", socket_path)
+        # Socket must be connect()-able by workers inside drydock containers,
+        # which run as uid 1000 (node). wsd runs as Harbor root. Unix-socket
+        # connect() requires write permission on the socket file; the default
+        # umask leaves it at 0755, which blocks non-root callers.
+        #
+        # 0o666 is not the security boundary — the bearer token (checked by
+        # the auth middleware) is. The socket permission just gates transport
+        # reachability from inside drydocks. See docs/v2-design-protocol.md §5.
+        try:
+            os.chmod(socket_path, 0o666)
+        except OSError as exc:
+            logger.warning("wsd: failed to chmod socket to 0o666: %s", exc)
+        logger.info("wsd: listening on %s (mode 0o666)", socket_path)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
