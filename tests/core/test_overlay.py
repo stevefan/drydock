@@ -400,6 +400,9 @@ class TestStorageMounts:
         overlay = generate_overlay(ws, cfg)
         assert "--cap-add=SYS_ADMIN" in overlay["runArgs"]
         assert "--device=/dev/fuse" in overlay["runArgs"]
+        # Regression guard: Ubuntu + AppArmor blocks mount() even with
+        # SYS_ADMIN cap; unconfined profile is required for s3fs to mount.
+        assert "--security-opt=apparmor=unconfined" in overlay["runArgs"]
 
     def test_runargs_no_fuse_when_no_mounts(self, ws):
         overlay = generate_overlay(ws, OverlayConfig())

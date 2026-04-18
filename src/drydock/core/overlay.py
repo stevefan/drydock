@@ -80,9 +80,18 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
     hostname = config.tailscale_hostname or _default_identity(ws)
     overlay["runArgs"] = [f"--hostname={hostname}"]
     if config.storage_mounts:
-        # s3fs needs FUSE device access. SYS_ADMIN is the narrower cap set
-        # docker accepts for fuse mounts (full privileged: not needed).
-        overlay["runArgs"].extend(["--cap-add=SYS_ADMIN", "--device=/dev/fuse"])
+        # s3fs FUSE mount requires three separate pieces of docker config:
+        #   - SYS_ADMIN: mount() syscall capability
+        #   - /dev/fuse device: FUSE kernel interface
+        #   - apparmor=unconfined: the default docker apparmor profile blocks
+        #     mount() even when SYS_ADMIN is present, producing an opaque
+        #     "fuse: mount failed: Permission denied". Surfaced on Hetzner
+        #     during Phase C smoke (Ubuntu + AppArmor enforce on docker).
+        overlay["runArgs"].extend([
+            "--cap-add=SYS_ADMIN",
+            "--device=/dev/fuse",
+            "--security-opt=apparmor=unconfined",
+        ])
 
     container_env = _build_container_env(ws, config)
     if container_env:
