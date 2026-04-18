@@ -182,6 +182,66 @@ def remove_overlay(overlay_path: str) -> None:
     Path(overlay_path).unlink()
 
 
+def regenerate_overlay_from_workspace(
+    ws: Workspace,
+    *,
+    overlay_dir: Path | None = None,
+) -> Path:
+    """Re-derive a drydock's overlay file from its registry config snapshot.
+
+    Used by three callers:
+    - `_resume_desk` on `ws create` of a suspended drydock
+    - `ws overlay regenerate <name>` as an explicit CLI entry point
+    - `ws project reload <name>` after reconciling YAML into the registry
+
+    Pulls persistent fields (tailscale_*, firewall_*, extra_mounts, etc.)
+    from `ws.config` — the registry's stored snapshot. Project-YAML drift
+    isn't reconciled here; `ws project reload` is the path for that.
+
+    `overlay_dir` defaults to `~/.drydock/overlays/` but callers can
+    override (e.g. tests). Returns the path of the rewritten file.
+    """
+    cfg = ws.config if isinstance(ws.config, dict) else {}
+    kwargs: dict[str, object] = {}
+    if cfg.get("tailscale_hostname"):
+        kwargs["tailscale_hostname"] = cfg["tailscale_hostname"]
+    if cfg.get("tailscale_serve_port"):
+        kwargs["tailscale_serve_port"] = cfg["tailscale_serve_port"]
+    if cfg.get("remote_control_name"):
+        kwargs["remote_control_name"] = cfg["remote_control_name"]
+    if cfg.get("firewall_extra_domains"):
+        kwargs["firewall_extra_domains"] = list(cfg["firewall_extra_domains"])
+    if cfg.get("firewall_ipv6_hosts"):
+        kwargs["firewall_ipv6_hosts"] = list(cfg["firewall_ipv6_hosts"])
+    if cfg.get("forward_ports"):
+        kwargs["forward_ports"] = list(cfg["forward_ports"])
+    if cfg.get("claude_profile"):
+        kwargs["claude_profile"] = cfg["claude_profile"]
+    if cfg.get("extra_mounts"):
+        kwargs["extra_mounts"] = list(cfg["extra_mounts"])
+
+    overlay_config = OverlayConfig(**kwargs)
+    devcontainer_subpath = cfg.get("devcontainer_subpath") or ".devcontainer"
+    worktree_path = ws.worktree_path
+    if not worktree_path:
+        raise WsError(
+            f"Cannot regenerate overlay for '{ws.name}': worktree_path unset in registry",
+            fix=f"Rebuild from clean state: ws create {ws.project} {ws.name} --force",
+        )
+    base_devcontainer = Path(worktree_path) / devcontainer_subpath / "devcontainer.json"
+
+    if overlay_dir is None:
+        stored = cfg.get("overlay_path") if isinstance(cfg, dict) else None
+        overlay_dir = Path(stored).parent if stored else Path.home() / ".drydock" / "overlays"
+
+    return write_overlay(
+        ws,
+        overlay_dir,
+        overlay_config,
+        base_devcontainer_path=base_devcontainer,
+    )
+
+
 def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]:
     env: dict[str, str] = {}
 

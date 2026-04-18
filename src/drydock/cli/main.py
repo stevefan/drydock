@@ -44,6 +44,8 @@ from drydock.cli.upgrade import upgrade  # noqa: E402
 from drydock.cli.new import new  # noqa: E402
 from drydock.cli.audit import audit  # noqa: E402
 from drydock.cli.schedule import schedule  # noqa: E402
+from drydock.cli.overlay import overlay  # noqa: E402
+from drydock.cli.project import project  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(upgrade)
@@ -61,3 +63,5 @@ cli.add_command(tailnet)
 cli.add_command(host)
 cli.add_command(daemon)
 cli.add_command(schedule)
+cli.add_command(overlay)
+cli.add_command(project)

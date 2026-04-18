@@ -13,7 +13,7 @@ from drydock.core import WsError
 from drydock.core.audit import emit_audit
 from drydock.core.checkout import create_checkout
 from drydock.core.devcontainer import DevcontainerCLI
-from drydock.core.overlay import OverlayConfig, remove_overlay, write_overlay
+from drydock.core.overlay import OverlayConfig, regenerate_overlay_from_workspace, remove_overlay, write_overlay
 from drydock.core.policy import (
     CapabilityKind,
     DeskPolicy,
@@ -717,51 +717,14 @@ def _count_provisioning_children(registry: Registry, parent_desk_id: str) -> int
 
 
 def _regenerate_overlay_for_resume(existing: Workspace, overlay_path: Path) -> None:
-    """Re-derive the overlay file from current OverlayConfig + stored config.
+    """Thin wrapper over regenerate_overlay_from_workspace for the resume path.
 
-    Resume uses the same overlay path but rewrites the file in place so
-    code-level overlay changes (new bind-mounts, env vars, default paths)
-    land on every `ws create <name>` for suspended desks. Not a validator
-    — if a field is missing or malformed, callers see the normal overlay
-    generation errors.
-
-    Persistent fields are pulled from `existing.config` (the registry's
-    stored snapshot): tailscale_hostname, tailscale_serve_port,
-    remote_control_name, firewall_extra_domains, firewall_ipv6_hosts,
-    forward_ports, claude_profile, extra_mounts. These were set at create
-    time from the project YAML; project-YAML drift isn't reconciled here
-    (scope: resume is "pick up overlay-code changes", not "re-read YAML").
+    Kept as a function so the resume flow's logging + error-handling
+    stays colocated with `_resume_desk`. The heavy lifting is in
+    `drydock.core.overlay.regenerate_overlay_from_workspace` so the CLI
+    (`ws overlay regenerate`, `ws project reload`) can call it directly.
     """
-    cfg = existing.config if isinstance(existing.config, dict) else {}
-    kwargs: dict[str, object] = {}
-    if cfg.get("tailscale_hostname"):
-        kwargs["tailscale_hostname"] = cfg["tailscale_hostname"]
-    if cfg.get("tailscale_serve_port"):
-        kwargs["tailscale_serve_port"] = cfg["tailscale_serve_port"]
-    if cfg.get("remote_control_name"):
-        kwargs["remote_control_name"] = cfg["remote_control_name"]
-    if cfg.get("firewall_extra_domains"):
-        kwargs["firewall_extra_domains"] = list(cfg["firewall_extra_domains"])
-    if cfg.get("firewall_ipv6_hosts"):
-        kwargs["firewall_ipv6_hosts"] = list(cfg["firewall_ipv6_hosts"])
-    if cfg.get("forward_ports"):
-        kwargs["forward_ports"] = list(cfg["forward_ports"])
-    if cfg.get("claude_profile"):
-        kwargs["claude_profile"] = cfg["claude_profile"]
-    if cfg.get("extra_mounts"):
-        kwargs["extra_mounts"] = list(cfg["extra_mounts"])
-
-    overlay_config = OverlayConfig(**kwargs)
-    workspace_folder = existing.worktree_path
-    devcontainer_subpath = cfg.get("devcontainer_subpath") or ".devcontainer"
-    base_devcontainer = Path(workspace_folder) / devcontainer_subpath / "devcontainer.json"
-
-    write_overlay(
-        existing,
-        overlay_path.parent,
-        overlay_config,
-        base_devcontainer_path=base_devcontainer,
-    )
+    regenerate_overlay_from_workspace(existing, overlay_dir=overlay_path.parent)
     logger.info("resume: regenerated overlay for %s at %s", existing.name, overlay_path)
 
 
