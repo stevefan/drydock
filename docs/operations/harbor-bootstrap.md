@@ -4,7 +4,26 @@ Captures everything a fresh Linux box (Hetzner, EC2, bare metal, anything that c
 
 A **Harbor** is the machine that runs `wsd` and hosts drydocks (see [../design/vocabulary.md](../design/vocabulary.md)). This doc is about standing up that Linux host so it can become a Harbor. Low-level "host" terminology (linux host, docker host, host uid, `ws host init/check`) stays — those are OS-level concepts. "Harbor" is the product-level role the host plays.
 
-The deterministic parts are scripted at [`scripts/bootstrap-linux-host.sh`](../../scripts/bootstrap-linux-host.sh). The auth steps (Tailscale, GitHub, Claude) are interactive device flows — one-time per Harbor. Systemd unit installation is scripted at [`scripts/install-linux-services.sh`](../../scripts/install-linux-services.sh); see [systemd-units.md](systemd-units.md).
+Everything deterministic is scripted at [`scripts/bootstrap-linux-host.sh`](../../scripts/bootstrap-linux-host.sh). One script covers apt deps, drydock install, state dirs, and systemd unit installation — no second script to remember. Auth (Tailscale, GitHub, Claude) is interactive *unless* you pre-inject credentials via env vars (see "Unattended bootstrap" below).
+
+### Unattended bootstrap (EC2 user-data, Terraform, etc.)
+
+Set env vars before running the script and auth happens silently:
+
+```bash
+TAILSCALE_AUTHKEY=tskey-xxx \
+HARBOR_HOSTNAME=my-aws-harbor \
+GH_TOKEN=ghp_xxx \
+    bash <(curl -fsSL https://raw.githubusercontent.com/stevefan/drydock/main/scripts/bootstrap-linux-host.sh)
+```
+
+| Env var | Effect |
+|---|---|
+| `TAILSCALE_AUTHKEY` | Runs `tailscale up --authkey=… --hostname=$HARBOR_HOSTNAME --ssh` non-interactively |
+| `HARBOR_HOSTNAME` | Tailnet hostname for this Harbor (defaults to `hostname -s`) |
+| `GH_TOKEN` | `gh` respects natively; skip the interactive `gh auth login` |
+
+With all three set, a fresh EC2 instance reaches "Harbor ready for `ws create`" in one user-data block.
 
 ---
 
@@ -22,13 +41,13 @@ Idempotent. Safe to re-run.
 
 1. Installs apt packages: `docker-ce` + buildx, `tailscale`, `python3` + `pipx`, `git`, `curl`, `gh`, `nodejs`/`npm`.
 2. Installs `@devcontainers/cli` globally via npm.
-3. Creates drydock state directories with proper modes:
-   - `/root/.drydock/{projects,secrets,worktrees,overlays,daemon-secrets,logs}` — `secrets` and `daemon-secrets` get `0700`.
-   - `/var/log/drydock/` for cron output capture.
-4. Touches `/root/.gitconfig` if missing — the base devcontainer template bind-mounts `${HOME}/.gitconfig` and Linux docker hard-fails on missing mount sources (see [historical context](../docs/_archive/) and the project memory `project_linux_host_papercuts.md` if available).
-5. Clones drydock into `/root/drydock` and `pipx install --editable` it. `ws` lands at `/root/.local/bin/ws`.
+3. Clones drydock into `/root/drydock` and `pipx install --editable` it. `ws` lands at `/root/.local/bin/ws`.
+4. Runs `ws host init` — creates state directories (`/root/.drydock/{projects,secrets,worktrees,overlays,daemon-secrets,logs}`, `secrets` and `daemon-secrets` at `0700`), `/var/log/drydock/`, and a `/root/.gitconfig` stub (the base devcontainer template bind-mounts `${HOME}/.gitconfig` and Linux docker hard-fails on missing mount sources).
+5. Installs systemd units via `scripts/install-linux-services.sh` — `drydock-wsd.service` (daemon) and `drydock-desks.service` (resume-on-boot). Enables both.
+6. Starts `drydock-wsd.service`.
+7. If `TAILSCALE_AUTHKEY` is set, runs `tailscale up` with `--ssh` non-interactively.
 
-After the script, `which ws && ws --version` should work.
+After the script, `which ws && ws --version` works and `ws daemon status` reports healthy. `ws host check` will flag any remaining gaps (e.g. Tailscale not joined, gh not authed).
 
 ## Interactive steps (one-time per Harbor)
 
@@ -149,8 +168,8 @@ If the project has source-of-truth state on another Harbor (e.g. a SQLite DB on 
 |---|---|---|
 | Provision the VM | Out of scope — IaC layer (Terraform, OpenTofu, manual). Drydock is a fabric, not a cloud broker. | Never inside drydock proper. A sibling `fleet/` repo could thinly wrap Hetzner / fly / etc. |
 | Install host deps | Chicken-and-egg — drydock has to be installed first. | This bootstrap script lives in the drydock repo as the install vector. `curl ... \| bash` it. |
-| `ws host init` | Could create state dirs, gitconfig stub, daemon-secrets dir post-install. | Worth a small addition: `ws host init` runs steps the bootstrap script does post-pipx-install. Idempotent, safe to re-run after a bad install. Closes the gap between "drydock CLI installed" and "ready to `ws create`". |
-| `ws host check` | Could verify docker present, devcontainer CLI present, gh auth, claude auth (volume present), tailnet status, daemon-secrets dir mode. | Worth adding: returns a structured "what's missing" report. Would make Linux-host papercuts self-diagnosing. Also useful before `ws create` as a preflight. |
+| `ws host init` | Done — bootstrap invokes it. Creates state dirs + gitconfig stub. Idempotent, safe to re-run. |
+| `ws host check` | Done — returns a structured "what's missing" report. Run after bootstrap or any time as a preflight. |
 | Tailscale device API token | Must be generated in the tailnet admin UI (no programmatic flow today). | Could prompt with the URL when the token file is missing; eventually OAuth client tokens auto-rotate. |
 | Claude `/login` | Interactive device flow inside the container. | Could prompt "Run `claude /login` in this container before ws exec --interactive"; not much more drydock can add. |
 

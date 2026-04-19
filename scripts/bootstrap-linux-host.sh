@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
-# Drydock host bootstrap — gets a fresh Linux box ready for `ws create`.
+# Drydock host bootstrap — fresh Linux box → working Harbor.
 #
-# Usage on the target box (as root):
+# Usage (interactive):
 #   curl -fsSL https://raw.githubusercontent.com/stevefan/drydock/main/scripts/bootstrap-linux-host.sh | bash
-# OR after cloning:
-#   bash drydock/scripts/bootstrap-linux-host.sh
 #
-# Idempotent — safe to re-run.
-# Tested on Ubuntu 24.04 LTS. Debian-family should work; other distros need
-# adapter steps for the package install commands.
+# Usage (unattended, e.g. EC2 user-data):
+#   TAILSCALE_AUTHKEY=tskey-xxx HARBOR_HOSTNAME=my-harbor \
+#       bash <(curl -fsSL https://raw.githubusercontent.com/stevefan/drydock/main/scripts/bootstrap-linux-host.sh)
 #
-# Deterministic steps this script handles:
-#   - apt deps: docker (+buildx), tailscale, python3+pipx, git, gh, node/npm
-#   - @devcontainers/cli (npm global)
-#   - /root/.drydock/{projects,secrets,worktrees,overlays,daemon-secrets,logs}
-#   - /var/log/drydock/
-#   - /root/.gitconfig stub (devcontainer bind-mount needs it to exist)
-#   - drydock clone + pipx editable install
+# Env:
+#   TAILSCALE_AUTHKEY  — if set, runs `tailscale up` non-interactively
+#   HARBOR_HOSTNAME    — tailnet hostname for this Harbor (defaults to `hostname -s`)
+#   GH_TOKEN           — gh respects natively; skip `gh auth login` if set
+#   DRYDOCK_REPO/DIR   — override for fork/local clone
 #
-# Interactive steps you do AFTER (one-time per host):
-#   - tailscale up --hostname=<box-name>            (device flow)
-#   - gh auth login --hostname github.com --git-protocol https --web  (device flow)
-#   - gh auth setup-git
-#   - (after first ws create) docker exec -u node <ctr> claude /login (device flow)
-#   - (optional) generate Tailscale API token, write to
-#     /root/.drydock/daemon-secrets/{tailscale_admin_token,tailscale_tailnet}
+# Idempotent — safe to re-run. Tested on Ubuntu 24.04 LTS.
 #
-# See docs/host-bootstrap.md for full context.
+# Handles: apt deps (docker, tailscale, gh, node/npm, pipx), @devcontainers/cli,
+# drydock clone + editable install, `ws host init`, systemd units (wsd + resume),
+# optional unattended tailnet join.
+#
+# Still interactive after bootstrap (if env vars not set):
+#   - tailscale up --hostname=<box>               (device flow)
+#   - gh auth login                                (device flow, unless GH_TOKEN set)
+#   - (after first ws create) docker exec … claude /login
+#   - (optional) tailscale admin API token → /root/.drydock/daemon-secrets/
+#
+# See docs/operations/harbor-bootstrap.md for the full walkthrough.
 
 set -euo pipefail
 
@@ -94,19 +94,27 @@ if ! command -v devcontainer >/dev/null; then
     npm install -g @devcontainers/cli >/dev/null
 fi
 
-log "drydock state directories"
-mkdir -p /root/.drydock/{projects,secrets,worktrees,overlays,daemon-secrets,logs}
-chmod 700 /root/.drydock/secrets /root/.drydock/daemon-secrets
-mkdir -p /var/log/drydock
-
-log "/root/.gitconfig stub (devcontainer bind-mount needs it)"
-[ -f /root/.gitconfig ] || touch /root/.gitconfig
-
 log "drydock CLI (pipx editable)"
 if [ ! -d "$DRYDOCK_DIR/.git" ]; then
     git clone "$DRYDOCK_REPO" "$DRYDOCK_DIR"
 fi
 pipx install --force --editable "$DRYDOCK_DIR" >/dev/null
+
+log "ws host init (state dirs + gitconfig stub)"
+ws host init
+
+log "systemd units (wsd + resume-on-boot)"
+bash "$DRYDOCK_DIR/scripts/install-linux-services.sh"
+
+if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
+    ts_hostname="${HARBOR_HOSTNAME:-$(hostname -s)}"
+    log "tailscale up --authkey=*** --hostname=$ts_hostname (unattended)"
+    tailscale up --authkey="$TAILSCALE_AUTHKEY" --hostname="$ts_hostname" --ssh
+else
+    log "tailscale: no TAILSCALE_AUTHKEY; run interactively below"
+fi
+
+systemctl start drydock-wsd.service || true
 
 echo
 log "versions"
@@ -117,27 +125,30 @@ gh --version | head -1
 ws --version 2>&1 | head -1 || ws --help 2>&1 | head -1
 
 echo
-log "done. Interactive next steps:"
+log "bootstrap done. Remaining interactive steps (skip any already satisfied):"
 cat <<EOF
 
-  tailscale up --hostname=<this-box-name>
+  # 1. Tailnet (skip if TAILSCALE_AUTHKEY was set):
+  tailscale up --hostname=<this-box-name> --ssh
+
+  # 2. GitHub (skip if GH_TOKEN env is set):
   gh auth login --hostname github.com --git-protocol https --web
   gh auth setup-git
 
-  # Per-project (after the auth steps):
+  # 3. Verify:
+  ws host check
+  ws daemon status
+
+  # Per-project, when you're ready:
   git clone https://github.com/<you>/<project>.git /root/src/<project>
   cat > /root/.drydock/projects/<project>.yaml <<YAML
   repo_path: /root/src/<project>
-  workspace_subdir: <subdir-if-monorepo>
   tailscale_hostname: <project>
   firewall_extra_domains:
-    - <hosts the desk legitimately needs>
+    - <hosts the drydock legitimately needs>
   YAML
   echo -n "<value>" | ws secret set <project> <key>
   ws create <project>
 
-  # After first ws create, log Claude in (one-time, persists to volume):
-  docker exec -u node \$(docker ps -q --filter label=devcontainer.local_folder=/root/.drydock/worktrees/ws_<project>/<subdir>) claude /login
-
-See docs/host-bootstrap.md for full context.
+See docs/operations/harbor-bootstrap.md for the full walkthrough.
 EOF
