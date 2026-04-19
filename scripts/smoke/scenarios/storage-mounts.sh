@@ -52,11 +52,20 @@ $SSH "ws create $NAME" >/dev/null 2>&1 || { echo "FAIL: ws create"; exit 1; }
 
 # Assert marker visible via mount
 got=$($SSH "ws exec $NAME -- cat /mnt/check/greeting.txt 2>&1")
-if [ "$got" = "$MARKER" ]; then
-    echo "marker read through mount: OK ($got)"
+if [ "$got" != "$MARKER" ]; then
+    echo "FAIL: expected '$MARKER', got '$got'"
+    $SSH "ws exec $NAME -- cat /tmp/storage-mounts.log 2>&1" | sed 's/^/  log: /'
+    exit 1
+fi
+echo "marker read through mount: OK ($got)"
+
+# Assert refresh daemon is alive (Phase C.1)
+refresh_status=$($SSH "ws exec $NAME -- bash -lc 'pid=\$(cat /tmp/storage-mounts-refresh.pid 2>/dev/null); if [ -n \"\$pid\" ] && kill -0 \$pid 2>/dev/null; then echo alive:\$pid; else echo dead; fi'")
+if [[ "$refresh_status" == alive:* ]]; then
+    echo "refresh daemon: OK ($refresh_status)"
     exit 0
 else
-    echo "FAIL: expected '$MARKER', got '$got'"
+    echo "FAIL: refresh daemon not running ($refresh_status)"
     $SSH "ws exec $NAME -- cat /tmp/storage-mounts.log 2>&1" | sed 's/^/  log: /'
     exit 1
 fi

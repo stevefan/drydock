@@ -182,9 +182,11 @@ User-declared values on those fields are preserved and deduped.
 
 The script parses `STORAGE_MOUNTS_JSON`, requests one `STORAGE_MOUNT` lease per entry, and `s3fs bucket:/prefix target …` with creds from `/run/secrets/aws_*`. Errors are logged to `/tmp/storage-mounts.log` but don't fail the drydock — a misdeclared mount leaves the rest running.
 
-### Known follow-up (Phase C.1)
+### Cred refresh (Phase C.1)
 
-STS sessions expire after 4h (`aws_session_expiration`). `s3fs` reads creds once at mount and holds them in memory — after expiry, requests start 403'ing and the mount effectively dies. A credential-refresh daemon or periodic remount is the obvious next step. Acceptable for drydocks whose workload completes within the session; not yet suitable for drydocks that need to hold a mount across days.
+STS sessions expire after 4h (`aws_session_expiration`). `s3fs` reads creds once at mount and holds them in memory — after expiry, requests start 403'ing and the mount silently dies.
+
+`refresh-storage-mounts.sh` runs as a backgrounded daemon spawned at the end of `setup-storage-mounts.sh` (idempotent via `/tmp/storage-mounts-refresh.pid`). Each successful mount is recorded to `/tmp/storage-mounts-state.json`. The daemon reads `/run/secrets/aws_session_expiration`, sleeps until `LEAD_SECS` (default 600s) before expiry, then for each entry: `RequestCapability STORAGE_MOUNT` (mints fresh STS creds, overwriting `/run/secrets/aws_*`), `fusermount -u` the target, and re-run `s3fs` with the fresh env creds. Disruption is bounded to ~1s per mount per refresh cycle. The loop then reads the new expiration and sleeps again.
 
 ## Other follow-ups
 

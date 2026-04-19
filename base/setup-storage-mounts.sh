@@ -14,6 +14,7 @@
 set -uo pipefail
 
 LOG=/tmp/storage-mounts.log
+STATE=/tmp/storage-mounts-state.json
 : > "$LOG"
 log() { echo "$(date +%H:%M:%S) $*" | tee -a "$LOG"; }
 
@@ -24,6 +25,10 @@ fi
 
 count=$(echo "$STORAGE_MOUNTS_JSON" | jq '. | length')
 log "storage-mounts: setting up $count mount(s)"
+
+# Accumulate successfully mounted entries here; refresh daemon reads it.
+: > "$STATE"
+state_entries="[]"
 
 # Single lease covers all entries — each RequestCapability overwrites the
 # aws_* files (see capability-broker.md §7). To support N mounts with one
@@ -96,7 +101,22 @@ while IFS= read -r entry; do
     }
 
     log "    mounted"
+
+    state_entries=$(echo "$state_entries" | jq \
+        --arg source "$source" --arg target "$target" --arg mode "$mode" \
+        --arg region "$region" --arg bucket "$bucket" --arg prefix "$prefix" \
+        '. + [{source:$source, target:$target, mode:$mode, region:$region, bucket:$bucket, prefix:$prefix}]')
 done < <(echo "$STORAGE_MOUNTS_JSON" | jq -c '.[]')
+
+echo "$state_entries" > "$STATE"
+
+# Launch refresh daemon if any mount succeeded. Idempotent via pidfile
+# inside the script itself — safe to invoke on every container start.
+if [ "$(echo "$state_entries" | jq 'length')" -gt 0 ]; then
+    log "storage-mounts: launching refresh daemon"
+    nohup /usr/local/bin/refresh-storage-mounts.sh >/dev/null 2>&1 &
+    disown || true
+fi
 
 log "storage-mounts: done"
 exit 0
