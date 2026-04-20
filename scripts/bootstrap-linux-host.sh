@@ -53,8 +53,18 @@ apt-get update -qq
 apt-get install -y -qq \
     apt-transport-https ca-certificates curl gnupg lsb-release \
     git \
-    python3 python3-pip pipx \
-    nodejs npm
+    python3 python3-pip pipx
+
+# nodejs/npm: only install via apt if neither is present. Boxes that
+# already have Node from NodeSource/nvm/Volta ship their own npm, and
+# Debian's npm package pulls in a swarm of node-* deps that conflict
+# with non-Debian nodejs installs ("held broken packages").
+if ! command -v node >/dev/null || ! command -v npm >/dev/null; then
+    log "node/npm: installing via apt (no prior install detected)"
+    apt-get install -y -qq nodejs npm
+else
+    log "node/npm: already present ($(node --version), npm $(npm --version)); skipping apt install"
+fi
 
 log "docker"
 if ! command -v docker >/dev/null; then
