@@ -30,6 +30,7 @@ KNOWN_KEYS = {
     "delegatable_storage_scopes",
     "delegatable_provision_scopes",
     "storage_mounts",
+    "deskwatch",
 }
 
 
@@ -69,6 +70,11 @@ class ProjectConfig:
     # Declarative S3 mounts; expand_storage_mounts fills in the capability,
     # scope, and firewall entries each one implies. See storage-mount.md.
     storage_mounts: list[dict] = field(default_factory=list)
+    # Deskwatch health expectations: jobs / outputs / probes. Parsed lazily
+    # at evaluation time via deskwatch.parse_deskwatch_config, so YAML
+    # reload doesn't crash on deskwatch typos — errors surface when the user
+    # runs `ws deskwatch` and can see them.
+    deskwatch: dict = field(default_factory=dict)
 
 
 def default_projects_dir() -> Path:
@@ -139,6 +145,7 @@ def load_project_config(
         delegatable_storage_scopes=raw.get("delegatable_storage_scopes", []),
         delegatable_provision_scopes=raw.get("delegatable_provision_scopes", []),
         storage_mounts=raw.get("storage_mounts", []),
+        deskwatch=raw.get("deskwatch") or {},
     )
     return expand_storage_mounts(cfg)
 

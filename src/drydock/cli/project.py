@@ -51,6 +51,7 @@ _CONFIG_FIELDS_FROM_YAML = (
     "workspace_subdir",
     "devcontainer_subpath",
     "storage_mounts",
+    "deskwatch",
 )
 
 

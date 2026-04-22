@@ -140,36 +140,80 @@ def parse_cron_5field(expr: str) -> list[dict]:
     return [interval]
 
 
+def _render_job_shell(desk: str, job: ScheduleJob) -> str:
+    """Build the shell expression that runs one job and records its
+    outcome. Single-line, / bin / sh-safe. Used by both cron and
+    (wrapped in sh -c) launchd renderers.
+
+    Shape:
+        ws exec DESK -- CMD [>> LOG 2>&1] ; ec=$? ;
+        ws deskwatch-record DESK job_run NAME ok|failed --detail "exit $ec" ;
+        exit $ec
+    """
+    safe_desk = shlex.quote(desk)
+    safe_name = shlex.quote(job.name)
+    tail = f" >> {shlex.quote(job.log)} 2>&1" if job.log else ""
+    return (
+        f"/usr/local/bin/ws exec {safe_desk} -- {job.command}{tail}; "
+        f"ec=$?; "
+        f"/usr/local/bin/ws deskwatch-record {safe_desk} job_run {safe_name} "
+        f"$([ $ec -eq 0 ] && echo ok || echo failed) --detail \"exit $ec\"; "
+        f"exit $ec"
+    )
+
+
 def render_cron_file(desk: str, jobs: list[ScheduleJob]) -> str:
     """Render a cron file for /etc/cron.d/drydock-<desk>.
+
+    Each line wraps the job command so its outcome is recorded via
+    `ws deskwatch-record`. The wrapper preserves the original exit code
+    (cron reports failures via MAILTO as before) and adds a deskwatch
+    event regardless of whether the desk declares deskwatch expectations
+    — the history is free, expectations gate only the `ws deskwatch`
+    evaluation.
 
     Log paths are shell-quoted to prevent command injection — a malicious
     schedule.yaml with `log: "/tmp/x; rm -rf /"` must not be executable.
     The command field is intentionally NOT quoted (it's a shell command
-    by design), but the desk name and log path are user-controlled strings
-    that land in a cron line interpreted by /bin/sh.
+    by design), but the desk name, job name, and log path are
+    user-controlled strings that land in a cron line interpreted by
+    /bin/sh.
     """
     lines = [
         f"# Managed by drydock — do not edit. desk={desk}",
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "",
     ]
-    safe_desk = shlex.quote(desk)
     for job in jobs:
-        tail = f" >> {shlex.quote(job.log)} 2>&1" if job.log else ""
-        lines.append(
-            f"{job.cron} root /usr/local/bin/ws exec {safe_desk} -- {job.command}{tail}"
-        )
+        lines.append(f"{job.cron} root {_render_job_shell(desk, job)}")
     lines.append("")  # trailing newline
     return "\n".join(lines)
 
 
 def render_launchd_plist(desk: str, job: ScheduleJob) -> bytes:
-    """Render a launchd plist for one job."""
+    """Render a launchd plist for one job.
+
+    Wraps the command in `sh -c` so we can tack on the deskwatch-record
+    call (same shape as the cron wrapper in `_render_job_shell`).
+    StandardOut/ErrorPath are still set so the existing log tailing
+    flow keeps working; the shell wrapper doesn't redirect since
+    launchd handles it at the plist level.
+    """
     intervals = parse_cron_5field(job.cron)
 
-    # Build the command as a shell invocation via ws exec
-    program_args = ["/usr/local/bin/ws", "exec", desk, "--", *job.command.split()]
+    # Launchd doesn't chain commands natively — wrap in sh -c.
+    safe_desk = shlex.quote(desk)
+    safe_name = shlex.quote(job.name)
+    program_args = [
+        "/bin/sh", "-c",
+        (
+            f"/usr/local/bin/ws exec {safe_desk} -- {job.command}; "
+            f"ec=$?; "
+            f"/usr/local/bin/ws deskwatch-record {safe_desk} job_run {safe_name} "
+            f"$([ $ec -eq 0 ] && echo ok || echo failed) --detail \"exit $ec\"; "
+            f"exit $ec"
+        ),
+    ]
 
     plist: dict = {
         "Label": f"com.drydock.{desk}.{job.name}",

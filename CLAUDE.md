@@ -92,6 +92,9 @@ When the daemon is running, `ws create`, `ws destroy`, and `ws upgrade` route op
 | `ws schedule remove <drydock>` | Remove all Harbor-native schedule entries for a drydock. |
 | `ws project reload <drydock>` | Re-read project YAML, update registry config + policy columns, regenerate overlay. Apply to running container with `ws stop && ws create`. `--no-regenerate` skips overlay rewrite. |
 | `ws overlay regenerate <drydock>` | Rewrite overlay JSON from current registry config (no YAML re-read). Narrower than `project reload` — picks up overlay-code changes without touching YAML. |
+| `ws sync <drydock>` | Fast-forward the desk's worktree from its source repo (git fetch + ff-only merge). Refuses on dirty worktree or diverged branches. Kills the "edit in place on the Harbor" antipattern. |
+| `ws deskwatch [drydock]` | Workload health evaluation: scheduled-job outcomes, output freshness, probe results. Exits 1 if any desk has violations. Declare expectations in the project YAML's `deskwatch:` block. See [docs/design/deskwatch.md](docs/design/deskwatch.md). |
+| `ws deskwatch-record <drydock> <kind> <name> <status>` | Internal helper invoked by scheduler wrappers; records a single deskwatch event. |
 
 Global flags: `--json` (force JSON output), `--dry-run` (preview without executing).
 Output is JSON automatically when piped or called by an agent.

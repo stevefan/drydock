@@ -101,6 +101,32 @@ def _migrate_to_v2(conn: sqlite3.Connection) -> None:
     conn.executescript(V2_TABLES)
 
 
+# Deskwatch: observational record of workload health for each desk.
+# `kind` is a short tag ('job_run', 'probe_result', 'output_check'),
+# `name` is the caller-defined identifier within that kind (the job
+# name from schedule.yaml, the probe name from the project YAML, the
+# output path). `status` is 'ok', 'failed', or 'missing'. `detail` is
+# a free-form string (exit code, stderr tail, file age, etc.).
+V3_TABLES = """
+CREATE TABLE IF NOT EXISTS deskwatch_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    desk_id      TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    timestamp    TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    detail       TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_deskwatch_lookup
+    ON deskwatch_events (desk_id, kind, name, timestamp DESC);
+"""
+
+
+def _migrate_to_v3(conn: sqlite3.Connection) -> None:
+    conn.executescript(V3_TABLES)
+
+
 class Registry:
     def __init__(self, db_path: Path | None = None):
         if db_path is None:
@@ -117,6 +143,7 @@ class Registry:
     def _migrate(self):
         self._conn.executescript(SCHEMA)
         _migrate_to_v2(self._conn)
+        _migrate_to_v3(self._conn)
         self._conn.commit()
 
     def close(self):
@@ -463,6 +490,50 @@ class Registry:
             if lease.type in (CapabilityType.STORAGE_MOUNT, CapabilityType.INFRA_PROVISION):
                 return lease
         return None
+
+    # ------------------------------------------------------------------
+    # Deskwatch events (v3)
+    # ------------------------------------------------------------------
+
+    def record_deskwatch_event(
+        self,
+        desk_id: str,
+        kind: str,
+        name: str,
+        status: str,
+        detail: str | None = None,
+        timestamp: str | None = None,
+    ) -> int:
+        """Append one deskwatch event. Returns the rowid."""
+        ts = timestamp or datetime.now(timezone.utc).isoformat()
+        cur = self._conn.execute(
+            "INSERT INTO deskwatch_events (desk_id, kind, name, timestamp, status, detail) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (desk_id, kind, name, ts, status, detail),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def last_deskwatch_event(
+        self, desk_id: str, kind: str, name: str,
+    ) -> dict | None:
+        row = self._conn.execute(
+            "SELECT timestamp, status, detail FROM deskwatch_events "
+            "WHERE desk_id = ? AND kind = ? AND name = ? "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (desk_id, kind, name),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_deskwatch_events(
+        self, desk_id: str, limit: int = 100,
+    ) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT kind, name, timestamp, status, detail FROM deskwatch_events "
+            "WHERE desk_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (desk_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_workspace_extra_mounts(self, name: str) -> list[str]:
         row = self._conn.execute(

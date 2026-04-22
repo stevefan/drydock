@@ -142,11 +142,18 @@ def test_render_cron_file_snapshot():
 
 
 def test_render_launchd_plist_structure():
-    """Plist contains Label, ProgramArguments, StartCalendarInterval."""
+    """Plist contains Label, ProgramArguments (sh -c wrapped for deskwatch
+    recording), StartCalendarInterval, log paths. Post-deskwatch,
+    ProgramArguments is always ['/bin/sh', '-c', <wrapped-shell>] so we
+    can chain the deskwatch-record call after the ws exec."""
     job = ScheduleJob(name="crawl", cron="0 13 * * *", command="bash deploy/run.sh", log="/tmp/out.log")
     data = plistlib.loads(render_launchd_plist("desk1", job))
     assert data["Label"] == "com.drydock.desk1.crawl"
-    assert data["ProgramArguments"] == ["/usr/local/bin/ws", "exec", "desk1", "--", "bash", "deploy/run.sh"]
+    assert data["ProgramArguments"][:2] == ["/bin/sh", "-c"]
+    shell = data["ProgramArguments"][2]
+    assert "/usr/local/bin/ws exec desk1 -- bash deploy/run.sh" in shell
+    assert "ws deskwatch-record desk1 job_run crawl" in shell
+    assert "exit $ec" in shell
     assert data["StartCalendarInterval"] == {"Minute": 0, "Hour": 13}
     assert data["StandardOutPath"] == "/tmp/out.log"
     assert data["StandardErrorPath"] == "/tmp/out.log"
