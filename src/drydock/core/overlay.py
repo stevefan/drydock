@@ -85,6 +85,14 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
             "--security-opt=apparmor=unconfined",
         ])
 
+    # When a desk declares workspace_subdir, land the container's default
+    # WORKDIR at /workspace/<subdir> so relative paths in schedule.yaml
+    # commands (`bash deploy/run-daily.sh`) resolve inside the subproject.
+    # Without this, cron jobs fail with exit 127 "No such file or
+    # directory" because ws exec lands in the repo root, not the subdir.
+    if ws.workspace_subdir:
+        overlay["workspaceFolder"] = f"/workspace/{ws.workspace_subdir}"
+
     container_env = _build_container_env(ws, config)
     if container_env:
         overlay["containerEnv"] = container_env

@@ -104,6 +104,32 @@ class TestGenerateOverlay:
         overlay = generate_overlay(ws)
         assert overlay["containerEnv"]["DRYDOCK_WORKSPACE_SUBDIR"] == "apps/frontend"
 
+    def test_workspace_subdir_sets_workspaceFolder(self):
+        """Regression: a subdir desk's cron jobs failed with exit 127
+        because workspaceFolder stayed at /workspace (repo root) and
+        `ws exec desk -- bash deploy/run.sh` looked for deploy/run.sh
+        relative to the root, not the subdir. Overlay must push the
+        workspaceFolder down to /workspace/<subdir> so the container's
+        default WORKDIR and downstream `ws exec -w` land inside the
+        subproject."""
+        ws = Workspace(
+            name="auction", project="mono", repo_path="/srv/code/mono",
+            branch="ws/auction", workspace_subdir="auction-crawl",
+        )
+        overlay = generate_overlay(ws)
+        assert overlay["workspaceFolder"] == "/workspace/auction-crawl"
+
+    def test_workspace_subdir_unset_leaves_workspaceFolder_absent(self):
+        """Without workspace_subdir we let the project's own
+        devcontainer.json dictate workspaceFolder — overriding would be
+        a breaking change for single-project desks."""
+        ws = Workspace(
+            name="rootdesk", project="proj", repo_path="/srv/code/proj",
+            branch="ws/rootdesk",
+        )
+        overlay = generate_overlay(ws)
+        assert "workspaceFolder" not in overlay
+
     def test_secrets_mount_uses_workspace_scoped_path(self, ws):
         expected_host_dir = str(Path.home() / ".drydock" / "secrets")
         overlay = generate_overlay(ws)
