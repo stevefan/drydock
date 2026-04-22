@@ -33,25 +33,25 @@ deskwatch:
       expect_success_within: 1h
 YAML
 
-# Insert a minimal registry row directly so we don't pay for a full
-# container build. `ws create` with --dry-run would be cleaner but
-# isn't implemented; sqlite is fine for the smoke.
-$SSH "python3 -c \"
+# Insert a minimal registry row directly via the pipx-installed drydock
+# python. Avoids the cost of `ws create` (full container build) — we
+# only need a registry row so deskwatch has something to target.
+DRYDOCK_PY=$($SSH "head -1 \$(which ws) | tr -d '#!'")
+$SSH "$DRYDOCK_PY -c '
 from drydock.core.registry import Registry
 from drydock.core.workspace import Workspace
 r = Registry()
-ws = Workspace(
-    id='ws_$NAME', name='$NAME', project='$NAME',
-    repo_path='/root/src/infra', worktree_path='/tmp/smoke',
-    branch='ws/$NAME', state='defined', container_id='',
-    workspace_subdir='',
-)
-r.create_workspace(ws)
+r.create_workspace(Workspace(
+    id=\"ws_$NAME\", name=\"$NAME\", project=\"$NAME\",
+    repo_path=\"/root/src/infra\", worktree_path=\"/tmp/smoke\",
+    branch=\"ws/$NAME\", state=\"defined\", container_id=\"\",
+    workspace_subdir=\"\",
+))
 r.close()
-\"" || { echo "FAIL: couldn't seed registry"; exit 1; }
+'" || { echo "FAIL: couldn't seed registry"; exit 1; }
 
 # 1. No events yet → unhealthy (no run on record, exit 1).
-got=$($SSH "ws deskwatch $NAME --json 2>&1; echo EXIT:\$?" | tail -n +1)
+got=$($SSH "ws --json deskwatch $NAME 2>&1; echo EXIT:\$?" | tail -n +1)
 if ! echo "$got" | grep -q '"healthy": *false'; then
     echo "FAIL: expected unhealthy with no events; got:"; echo "$got"; exit 1
 fi
@@ -60,7 +60,7 @@ echo "no-events → unhealthy: OK"
 # 2. Record success → healthy, exit 0.
 $SSH "ws deskwatch-record $NAME job_run synthetic-job ok --detail 'smoke'" >/dev/null \
     || { echo "FAIL: couldn't record ok event"; exit 1; }
-got=$($SSH "ws deskwatch $NAME --json 2>&1; echo EXIT:\$?")
+got=$($SSH "ws --json deskwatch $NAME 2>&1; echo EXIT:\$?")
 if ! echo "$got" | grep -q '"healthy": *true'; then
     echo "FAIL: expected healthy after ok event; got:"; echo "$got"; exit 1
 fi
@@ -69,7 +69,7 @@ echo "ok event → healthy: OK"
 # 3. Record failure → unhealthy, exit 1.
 $SSH "ws deskwatch-record $NAME job_run synthetic-job failed --detail 'exit 2'" >/dev/null \
     || { echo "FAIL: couldn't record failed event"; exit 1; }
-got=$($SSH "ws deskwatch $NAME --json 2>&1; echo EXIT:\$?")
+got=$($SSH "ws --json deskwatch $NAME 2>&1; echo EXIT:\$?")
 if ! echo "$got" | grep -q '"healthy": *false'; then
     echo "FAIL: expected unhealthy after failed event; got:"; echo "$got"; exit 1
 fi
