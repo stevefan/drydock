@@ -211,6 +211,8 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         "image": image,
         "owner": owner or "",
     }
+    if workspace_subdir:
+        daemon_params["workspace_subdir"] = workspace_subdir
     overlay_params = _daemon_overlay_params(proj_cfg)
     daemon_params.update(overlay_params)
     # Send devcontainer_subpath to the daemon whenever it's been overridden

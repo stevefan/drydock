@@ -247,7 +247,16 @@ def regenerate_overlay_from_workspace(
         kwargs["storage_mounts"] = list(cfg["storage_mounts"])
 
     overlay_config = OverlayConfig(**kwargs)
-    devcontainer_subpath = cfg.get("devcontainer_subpath") or ".devcontainer"
+    # When workspace_subdir is set, the base devcontainer.json lives
+    # under that subdir by convention. Explicit devcontainer_subpath in
+    # the project YAML overrides this (e.g. ".devcontainer/drydock").
+    explicit_subpath = cfg.get("devcontainer_subpath")
+    if explicit_subpath:
+        devcontainer_subpath = explicit_subpath
+    elif ws.workspace_subdir:
+        devcontainer_subpath = f"{ws.workspace_subdir}/.devcontainer"
+    else:
+        devcontainer_subpath = ".devcontainer"
     worktree_path = ws.worktree_path
     if not worktree_path:
         raise WsError(

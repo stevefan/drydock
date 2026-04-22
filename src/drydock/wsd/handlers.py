@@ -397,6 +397,13 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         field_name="storage_mounts",
     )
 
+    workspace_subdir = params.get("workspace_subdir") or ""
+    if not isinstance(workspace_subdir, str):
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "workspace_subdir"},
+        )
+
     return {
         "project": project,
         "name": name,
@@ -405,6 +412,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "base_ref": base_ref,
         "image": image,
         "owner": owner,
+        "workspace_subdir": workspace_subdir,
         "devcontainer_subpath": devcontainer_subpath,
         "tailscale_hostname": tailscale_hostname,
         "tailscale_serve_port": tailscale_serve_port,
@@ -939,6 +947,7 @@ def _perform_create(
 ) -> dict[str, object]:
     overlay_config = _overlay_from_spec(spec)
     overlay_config_data = _overlay_config_data(spec)
+    workspace_subdir = str(spec.get("workspace_subdir") or "")
     ws = Workspace(
         name=str(spec["name"]),
         project=str(spec["project"]),
@@ -947,6 +956,7 @@ def _perform_create(
         base_ref=str(spec["base_ref"]),
         image=str(spec["image"]),
         owner=str(spec["owner"]),
+        workspace_subdir=workspace_subdir,
         config={
             "devcontainer_subpath": str(spec["devcontainer_subpath"]),
             "extra_mounts": list(spec["extra_mounts"]),
@@ -968,7 +978,16 @@ def _perform_create(
     checkout_path = create_checkout(ws)
     ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))
 
-    workspace_folder = ws.worktree_path
+    # Subdir desks anchor the devcontainer.json lookup inside the
+    # subproject, matching the CLI-local create path. Without this, the
+    # overlay composite is merged against the repo-root devcontainer.json
+    # instead of the subproject's — silently losing lifecycle commands
+    # (postCreateCommand, onCreateCommand) that the project declares.
+    workspace_folder = (
+        str(Path(ws.worktree_path) / ws.workspace_subdir)
+        if ws.workspace_subdir
+        else ws.worktree_path
+    )
     devcontainer_subpath = str(spec["devcontainer_subpath"])
     devcontainer_json = Path(workspace_folder) / devcontainer_subpath / "devcontainer.json"
     if not devcontainer_json.exists():

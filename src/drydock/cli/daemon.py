@@ -271,6 +271,71 @@ def stop(timeout: float, socket_override: Path | None):
 
 
 @daemon.command()
+@click.option("--timeout", type=float, default=STOP_TIMEOUT_SECONDS, show_default=True)
+@click.option("--socket", "socket_override", type=click.Path(path_type=Path), hidden=True)
+@click.option("--registry", "registry_override", type=click.Path(path_type=Path), hidden=True)
+@click.option("--log", "log_override", type=click.Path(path_type=Path), hidden=True)
+def reload(
+    timeout: float,
+    socket_override: Path | None,
+    registry_override: Path | None,
+    log_override: Path | None,
+):
+    """Restart the daemon so it picks up new code.
+
+    The daemon is a long-lived Python process; editable-install code
+    changes (pipx install --editable) don't reach it without a
+    restart. `ws daemon reload` stops + starts in one command. Equivalent
+    to `systemctl restart drydock-wsd.service` where systemd is
+    managing the unit.
+    """
+    pid_path = _pid_path()
+    pid = _read_pid(pid_path)
+    socket_path = _socket_path(socket_override)
+
+    if _process_alive(pid):
+        os.kill(pid, signal.SIGTERM)
+        if not _wait_for_exit(pid, timeout=max(timeout, 0.0)):
+            os.kill(pid, signal.SIGKILL)
+            _wait_for_exit(pid, timeout=1.0)
+        _remove_file(pid_path)
+        _wait_for_socket_removal(socket_path, timeout=max(timeout, 0.0))
+        click.echo(f"daemon stopped (pid={pid})")
+    else:
+        if pid_path.exists():
+            _remove_file(pid_path)
+        click.echo("daemon was not running; starting")
+
+    registry_path = _registry_path(registry_override)
+    log_path = _log_path(log_override)
+    command = _daemon_command(socket_path, registry_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    if socket_path.exists():
+        _remove_file(socket_path)
+
+    with log_path.open("ab") as log_file, open(os.devnull, "rb") as devnull:
+        proc = subprocess.Popen(
+            command,
+            stdin=devnull,
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+
+    if not _wait_for_socket(socket_path, proc, timeout=STARTUP_TIMEOUT_SECONDS):
+        if proc.poll() is None:
+            proc.terminate()
+        raise click.ClickException(
+            f"daemon failed to come up within {STARTUP_TIMEOUT_SECONDS}s; see {log_path}"
+        )
+    pid_path.write_text(f"{proc.pid}\n", encoding="utf-8")
+    click.echo(f"daemon started (pid={proc.pid})")
+
+
+@daemon.command()
 @click.option("--socket", "socket_override", type=click.Path(path_type=Path), hidden=True)
 @click.option("--log", "log_override", type=click.Path(path_type=Path), hidden=True)
 @click.pass_context
