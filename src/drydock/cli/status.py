@@ -40,21 +40,33 @@ def _read_workspace_folder(ws) -> str:
     return data.get("workspaceFolder", "/workspace")
 
 
-def _docker_container_id(worktree_path: str) -> str:
-    try:
-        result = subprocess.run(
-            [
-                "docker", "ps", "-q",
-                "--filter", f"label=devcontainer.local_folder={worktree_path}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=PROBE_TIMEOUT,
-        )
-        return result.stdout.strip().split("\n")[0].strip()
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.debug("status: container lookup failed for %s: %s", worktree_path, exc)
-        return ""
+def _docker_container_id(*candidate_paths: str) -> str:
+    """Find a running container by devcontainer.local_folder label.
+
+    Tries each candidate path in order and returns the first match. The
+    label is set at container creation and can be either the bare
+    worktree or worktree+subdir depending on how drydock spawned it;
+    callers pass both candidates so we find the container either way.
+    """
+    for path in candidate_paths:
+        if not path:
+            continue
+        try:
+            result = subprocess.run(
+                [
+                    "docker", "ps", "-q",
+                    "--filter", f"label=devcontainer.local_folder={path}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=PROBE_TIMEOUT,
+            )
+            cid = result.stdout.strip().split("\n")[0].strip()
+            if cid:
+                return cid
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug("status: container lookup failed for %s: %s", path, exc)
+    return ""
 
 
 def _probe_tailscale(container_id: str) -> bool:
@@ -288,6 +300,55 @@ def _probe_base_image(ws, container_id: str = "") -> str | None:
     return _parse_dockerfile_from(dockerfile_path)
 
 
+# Log files drydock-base and common project setups write during postCreate /
+# postStart. If the container has them, we tail them and flag ones whose last
+# lines smell like an error. Generic enough that projects get this for free
+# without declaring anything in their YAML.
+_INIT_LOG_PATHS = (
+    "/tmp/pip-install.log",        # devcontainer postCreate pip editable install
+    "/tmp/storage-mounts.log",     # drydock-base storage_mounts setup + refresh
+    "/tmp/firewall-refresh.log",   # drydock-base firewall-allowlist refresh loop
+    "/tmp/remote-control.log",     # drydock-base claude remote-control boot
+)
+
+# Substrings that, if present in the last non-empty line, mean the init step
+# failed or is loudly unhealthy. Conservative — we'd rather miss than cry wolf.
+_INIT_LOG_ERROR_MARKERS = ("Traceback", "ERROR", "error:", "FATAL", "No such")
+
+
+def _probe_init_logs(container_id: str) -> dict[str, str] | None:
+    """Scan known init-log paths; return {basename: status} where status is
+    'ok', 'errored: <last line>', or 'missing'. None if container isn't
+    reachable.
+    """
+    if not container_id:
+        return None
+    results: dict[str, str] = {}
+    for path in _INIT_LOG_PATHS:
+        try:
+            probe = subprocess.run(
+                ["docker", "exec", container_id,
+                 "sh", "-c", f"test -f {path} && tail -n 20 {path} || echo __MISSING__"],
+                capture_output=True, text=True, timeout=PROBE_TIMEOUT,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug("status: init-log probe failed for %s: %s", path, exc)
+            continue
+        basename = path.rsplit("/", 1)[-1]
+        out = probe.stdout.strip()
+        if out == "__MISSING__" or not out:
+            continue  # skip logs the project doesn't produce
+        last_line = next(
+            (line for line in reversed(out.splitlines()) if line.strip()),
+            "",
+        )
+        if any(m in out for m in _INIT_LOG_ERROR_MARKERS):
+            results[basename] = f"errored: {last_line[:120]}"
+        else:
+            results[basename] = "ok"
+    return results or None
+
+
 def _probe_compliance(ws) -> str | None:
     if not ws.worktree_path:
         return None
@@ -319,14 +380,14 @@ def _probe_workspace(ws) -> dict:
         "ipset": None,
         "trust_accepted": None,
         "base_image": None,
+        "init_logs": None,
         "compliance": _probe_compliance(ws),
     }
 
     if not ws.worktree_path:
         return row
 
-    effective_folder = _effective_workspace_folder(ws)
-    cid = _docker_container_id(effective_folder)
+    cid = _docker_container_id(_effective_workspace_folder(ws), ws.worktree_path)
     if not cid:
         row["container"] = "not found"
         return row
@@ -343,6 +404,7 @@ def _probe_workspace(ws) -> dict:
     row["ipset"] = _probe_ipset(ws, devcontainer)
     row["trust_accepted"] = _probe_trust_accepted(ws, devcontainer)
     row["base_image"] = _probe_base_image(ws, cid)
+    row["init_logs"] = _probe_init_logs(cid)
     return row
 
 
@@ -369,6 +431,7 @@ def status(ctx):
             "ipset",
             "trust_accepted",
             "base_image",
+            "init_logs",
             "compliance",
         ],
     )

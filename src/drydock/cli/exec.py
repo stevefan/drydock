@@ -10,17 +10,29 @@ import click
 from drydock.core import WsError
 
 
-def _find_container_id(worktree_path: str) -> str:
-    result = subprocess.run(
-        [
-            "docker", "ps", "-q",
-            "--filter", f"label=devcontainer.local_folder={worktree_path}",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    container_id = result.stdout.strip().split("\n")[0].strip()
-    return container_id
+def _find_container_id(*candidate_paths: str) -> str:
+    """Find container by label, trying each candidate path.
+
+    The devcontainer.local_folder label may be set to either the bare
+    worktree or worktree+subdir depending on drydock's spawn path;
+    trying both makes the lookup robust to config drift after `ws
+    project reload` changes workspace_subdir.
+    """
+    for path in candidate_paths:
+        if not path:
+            continue
+        result = subprocess.run(
+            [
+                "docker", "ps", "-q",
+                "--filter", f"label=devcontainer.local_folder={path}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        cid = result.stdout.strip().split("\n")[0].strip()
+        if cid:
+            return cid
+    return ""
 
 
 def _stdin_is_tty() -> bool:
@@ -77,7 +89,7 @@ def exec_cmd(ctx, name, cmd):
         if ws.workspace_subdir
         else ws.worktree_path
     )
-    container_id = _find_container_id(effective_folder)
+    container_id = _find_container_id(effective_folder, ws.worktree_path)
     if not container_id:
         out.error(
             WsError(

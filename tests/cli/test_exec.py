@@ -103,11 +103,12 @@ def test_exec_passes_tty_when_stdin_is_terminal(mock_find, mock_execvp, mock_isa
 
 @patch("drydock.cli.exec.os.execvp")
 @patch("drydock.cli.exec._find_container_id", return_value="ctr-abc")
-def test_exec_filters_by_worktree_plus_subdir(mock_find, mock_execvp):
-    """Regression: ws exec used worktree_path alone in the docker ps label
-    filter, but for subdir desks the container's devcontainer.local_folder
-    label is worktree_path/workspace_subdir. Symptom was 'No running container
-    found' on every exec into a subdir desk despite the container being up."""
+def test_exec_lookup_tries_subdir_then_worktree(mock_find, mock_execvp):
+    """ws exec must locate the container whether its
+    devcontainer.local_folder label was set to worktree+subdir (fresh
+    create with workspace_subdir) or bare worktree (container built
+    before workspace_subdir was added via ws project reload). Pass both
+    candidates and let _find_container_id pick the first match."""
     registry = MagicMock()
     ws = Workspace(
         name="test-ws",
@@ -121,7 +122,7 @@ def test_exec_filters_by_worktree_plus_subdir(mock_find, mock_execvp):
     )
     registry.get_workspace.return_value = ws
     _invoke(registry)
-    mock_find.assert_called_once_with("/tmp/wt/subproj")
+    mock_find.assert_called_once_with("/tmp/wt/subproj", "/tmp/wt")
 
 
 @patch("drydock.cli.exec.os.execvp")
