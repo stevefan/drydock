@@ -129,6 +129,29 @@ def sync(ctx, name, source_branch):
         )
         return
 
+    # Worktree may already contain everything the source has (ahead-only,
+    # no merge needed). Skip the merge and report accurately.
+    ancestor = _git(
+        worktree, "merge-base", "--is-ancestor",
+        f"source/{source_branch}", "HEAD", check=False,
+    )
+    if ancestor.returncode == 0:
+        ahead = _git(
+            worktree, "rev-list", "--count",
+            f"source/{source_branch}..HEAD",
+        ).stdout.strip()
+        out.success(
+            {"name": name, "synced": False, "head": before,
+             "reason": "ahead_of_source",
+             "ahead_by": int(ahead or 0),
+             "source_branch": source_branch},
+            human_lines=[
+                f"{name}: ahead of source/{source_branch} by {ahead} commit(s); "
+                "nothing to sync",
+            ],
+        )
+        return
+
     # Fast-forward only. If branches have diverged, surface and let the
     # user decide (merge, rebase, or commit from the worktree side).
     merge = _git(worktree, "merge", "--ff-only", f"source/{source_branch}", check=False)
