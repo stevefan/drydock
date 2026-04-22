@@ -1,13 +1,16 @@
 """ws deskwatch — workload health evaluation.
 
-Two commands:
+Three commands (flat, so cron/shell wrappers don't need subcommand parsing):
 
-* ``ws deskwatch [name]`` — evaluate one desk (or all), print the
-  result, exit 0 if healthy and 1 if any desk has violations.
-* ``ws deskwatch-record <desk> <kind> <name> <status> [detail]`` —
-  internal helper that scheduler-wrapped cron lines call to log a
-  job_run / probe_result event. Kept as a separate command so cron
-  wrappers don't have to know about Python packaging.
+* ``ws deskwatch [name] [--scan]`` — evaluate one desk (or all). Exits
+  0 if healthy and 1 if any desk has violations. ``--scan`` forces
+  probe re-runs even if within their declared interval.
+* ``ws deskwatch-events <desk> [--limit N]`` — list historical
+  deskwatch events for a desk (newest first). Raw view over the
+  registry's deskwatch_events table.
+* ``ws deskwatch-record <desk> <kind> <name> <status> [--detail TEXT]``
+  — append a single event. Invoked by scheduler-generated cron / plist
+  wrappers.
 
 See docs/design/deskwatch.md for the model.
 """
@@ -58,7 +61,7 @@ def _find_container_id(*candidate_paths: str) -> str:
     return ""
 
 
-def _evaluate_one(registry, ws):
+def _evaluate_one(registry, ws, force_rerun_probes: bool = False):
     """Evaluate a single desk; returns (result dict, exit-contribution)."""
     proj = load_project_config(ws.project)
     raw = (proj.deskwatch if proj else None) or ws.config.get("deskwatch") or {}
@@ -75,7 +78,10 @@ def _evaluate_one(registry, ws):
         }, 0
 
     cid = _find_container_id(_effective_workspace_folder(ws), ws.worktree_path)
-    result = evaluate_desk(registry, ws, cid, config)
+    result = evaluate_desk(
+        registry, ws, cid, config,
+        force_rerun_probes=force_rerun_probes,
+    )
     return result, (0 if result["healthy"] else 1)
 
 
@@ -99,8 +105,10 @@ def _format_human(result: dict) -> list[str]:
 
 @click.command()
 @click.argument("name", required=False)
+@click.option("--scan", is_flag=True,
+              help="Force probe re-runs regardless of declared interval.")
 @click.pass_context
-def deskwatch(ctx, name):
+def deskwatch(ctx, name, scan):
     """Evaluate workload health for one desk (or all)."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
@@ -122,7 +130,7 @@ def deskwatch(ctx, name):
     exit_code = 0
     for ws in desks:
         try:
-            result, contrib = _evaluate_one(registry, ws)
+            result, contrib = _evaluate_one(registry, ws, force_rerun_probes=scan)
         except WsError as e:
             result = {
                 "desk": ws.name, "desk_id": ws.id,
@@ -152,6 +160,41 @@ def deskwatch(ctx, name):
     out.success(payload, human_lines=human_lines)
     if exit_code != 0:
         ctx.exit(exit_code)
+
+
+@click.command(name="deskwatch-events")
+@click.argument("desk")
+@click.option("--limit", default=50, show_default=True,
+              help="Max events to return (newest first).")
+@click.option("--kind", default=None,
+              type=click.Choice(["job_run", "probe_result", "output_check"]),
+              help="Filter by event kind.")
+@click.pass_context
+def deskwatch_events(ctx, desk, limit, kind):
+    """List recorded deskwatch events for a desk (newest first)."""
+    out = ctx.obj["output"]
+    registry = ctx.obj["registry"]
+
+    ws = registry.get_workspace(desk)
+    if ws is None:
+        out.error(WsError(
+            f"Drydock '{desk}' not found",
+            fix="Check `ws list` for the name",
+            code="desk_not_found",
+        ))
+        return
+
+    events = registry.list_deskwatch_events(ws.id, limit=limit)
+    if kind:
+        events = [e for e in events if e["kind"] == kind]
+
+    payload = {"desk": desk, "desk_id": ws.id, "count": len(events), "events": events}
+    human_lines = [f"{desk}: {len(events)} event(s)" + (f" (kind={kind})" if kind else "")]
+    for e in events:
+        mark = {"ok": "✓", "failed": "✗", "missing": "?"}.get(e["status"], "·")
+        detail = f" — {e['detail']}" if e.get("detail") else ""
+        human_lines.append(f"  [{mark}] {e['timestamp']}  {e['kind']}:{e['name']}  {e['status']}{detail}")
+    out.success(payload, human_lines=human_lines)
 
 
 @click.command(name="deskwatch-record")

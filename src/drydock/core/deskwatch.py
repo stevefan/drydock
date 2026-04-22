@@ -333,16 +333,21 @@ def evaluate_probes(
     container_id: str,
     probes: list[ProbeExpectation],
     now: datetime | None = None,
+    force_rerun: bool = False,
 ) -> list[Check]:
     """Run any probe whose last result is older than `interval` (or
     missing); re-use recent results. Each run is recorded for later
-    inspection."""
+    inspection.
+
+    `force_rerun=True` (from `ws deskwatch --scan`) ignores interval
+    gating and re-runs every probe, useful for interactive diagnosis.
+    """
     now = now or _utcnow()
     checks: list[Check] = []
     for probe in probes:
         last = registry.last_deskwatch_event(desk_id, "probe_result", probe.name)
         should_run = True
-        if last is not None:
+        if not force_rerun and last is not None:
             last_ts = _parse_ts(last["timestamp"])
             if now - last_ts < probe.interval:
                 should_run = False
@@ -396,6 +401,7 @@ def evaluate_desk(
     container_id: str,
     config: DeskwatchConfig,
     now: datetime | None = None,
+    force_rerun_probes: bool = False,
 ) -> dict:
     """Full evaluation. Returns {'checks': [...], 'healthy': bool,
     'violations': int}."""
@@ -403,7 +409,10 @@ def evaluate_desk(
     checks: list[Check] = []
     checks.extend(evaluate_jobs(registry, ws.id, config.jobs, now=now))
     checks.extend(evaluate_outputs(container_id, config.outputs, now=now))
-    checks.extend(evaluate_probes(registry, ws.id, container_id, config.probes, now=now))
+    checks.extend(evaluate_probes(
+        registry, ws.id, container_id, config.probes,
+        now=now, force_rerun=force_rerun_probes,
+    ))
     violations = sum(1 for c in checks if not c.healthy)
     return {
         "desk": ws.name,

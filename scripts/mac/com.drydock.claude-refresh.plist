@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: refresh Claude Code OAuth credentials on configured
+  drydock Harbors every 6 hours. The remote-control process inside a
+  drydock refreshes tokens in memory only; file consumers go stale
+  after ~8 hours. This agent keeps /run/secrets/claude_credentials
+  fresh on every Harbor listed in ~/.drydock/claude-refresh.conf.
+
+  Install:
+    cp <this-file> ~/Library/LaunchAgents/com.drydock.claude-refresh.plist
+    launchctl load -w ~/Library/LaunchAgents/com.drydock.claude-refresh.plist
+
+  Inspect:
+    launchctl list com.drydock.claude-refresh
+    tail -f ~/.drydock/claude-refresh.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.drydock.claude-refresh</string>
+
+  <!-- NOTE: this plist ships in the drydock repo. Replace REPO_ROOT
+       with your actual clone path before installing. A RunAtLoad fires
+       the agent once on load so you see immediate output in the log. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPO_ROOT/scripts/mac/claude-refresh.sh</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>21600</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/drydock-claude-refresh.out</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/drydock-claude-refresh.err</string>
+</dict>
+</plist>
