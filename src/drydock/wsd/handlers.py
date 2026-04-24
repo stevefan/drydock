@@ -1001,6 +1001,10 @@ def _perform_create(
         )
 
     _ensure_gitconfig_stub()
+    # Bind-mount source paths must exist before docker run. Creating
+    # empty per-desk secrets dir here (mode 0700) matches the CLI path
+    # and prevents the "invalid mount config" failure on first create.
+    (secrets_root / ws.id).mkdir(mode=0o700, parents=True, exist_ok=True)
     overlay_path = write_overlay(
         ws,
         Path.home() / ".drydock" / "overlays",
