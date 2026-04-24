@@ -134,6 +134,25 @@ def host_init(ctx):
             sys_log.mkdir(parents=True)
             actions.append(f"created {sys_log}")
 
+    # Git safe.directory for worktrees. Drydock creates worktrees
+    # owned by uid 1000 (the container's node user) so pip editable
+    # installs + npm + playwright-browser-install can write inside
+    # the container. When Harbor-side git commands run (ws sync, any
+    # Harbor-root debugging), git refuses with "dubious ownership"
+    # because root != 1000. Allowlisting the worktrees tree once
+    # fixes this for every current and future desk.
+    worktrees_glob = str(Path.home() / ".drydock" / "worktrees" / "*")
+    existing = subprocess.run(
+        ["git", "config", "--global", "--get-all", "safe.directory"],
+        capture_output=True, text=True,
+    )
+    if worktrees_glob not in (existing.stdout or "").splitlines():
+        subprocess.run(
+            ["git", "config", "--global", "--add", "safe.directory", worktrees_glob],
+            check=False,
+        )
+        actions.append(f"git safe.directory += {worktrees_glob}")
+
     # Deploy the in-desk JSON-RPC client (drydock-rpc). The overlay bind-mounts
     # this file into every drydock container; shipping it via `ws host init`
     # keeps the source-of-truth in the repo + a stable deploy path per Harbor.

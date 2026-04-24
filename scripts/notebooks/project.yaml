@@ -1,0 +1,46 @@
+# Notebooks storage desk — peer-Harbor vault via Syncthing.
+#
+# Mac Obsidian vault syncs to this desk; other desks on this Harbor
+# mount the synced content readonly. Replaces the Mac-only
+# bind-mount of ~/Notebooks with a desk-hosted volume that exists on
+# whatever Harbor this YAML is installed on.
+#
+# One-time pairing: on Mac (brew install syncthing; start it; add the
+# folder ~/Notebooks); inside this desk (ws exec notebooks -- cat
+# /var/lib/syncthing/config.xml | grep -i 'id=' to get the device
+# ID); pair in both syncthing GUIs. See docs/operations/notebooks.md.
+
+repo_path: /root/src/notebooks
+devcontainer_subpath: .devcontainer/drydock
+tailscale_hostname: notebooks
+tailscale_serve_port: 8384   # expose Syncthing web UI over tailnet
+remote_control_name: notebooks
+
+firewall_extra_domains:
+  # Syncthing bootstrap + relay infrastructure
+  - relays.syncthing.net
+  - discovery.syncthing.net
+  - discovery-v4.syncthing.net
+  - discovery-v6.syncthing.net
+  # apt repo for syncthing on rebuild
+  - apt.syncthing.net
+  - syncthing.net
+  - data.iana.org
+  - release-key.gpg.pub.syncthing.net
+
+extra_mounts:
+  # Vault data — the thing that gets consumed by sibling desks.
+  - "source=notebooks-vault,target=/vault,type=volume"
+  # Syncthing's own state (cert, device ID, peer config). Survives
+  # `ws stop && ws create`; wipe to reset pairing.
+  - "source=notebooks-syncthing-state,target=/var/lib/syncthing,type=volume"
+
+deskwatch:
+  probes:
+    - name: syncthing-alive
+      cmd: "pgrep -x syncthing >/dev/null"
+      interval: 5m
+  outputs:
+    - path: /var/lib/syncthing/cert.pem
+      max_age: 365d          # config file; should just exist, freshness not meaningful
+      may_be_empty: false
