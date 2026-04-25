@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""tg-recent — print recent Telegram inbox events as JSON.
+
+Used by an in-desk Claude session as a context source.
+
+Usage:
+    tg-recent                      # last 20 events
+    tg-recent --limit 50           # last 50
+    tg-recent --since 1h           # last hour
+    tg-recent --since 24h --json   # 24h, full json output
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+INBOX = Path("/workspace/telegram/inbox.jsonl")
+
+_DUR = re.compile(r"^(\d+)([smhd])$")
+_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_since(s: str) -> timedelta:
+    m = _DUR.match(s.strip())
+    if not m:
+        sys.exit(f"invalid --since '{s}'; use forms like 30m, 4h, 1d")
+    return timedelta(seconds=int(m.group(1)) * _UNITS[m.group(2)])
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--limit", type=int, default=20)
+    ap.add_argument("--since", type=str, default=None,
+                    help="window like 30m, 4h, 1d (overrides --limit)")
+    ap.add_argument("--json", action="store_true",
+                    help="emit full JSON events (default: brief one-line)")
+    args = ap.parse_args()
+
+    if not INBOX.exists():
+        return 0
+
+    events: list[dict] = []
+    with INBOX.open() as f:
+        for line in f:
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    if args.since:
+        cutoff = datetime.now(timezone.utc) - parse_since(args.since)
+        events = [
+            e for e in events
+            if datetime.fromisoformat(e.get("ts", "1970-01-01T00:00:00+00:00")) >= cutoff
+        ]
+    else:
+        events = events[-args.limit:]
+
+    if args.json:
+        for e in events:
+            print(json.dumps(e))
+    else:
+        for e in events:
+            ts = e.get("ts", "")
+            user = e.get("user", "?")
+            text = (e.get("text", "") or "").replace("\n", " ")
+            print(f"{ts}  [{user}]  {text}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

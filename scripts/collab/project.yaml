@@ -1,0 +1,63 @@
+# Collab — shared coding desk with Telegram bot side-channel.
+#
+# Always-on, tailnet-only. Long-running so collaborators can
+# `tailscale ssh node@collab` and work directly in the container.
+# A Telegram bot inside the desk logs reference messages to
+# /workspace/telegram/inbox.jsonl and exposes slash commands that
+# trigger Claude (`/ai`, `/wake`, `/collab`).
+#
+# Greenfield repo: /root/src/collab is just `git init`. Push to a
+# real GitHub remote once the project gets a name.
+#
+# Userland setup, in order:
+#   1. Create a Telegram bot via @BotFather, capture the token.
+#   2. ws secret set collab telegram_bot_token <token-from-stdin>
+#   3. (Optional) ws secret set collab telegram_allowed_chats <comma-list>
+#      — if unset, the bot TOFU-pins to the first chat it sees.
+#   4. ws stop collab && ws create collab    # so the secret is mounted
+#   5. Send any message in your bot's chat — bot pins to that chat id.
+#   6. Tailscale admin → ACL: allow `tag:collab` SSH for collaborators.
+
+repo_path: /root/src/collab
+devcontainer_subpath: .devcontainer/drydock
+tailscale_hostname: collab
+remote_control_name: collab
+firewall_extra_domains:
+  # Telegram Bot API
+  - api.telegram.org
+  # Anthropic (claude -p uses claude.ai OAuth + statsig)
+  - api.anthropic.com
+  - statsig.anthropic.com
+  - claude.com
+  - claude.ai
+  # GitHub (collaborators will push/pull)
+  - github.com
+  - api.github.com
+  - codeload.github.com
+  - raw.githubusercontent.com
+  - objects.githubusercontent.com
+  # Pip (in case collaborators install python packages)
+  - pypi.org
+  - files.pythonhosted.org
+
+# Cross-desk delegation: this desk uses the infra desk's claude_credentials
+# (kept fresh by the Mac launchd timer) so `claude -p` runs on the user's
+# claude.ai subscription rather than burning API budget.
+capabilities:
+  - request_secret_leases
+delegatable_secrets:
+  - claude_credentials
+
+extra_mounts:
+  # Bot state survives container recreation.
+  - "source=collab-telegram-state,target=/workspace/telegram,type=volume"
+
+deskwatch:
+  probes:
+    - name: telegram-bot-alive
+      cmd: "test -f /tmp/telegram-bot.pid && kill -0 $(cat /tmp/telegram-bot.pid)"
+      interval: 5m
+  outputs:
+    - path: /workspace/telegram/inbox.jsonl
+      max_age: 30d        # bot is healthy if inbox grows when chat is active;
+      may_be_empty: true  # but a quiet bot is fine — don't false-alarm.

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# tg-mode — read or set the collab/idle mode flag.
+#
+# Used by an in-desk Claude session to know whether it's expected to
+# auto-respond to incoming messages (collab) vs stay quiet (idle).
+#
+# Usage:
+#   tg-mode              # print current mode
+#   tg-mode collab       # set to collab
+#   tg-mode idle         # set to idle
+
+set -u
+MODE_FILE=/workspace/telegram/mode
+
+case "${1:-}" in
+    "")
+        if [ -f "$MODE_FILE" ]; then cat "$MODE_FILE"; else echo idle; fi
+        ;;
+    collab|idle)
+        mkdir -p "$(dirname "$MODE_FILE")"
+        printf '%s\n' "$1" > "$MODE_FILE"
+        echo "mode = $1"
+        ;;
+    *)
+        echo "usage: tg-mode [collab|idle]" >&2
+        exit 1
+        ;;
+esac
