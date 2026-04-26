@@ -84,13 +84,36 @@ RUN git config --system safe.directory '*'
 # ownership so the volumes inherit correct perms on first mount.
 # Without this, docker creates empty named volumes owned by root.
 RUN mkdir -p /home/node/.claude \
-             /home/node/.vscode-server \
+             /home/node/.vscode-server/extensions \
              /home/node/.npm \
              /home/node/.cache/pip && \
     chown -R node:node /home/node/.claude \
                         /home/node/.vscode-server \
                         /home/node/.npm \
                         /home/node/.cache
+
+# Pre-install Anthropic Claude Code VS Code extension into the seed
+# directory for the drydock-vscode-server named volume. Docker copies
+# image contents into a freshly created volume on first mount, so
+# new desks have the extension immediately on `ws attach` — no
+# install-on-first-attach delay. Existing desks with already-populated
+# volumes are unaffected; recreate the volume to pick up.
+ARG CLAUDE_VSCODE_PUBLISHER=anthropic
+ARG CLAUDE_VSCODE_NAME=claude-code
+RUN set -e; \
+    EXT_DIR=/home/node/.vscode-server/extensions; \
+    TMP=$(mktemp -d); cd "$TMP"; \
+    curl -fsSL -H 'Accept: application/octet-stream' \
+      "https://${CLAUDE_VSCODE_PUBLISHER}.gallery.vsassets.io/_apis/public/gallery/publisher/${CLAUDE_VSCODE_PUBLISHER}/extension/${CLAUDE_VSCODE_NAME}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage" \
+      -o ext.vsix; \
+    unzip -q ext.vsix -d unpacked; \
+    VERSION=$(jq -r '.version' unpacked/extension/package.json); \
+    DEST="$EXT_DIR/${CLAUDE_VSCODE_PUBLISHER}.${CLAUDE_VSCODE_NAME}-${VERSION}"; \
+    mkdir -p "$DEST"; \
+    cp -r unpacked/extension/. "$DEST/"; \
+    cd /; rm -rf "$TMP"; \
+    chown -R node:node /home/node/.vscode-server; \
+    echo "pre-installed ${CLAUDE_VSCODE_PUBLISHER}.${CLAUDE_VSCODE_NAME} v${VERSION}"
 VOLUME /home/node/.claude
 VOLUME /home/node/.vscode-server
 VOLUME /home/node/.npm
