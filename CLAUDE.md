@@ -109,6 +109,7 @@ Output is JSON automatically when piped or called by an agent.
 - **Claude Code remote control** for headless agent access (`start-remote-control.sh`)
 - **Claude auth sync** (`sync-claude-auth.sh`) — transplants host Claude credentials into the container
 - System tools: git, curl, jq, mosh, tmux, dnsutils, iproute2
+- **Default tmux config** at `/etc/tmux.conf` — mouse on, OSC 52 system-clipboard sync, vi copy keys. Backup path for `claude /login` and other interactive paste flows where host-clipboard → container is otherwise lossy.
 - Pre-created volume mount targets (`~/.claude`, `~/.vscode-server`, `~/.npm`, `~/.cache/pip`) with correct ownership
 - `git config --system safe.directory '*'` (container is the trust boundary)
 

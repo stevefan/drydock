@@ -56,6 +56,13 @@ RUN chmod +x /usr/local/bin/init-firewall.sh \
               /usr/local/bin/setup-storage-mounts.sh \
               /usr/local/bin/refresh-storage-mounts.sh
 
+# System-wide tmux config so SSH'd-in interactive sessions get
+# host-clipboard-friendly copy/paste out of the box. Used as the
+# backup path for `claude /login` and other interactive paste flows
+# that the in-memory OAuth refresh can't replace. Users can extend
+# via ~/.tmux.conf (sourced after this).
+COPY tmux.conf /etc/tmux.conf
+
 RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/tailscaled" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/bin/tailscale" >> /etc/sudoers.d/node-drydock && \
