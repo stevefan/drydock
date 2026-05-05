@@ -2,29 +2,39 @@
 
 **Purpose.** Pin the vocabulary Drydock uses consistently across product docs, design specs, and the RPC surface. Code identifiers (`ws`, `wsd`, `ws_<slug>`, `Workspace` class, `workspaces` SQLite table) are frozen — renaming them would be cosmetic churn — but every human-facing surface uses the vocabulary below.
 
-## The four layers
+## The five layers
 
 | Layer | Canonical name | What it is | What it owns |
 |---|---|---|---|
 | 1 | **Harbor** | The host machine (laptop, home server, Hetzner VM) running `wsd`. Authority lives here. | The daemon, the registry, policy state, capability-broker leases, audit log, daemon-level admin secrets. One `wsd` per harbor. |
-| 2 | **Project** | YAML description + work-identity. | Immutable config template (`~/.drydock/projects/<project>.yaml`), repo path, policy template, declared capabilities, entitlements, and delegations. Multiple drydocks can derive from one project. |
-| 3 | **DryDock** | A durable, bounded work environment — the runtime unit. | Container lifecycle, git worktree, policy scope, registry row, named volumes, audit principal, bearer token, branch, accumulated tooling state. Persistent across container rebuilds. |
-| 4 | **Worker** | The agent bound to a drydock — the thing that actually does work. | Claude Code remote-control process, cron-invoked operator, research agent, schedule job. A worker is durable per-drydock but containers are its body, not its identity. |
+| 2 | **Harbormaster** | The governing agent on a Harbor — broad-but-shallow authority across the fleet. (Earlier docs call this "the deputy" or "the Harbor agent"; **Harbormaster** is canonical going forward.) | Auth-broker refresh loop, capability grants on behalf of standing policy, throttle/stop/restart actions on misbehaving Dockworkers, escalation to principal via Telegram. Bounded against itself: cannot rewrite its own policy or reach its own master credentials directly. See [harbormaster-authority.md](harbormaster-authority.md). |
+| 3 | **Project** | YAML description + work-identity. | Immutable config template (`~/.drydock/projects/<project>.yaml`), repo path, policy template, declared capabilities, entitlements, and delegations. Multiple drydocks can derive from one project. |
+| 4 | **DryDock** | A durable, bounded work environment — the runtime unit. (The metaphor: a drydock is where work building or maintaining the ship happens; the ship itself ventures out into prod / function calls and the metaphor doesn't have to extend that far.) | Container lifecycle, git worktree, policy scope, registry row, named volumes, audit principal, bearer token, branch, accumulated tooling state. Persistent across container rebuilds. |
+| 5 | **Dockworker** | The agent bound to a drydock — the thing that actually does work. (Was: "Worker"; **Dockworker** is canonical for the role.) | Claude Code remote-control process, cron-invoked operator, research agent, schedule job. A Dockworker is durable per-drydock but containers are its body, not its identity. |
 
 Sessions (ephemeral human or agent attachments to a drydock — IDE windows, SSH connections, claude.ai/code sessions) are explicitly *not* first-class. Multiple sessions can attach concurrently; Drydock does not track them.
 
 ## The metaphor
 
-A harbor contains multiple drydocks. A drydock is a bounded place where work gets done on a vessel, fitted with what that work needs. A worker operates in the drydock. The vessel (project code, data, in-flight tasks) stays across many sessions of work.
+A harbor contains multiple drydocks, governed by a Harbormaster. A drydock is a bounded place where work gets done on a vessel, fitted with what that work needs. A Dockworker operates in the drydock. The vessel (project code, data, in-flight tasks) stays across many sessions of work — and ventures out as prod / function calls / external service interactions when the work is done. The metaphor stops at the harbor's edge; what the ship does at sea is its own concern.
 
 ## Canonical phrasings
 
 - "Harbor `drydock-hillsboro` runs `wsd`" — correct.
+- "The Harbormaster on `drydock-hillsboro` granted a lease" — correct.
 - "Create a drydock" / "spawn a drydock" — correct.
-- "DryDock `auction-crawl` has a worker named remote-control" — correct.
-- "The worker requested a lease" — correct (audit records `desk_id` but the *agent* doing it is a worker).
+- "DryDock `auction-crawl` has a Dockworker named remote-control" — correct.
+- "The Dockworker requested a lease" — correct (audit records `desk_id` but the *agent* doing it is a Dockworker).
 - "Workspace X" — acceptable in code and registry contexts where the technical artifact is what's meant; in product docs prefer "drydock".
-- "Employee worker" — a specific class of Worker: long-running, permissioned, judgment-capable, lives on Harbor infra (distinct from interactive Claude on a laptop and from deterministic cron). The original `drydock-employee` pattern.
+- "Employee worker" — a specific class of Dockworker: long-running, permissioned, judgment-capable, lives on Harbor infra. The Harbormaster is itself an employee-Dockworker — the canonical instance of the pattern.
+
+## Retired terms
+
+These appear in older docs and code identifiers but should not be used in new prose:
+
+- "**desk**" — colloquial alias for **drydock**. Historical leak from office-metaphor talk; retired so the codebase stops mixing metaphors. Code identifiers (`desk_id`, `deskwatch`, `delegatable_*`) remain frozen.
+- "**deputy**" / "**Harbor agent**" — replaced by **Harbormaster**. The harbormaster is a real maritime role (the official who governs everything in a harbor — allocates berths, enforces regulations, mediates disputes between vessels) and matches what the role does in this fabric far better than "deputy."
+- "**Worker**" (capitalized as a role) — replaced by **Dockworker**. Lowercase "worker" remains acceptable in mechanical/computing contexts where the metaphor isn't load-bearing.
 
 ## Mapping to code / registry / RPC (unchanged)
 
@@ -33,7 +43,8 @@ A harbor contains multiple drydocks. A drydock is a bounded place where work get
 | Harbor | the host running `wsd`; no separate identifier |
 | Project | `ProjectConfig` dataclass; `~/.drydock/projects/<name>.yaml` |
 | DryDock | `Workspace` class; `workspaces` SQLite table; `ws_<slug>` ids |
-| Worker | not first-class in v2 code; represented by the processes running inside a drydock (remote-control supervisor, cron job invocations, etc.) |
+| Dockworker | not first-class in v2 code; represented by the processes running inside a drydock (remote-control supervisor, cron job invocations, etc.) |
+| Harbormaster | not yet first-class; will be a `harbormaster_desks` registry table + `scope: "harbormaster"` token grade per [harbormaster-authority.md](harbormaster-authority.md) §2 |
 | Session | not first-class; implicit in any attached client |
 
 The v1 identifier `ws_<slug>` remains. Read it as **"workspace id"** = **"drydock id"** — same thing. CLI commands (`ws create`, `ws stop`, etc.) keep the `ws` prefix because `drydock` as a CLI prefix would collide with the project name and add no value.

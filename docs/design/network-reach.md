@@ -17,7 +17,7 @@ This is friction at exactly the wrong moment (an agent has just discovered it ne
 
 ## Goal
 
-A drydock can request "open egress to `<domain>:<port>`" via `wsd` RPC. If the desk is entitled, the daemon adds the domain to the live allowlist without restart. If not, the request is denied (and audited).
+A drydock can request "open egress to `<domain>:<port>`" via `wsd` RPC. If the drydock is entitled, the daemon adds the domain to the live allowlist without restart. If not, the request is denied (and audited).
 
 ## Design
 
@@ -41,7 +41,7 @@ Subject desk is derived from the bearer token (caller_desk_id) per existing brok
 
 ### Entitlement model (the policy decision)
 
-Per-desk column `delegatable_network_reach` in the registry, populated from project YAML:
+Per-drydock column `delegatable_network_reach` in the registry, populated from project YAML:
 
 ```yaml
 narrowness:
@@ -55,14 +55,14 @@ narrowness:
 Match semantics:
 - Exact-match domains accepted as-is.
 - Glob `*.foo.com` matches any single-level subdomain (`api.foo.com`, not `a.b.foo.com`).
-- Wildcard `*` (alone) means **unconstrained** — only for desks explicitly trusted (research desks, `ws-shell`-style desks). Audit logs the unconstrained grant on every call.
+- Wildcard `*` (alone) means **unconstrained** — only for desks explicitly trusted (research drydocks, `ws-shell`-style drydocks). Audit logs the unconstrained grant on every call.
 - No entry / empty list = no dynamic opens permitted (current behavior).
 
-Port allowlist: optional `network_reach_ports` list per desk (default `[80, 443]`). Anything else requires explicit per-port entry.
+Port allowlist: optional `network_reach_ports` list per drydock (default `[80, 443]`). Anything else requires explicit per-port entry.
 
 **Defaults to commit to:**
-- New desks default to **empty** `network_reach` (no dynamic opens). Surfaces the question explicitly per project.
-- Recommend `*.github.com`, `registry.npmjs.org`, `*.crates.io`, `huggingface.co`, `pypi.org`, `files.pythonhosted.org` as starter entries for code-writing desks.
+- New drydocks default to **empty** `network_reach` (no dynamic opens). Surfaces the question explicitly per project.
+- Recommend `*.github.com`, `registry.npmjs.org`, `*.crates.io`, `huggingface.co`, `pypi.org`, `files.pythonhosted.org` as starter entries for code-writing drydocks.
 - Wildcard `*` is opt-in only, never default.
 
 ### Materialization

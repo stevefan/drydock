@@ -1,8 +1,8 @@
 # Harbormaster authority surface
 
-**Status:** sketch · **Depends on:** [principal-deputy-governance.md](principal-deputy-governance.md), [capability-broker.md](capability-broker.md), [resource-ceilings.md](resource-ceilings.md), [in-desk-rpc.md](in-desk-rpc.md)
+**Status:** sketch · **Depends on:** [principal-harbormaster-governance.md](principal-harbormaster-governance.md), [capability-broker.md](capability-broker.md), [resource-ceilings.md](resource-ceilings.md), [in-desk-rpc.md](in-desk-rpc.md)
 
-> Note on naming: this doc uses **Harbormaster** for what `principal-deputy-governance.md` and `employee-worker.md` currently call "the deputy" / "the Harbor agent." If the maritime-vocabulary consolidation lands, this is canonical. Until then, mentally substitute "deputy" wherever you see Harbormaster.
+> Note on naming: this doc uses **Harbormaster** for what `principal-harbormaster-governance.md` and `employee-worker.md` currently call "the Harbormaster" / "the Harbor agent." If the maritime-vocabulary consolidation lands, this is canonical. Until then, mentally substitute "Harbormaster" wherever you see Harbormaster.
 
 This is the doc that unblocks resource-ceilings Phase C and any other "Harbormaster does something to a worker" feature. It names the authority the Harbormaster has on a Harbor — what RPC methods it can call, how its identity differs from a worker's, what's structurally prevented even with that identity, and how its actions get audited.
 
@@ -10,7 +10,7 @@ This is the doc that unblocks resource-ceilings Phase C and any other "Harbormas
 
 ## 1. The tension
 
-The Harbormaster is supposed to be *powerful enough* to: stop a runaway worker, throttle egress bandwidth, revoke a stale lease, restart a dead agent process inside a healthy container. And *bounded enough* that a compromised Harbormaster doesn't equal full Harbor takeover.
+The Harbormaster is supposed to be *powerful enough* to: stop a runaway Dockworker, throttle egress bandwidth, revoke a stale lease, restart a dead agent process inside a healthy container. And *bounded enough* that a compromised Harbormaster doesn't equal full Harbor takeover.
 
 That tension shows up as four sub-tensions, each with a real design decision:
 
@@ -38,7 +38,7 @@ The right answer to each isn't obvious in advance. This doc lays out the choices
 - *Pro:* Compromise of the Harbormaster *container* doesn't immediately give worker-style access (different socket); compromise of a worker's token doesn't immediately give Harbormaster access (worker token can't authenticate to harbormaster socket).
 - *Con:* Two auth paths to maintain. Two test surfaces. The Harbormaster needs to bootstrap its credential from somewhere — likely a one-time principal action (`ws harbormaster designate <desk> --grant-credential`).
 
-**Recommended default: bearer-token-grade with a hardening pass.** The worker-vs-Harbormaster attack-path distinction is real but the Harbormaster *is* still a desk, running in a container, that the principal trusts. Adding a separate auth path is a meaningful increase in moving parts for a marginal compromise-isolation benefit. Take the simpler path; if Harbormaster compromise becomes a real concern, upgrade to separate-identity later — the RPC surface stays the same, only the auth check changes.
+**Recommended default: bearer-token-grade with a hardening pass.** The worker-vs-Harbormaster attack-path distinction is real but the Harbormaster *is* still a drydock, running in a container, that the principal trusts. Adding a separate auth path is a meaningful increase in moving parts for a marginal compromise-isolation benefit. Take the simpler path; if Harbormaster compromise becomes a real concern, upgrade to separate-identity later — the RPC surface stays the same, only the auth check changes.
 
 The trade-off you're sensing into: **one breach = full power vs. two-auth-paths-forever**. I lean cheap because the Harbormaster's compromise scenario is "an agent on a Hetzner box you control got prompt-injected" — at which point you have bigger problems than the auth-grade distinction. Your mileage may vary.
 
@@ -46,9 +46,9 @@ The trade-off you're sensing into: **one breach = full power vs. two-auth-paths-
 
 ## 3. RPC surface — reuse vs new first-class methods
 
-The Harbormaster wants to do things like stop a desk, throttle a desk's egress, restart a desk's agent, revoke a desk's lease. Two ways:
+The Harbormaster wants to do things like stop a drydock, throttle a drydock's egress, restart a drydock's agent, revoke a drydock's lease. Two ways:
 
-**Cheap (reuse + gate):** Treat the existing CLI handlers as the implementation. `ws stop` already stops a desk — wrap its core function in a wsd RPC `StopDesk(name)`, gate with the harbormaster-scope check, audit the gated call. Same for `RevokeLease` (wraps `release_capability`) and so on. Restart-agent and throttle would be new because they don't currently exist as CLI commands.
+**Cheap (reuse + gate):** Treat the existing CLI handlers as the implementation. `ws stop` already stops a drydock — wrap its core function in a wsd RPC `StopDesk(name)`, gate with the harbormaster-scope check, audit the gated call. Same for `RevokeLease` (wraps `release_capability`) and so on. Restart-agent and throttle would be new because they don't currently exist as CLI commands.
 
 - *Pro:* Smallest new surface. Existing tested code paths. The principal, the operator (you at the CLI), and the Harbormaster all share one implementation.
 - *Con:* The audit shape inherits whatever the existing handler emits, which may not capture "Harbormaster did this *because* of policy rule X" — only "this got stopped, and the caller was the Harbormaster." Reasoning gets lost.
@@ -65,8 +65,8 @@ Concrete RPC list for V1:
 | Method | Wraps | Adds |
 |---|---|---|
 | `StopDesk(name, reason)` | `ws stop` core | reasoning + harbormaster.action audit |
-| `RestartDeskAgent(name, agent, reason)` | NEW (per principal-deputy §6f) | reads desk's project-YAML `agents:` block, signals named PIDs |
-| `ThrottleEgress(name, bandwidth_max, reason)` | NEW | tc/htb on the desk's veth |
+| `RestartDeskAgent(name, agent, reason)` | NEW (per principal-Harbormaster §6f) | reads drydock's project-YAML `agents:` block, signals named PIDs |
+| `ThrottleEgress(name, bandwidth_max, reason)` | NEW | tc/htb on the drydock's veth |
 | `RevokeLease(lease_id, reason)` | `release_capability` | reasoning + audit. (Bypasses caller-desk-id ownership check that release_capability normally enforces — Harbormaster can revoke leases it doesn't hold.) |
 | `RegisterWorkload(desk_id, workload_spec)` | (write side of resource-ceilings.md §3) | issues WorkloadLease |
 | `ReadFleetMetrics()` | host_audit + fleet-monitor | unified read for the Harbormaster's decision loop |
@@ -94,13 +94,13 @@ Three places a self-targeting bug could land if we don't think about it:
 
 **Recommended: structural.** The cost is one query in the dispatcher; the benefit is "you cannot accidentally write a self-targeting RPC." Code-guard works but assumes every future RPC author remembers to add the check. Structural assumes nothing.
 
-There's a corollary: if you ever run *multiple* Harbormasters on the same Harbor (you probably won't — one per fleet by design), the structural check naturally generalizes to "no harbormaster-scoped action against any desk in `harbormaster_desks`." Harbormasters can't act on each other either. This is a property worth keeping even at one-Harbormaster scale because it removes a future foot-gun.
+There's a corollary: if you ever run *multiple* Harbormasters on the same Harbor (you probably won't — one per fleet by design), the structural check naturally generalizes to "no harbormaster-scoped action against any drydock in `harbormaster_desks`." Harbormasters can't act on each other either. This is a property worth keeping even at one-Harbormaster scale because it removes a future foot-gun.
 
 ---
 
 ## 5. Audit asymmetry
 
-The Harbormaster reads the audit log to make decisions ("has this desk had repeated NETWORK_REACH denials in the last hour?"). It does NOT modify the audit log directly. Audit writes happen via `wsd`'s `emit_audit` channel which is the only writer; the Harbormaster's actions emit *new* audit events (via the wrapped RPCs) but cannot edit or delete prior ones.
+The Harbormaster reads the audit log to make decisions ("has this drydock had repeated NETWORK_REACH denials in the last hour?"). It does NOT modify the audit log directly. Audit writes happen via `wsd`'s `emit_audit` channel which is the only writer; the Harbormaster's actions emit *new* audit events (via the wrapped RPCs) but cannot edit or delete prior ones.
 
 This is already the existing audit model — calling it out so it doesn't get "improved" later. The audit log is append-only and `wsd`-owned. That property is what makes a compromised Harbormaster *recoverable*: even after the breach, the trail of what it did exists.
 
@@ -110,9 +110,9 @@ A specific thing to NOT add: a `Harbormaster.MarkAuditReviewed` or "snooze" mech
 
 ## 6. Policy mutation — static vs dynamic
 
-The Harbormaster reads its policy from `~/.drydock/policy/` (per principal-deputy-governance §4). Two models for how policy changes propagate:
+The Harbormaster reads its policy from `~/.drydock/policy/` (per principal-harbormaster-governance §4). Two models for how policy changes propagate:
 
-**Cheap (static):** Files are owned by the principal, read-only to the Harbormaster. Harbormaster watches mtimes (or polls every N seconds) and reloads. Principal edits files via SSH or a notebook desk. Telegram is one-way escalation only.
+**Cheap (static):** Files are owned by the principal, read-only to the Harbormaster. Harbormaster watches mtimes (or polls every N seconds) and reloads. Principal edits files via SSH or a notebook drydock. Telegram is one-way escalation only.
 
 **Dynamic (Telegram-driven proposals):** Harbormaster can *propose* policy changes via Telegram ("I keep escalating `huggingface.co` for ml-sandbox; promote to standing entitlement?"). Principal replies with one word; Harbormaster generates the YAML diff, applies it (via a separate `wsd` write surface for policy files), and the change takes effect on next reload.
 
@@ -141,8 +141,8 @@ Each of these is the *cheap* end of its respective tension except for **self-tar
 
 ## 8. Open questions
 
-1. **Throttle persistence across desk restarts.** If the Harbormaster sets a tc/htb cap on a desk's veth and the desk's container restarts, the veth disappears and the throttle goes with it. Either the Harbormaster re-applies on the next observation cycle, or we persist the throttle as part of the desk's overlay so it re-installs at create. The latter is cleaner but mixes throttle state with project config. Lean re-apply.
+1. **Throttle persistence across desk restarts.** If the Harbormaster sets a tc/htb cap on a drydock's veth and the drydock's container restarts, the veth disappears and the throttle goes with it. Either the Harbormaster re-applies on the next observation cycle, or we persist the throttle as part of the drydock's overlay so it re-installs at create. The latter is cleaner but mixes throttle state with project config. Lean re-apply.
 2. **`RegisterWorkload` write-side ownership.** The Harbormaster issues WorkloadLeases. Does that mean the Harbormaster's RPC scope includes "create lease" (a thing today only `wsd`'s capability handlers do)? Or does the Harbormaster delegate by calling an internal `wsd` method that issues the lease on its behalf? Probably the latter — keeps lease minting in one place.
 3. **Multi-tenancy of the Harbormaster RPC surface.** If two desks both hold the harbormaster scope (against the design recommendation but possible), do they have equal authority? Probably yes; structural self-targeting prevents them from acting on each other; the ordering of conflicting actions is whoever-wins-the-race. Worth documenting that this is undefined and not designed-around.
 4. **What does `ReadFleetMetrics` actually return?** Right now `ws host audit` is one shape; `ws fleet status` is another. The Harbormaster wants a unified, structured-for-decision-making view. Either it composes the two existing surfaces, or there's a new third one. Lean compose.
-5. **Bootstrapping the first Harbormaster.** Chicken-and-egg: the Harbormaster grants and revokes things, but who grants the Harbormaster scope to the first Harbormaster desk? The principal, manually, via `ws harbormaster designate <desk>` — a one-shot CLI command that writes to the `harbormaster_desks` registry table and issues a Harbormaster-scoped token. No Harbormaster involved in granting itself authority.
+5. **Bootstrapping the first Harbormaster.** Chicken-and-egg: the Harbormaster grants and revokes things, but who grants the Harbormaster scope to the first Harbormaster drydock? The principal, manually, via `ws harbormaster designate <desk>` — a one-shot CLI command that writes to the `harbormaster_desks` registry table and issues a Harbormaster-scoped token. No Harbormaster involved in granting itself authority.

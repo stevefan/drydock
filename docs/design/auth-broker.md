@@ -1,6 +1,6 @@
 # Auth broker
 
-**Status:** sketch · **Depends on:** [capability-broker.md](capability-broker.md), [in-desk-rpc.md](in-desk-rpc.md), [tailnet-identity.md](tailnet-identity.md), [principal-deputy-governance.md](principal-deputy-governance.md) (auth-Harbor *is* the deputy in the principal-deputy-worker triangle; this doc describes one of its responsibilities)
+**Status:** sketch · **Depends on:** [capability-broker.md](capability-broker.md), [in-desk-rpc.md](in-desk-rpc.md), [tailnet-identity.md](tailnet-identity.md), [principal-harbormaster-governance.md](principal-harbormaster-governance.md) (auth-Harbor *is* the Harbormaster in the principal-Harbormaster-worker triangle; this doc describes one of its responsibilities)
 
 ## Problem
 
@@ -29,7 +29,7 @@ On the auth Harbor, a `wsd`-managed timer fires every 4h:
 
 1. Read `claude_master_refresh_token` from daemon-secrets.
 2. POST to Anthropic's OAuth token endpoint with `grant_type=refresh_token`. **Empirical unknown:** the exact endpoint URL, client_id, and whether the response rotates the refresh token. Validate by capturing `claude` CLI's network traffic on a deliberate refresh, before writing the implementation.
-3. On success: write the new `{access_token, refresh_token, expires_at}` blob to local `claude_credentials` secret slot, plus push to every peer Harbor's matching desks via the existing capability-broker `LeaseSecret` flow (auth Harbor acts as the holder; peers request leases).
+3. On success: write the new `{access_token, refresh_token, expires_at}` blob to local `claude_credentials` secret slot, plus push to every peer Harbor's matching drydocks via the existing capability-broker `LeaseSecret` flow (auth Harbor acts as the holder; peers request leases).
 4. If refresh-token rotated, atomically replace `claude_master_refresh_token` and log the rotation.
 5. On failure (refresh token revoked, network down): log + emit a deskwatch violation. Do NOT delete the existing token.
 
@@ -64,10 +64,10 @@ Decision: ship code-paste path first (zero-unknowns), then tailnet redirect once
 
 - **Auth Harbor identity:** default to the Hetzner Linux Harbor. One per OAuth identity (personal vs ASI). Recorded in `~/.drydock/auth-harbor.conf`.
 - **Refresh interval:** every 4h (well under the 8h decay window). Add jitter to avoid thundering herd if multiple identities ever share a clock.
-- **Peer discovery:** reuse `claude-refresh.conf` format (`harbor:desk` pairs) for v1. Migrate to "ask each peer Harbor what desks need `claude_credentials`" once `wsd` peer-RPC is in place.
+- **Peer discovery:** reuse `claude-refresh.conf` format (`harbor:desk` pairs) for v1. Migrate to "ask each peer Harbor what drydocks need `claude_credentials`" once `wsd` peer-RPC is in place.
 - **Mac role:** Mac stays a **co-refresher** for redundancy. If Mac pushes a different refresh token than the auth Harbor's loop, the Mac push wins (keychain is canonical for OAuth client identity). Logged as a rotation event.
 - **Failure mode:** if refresh fails 3× consecutive, deskwatch violation + Telegram alert (see fleet-monitor design). Keep the last-known-good token.
-- **Daemon-secrets isolation:** `claude_master_refresh_token` lives in `~/.drydock/daemon-secrets/` (root:0600), NOT a per-desk secret. Only `wsd` reads it. Peers never see the refresh token, only access tokens.
+- **Daemon-secrets isolation:** `claude_master_refresh_token` lives in `~/.drydock/daemon-secrets/` (root:0600), NOT a per-drydock secret. Only `wsd` reads it. Peers never see the refresh token, only access tokens.
 
 ### Security
 
