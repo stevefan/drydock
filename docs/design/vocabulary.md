@@ -1,43 +1,91 @@
 # Drydock — Vocabulary
 
-**Purpose.** Pin the vocabulary Drydock uses consistently across product docs, design specs, and the RPC surface. Code identifiers (`ws`, `wsd`, `ws_<slug>`, `Workspace` class, `workspaces` SQLite table) are frozen — renaming them would be cosmetic churn — but every human-facing surface uses the vocabulary below.
+**Purpose.** This is the canonical model for what each layer of drydock is, what owns what, and how the pieces relate. Every other doc points here; if a doc disagrees with this one, this one wins. **Last full revision: 2026-05-05** following the V3 architectural reframe (DryDock-as-harness, Harbormaster-as-bouncer, Yard layer).
 
-## The six layers
+Code identifiers (`Workspace` class, `workspaces` SQLite table, `ws_<slug>` ID prefix, `ws` CLI binary, `wsd` daemon name) are V1 historical artifacts. Renaming them is doable but scope-explosive (every test, every fixture, every import); it can happen as an explicit refactor when the appetite exists. **In the meantime: human-facing surfaces use the vocabulary below, even if the code identifiers don't yet.**
+
+---
+
+## The seven layers
 
 | Layer | Canonical name | What it is | What it owns |
 |---|---|---|---|
-| 0 | **Archipelago** *(internal term)* | The collection of Harbors a principal owns — currently a small set of static island machines (your Mac, Hetzner). Not a "fleet" because Harbors aren't mobile; they're place-bound landmasses connected by tailnet. (The forward-looking "carrier-group" / "mobile factory at sea" shape — cloud-elastic infrastructure with Harbors on it — is aspirational, not where we are.) | The cross-Harbor view: peer-RPC channels, harbor-monitor probes, principal's bird's-eye visibility. No daemon owns the archipelago; it's a perspective the principal holds. |
-| 1 | **Harbor** | The host machine (laptop, home server, Hetzner VM) running `wsd`. An island in the archipelago. Authority lives here. | The daemon, the registry, policy state, capability-broker leases, audit log, daemon-level admin secrets. One `wsd` per harbor. |
-| 2 | **Harbormaster** | The governing agent on a Harbor — broad-but-shallow authority across all Docks on its Harbor and (via peer-RPC) the rest of the archipelago. | Auth-broker refresh loop, capability grants on behalf of standing policy, throttle/stop/restart actions on misbehaving Dockworkers, escalation to principal via Telegram. Bounded against itself: cannot rewrite its own policy or reach its own master credentials directly. See [harbormaster-authority.md](harbormaster-authority.md). |
-| 3 | **Project** | The logical work unit — a body of code + the policy / capability template that should govern any Dock instantiated to work on it. | Immutable config template (`~/.drydock/projects/<project>.yaml`), repo path, policy template, declared capabilities, entitlements, and delegations. **One project may have many Docks** (different worktrees, different branches, different parts of the same codebase, an experimental fork, etc.) — Project is the type, Dock is the instance. |
-| 4 | **DryDock** *(formal)* / **Dock** *(shorthand)* | A durable, bounded work environment — the runtime unit. An *instantiation* of a Project on a Harbor. (The metaphor: a drydock is where work building or maintaining the ship happens; the ship itself ventures out into prod / function calls and the metaphor doesn't have to extend that far.) | Container lifecycle, git worktree, policy scope, registry row, named volumes, audit principal, bearer token, branch, accumulated tooling state. Persistent across container rebuilds. |
-| 5 | **Dockworker** | The agent bound to a Dock — the thing that actually does work. | Claude Code remote-control process, cron-invoked operator, research agent, schedule job. A Dockworker is durable per-Dock but containers are its body, not its identity. |
+| 0 | **Archipelago** *(textual metaphor)* | The collection of Harbors a principal owns. Currently a small set of static island machines (Mac, Hetzner). | A perspective the principal holds. No daemon owns the archipelago; it's how we *describe* the harbors collectively. The technical/CLI term is just **Harbors** (`ws harbors status`). |
+| 1 | **Harbor** | The host machine running `wsd`. An island in the archipelago. | The daemon, the registry, policy state, capability-broker leases, audit log, daemon-level admin secrets. One `wsd` per Harbor. |
+| 2a | **Harbor Authority** | The rule-enforcement role. The gate — capability broker, narrowness check, resource ceiling enforcement. | Auth, narrowness validation at every capability request, throttle/deny actions per standing policy, hard cgroup ceiling enforcement. Mostly what `wsd` *already does* in V1/V2; just needs naming as a distinct role. |
+| 2b | **Port Auditor** | The observation role. The watch. | Reads declared resource profiles and compares to actual (workload registrations vs measured usage, narrowness vs requested grants), flags anomalies, escalates to principal via Telegram. Doesn't enforce — observes and reports. |
+| 2c | **Harbormaster** *(deferred — manager role, optional)* | The orchestration role. The big-picture manager. | Cross-DryDock coordination, scheduling decisions, balancing resources across Yards. Deferred until there's enough fleet activity that holistic orchestration earns its keep. Not why drydock exists initially. |
+| 3 | **Yard** *(optional)* | A grouping of related DryDocks that share concerns. | Shared budget envelope, internal address space (private inter-Drydock network), Yard-wide secrets pool, collective metering. Maps naturally to monorepos but isn't strictly tied. Standalone DryDocks live outside any Yard or in a Yard-of-one. |
+| 4 | **Project** | The infrastructure-as-code declaration for one DryDock. The YAML recipe. | Code pointer (repo + subdir), narrowness (capabilities, network reach, secrets), resource ceilings, fleet declaration (which containers to run), inter-Drydock service exposure. **Project = the IaC; DryDock = what gets instantiated from it.** |
+| 5 | **DryDock** *(formal)* / **Dock** *(shorthand)* | The infrastructure harness for one logical service. **NOT the runtime — the harness around the runtime.** | Network policy enforcement points, storage mounts, secret holdings, capability scope, resource budget, identity, audit principal. The Fleet of containers (layer 6) lives within the DryDock's harness. |
+| 6 | **Fleet** | The containers/ships running within one DryDock. | Multiple containers (service workers, API servers, DB, the agent's container). Each container is a **Ship**. The Fleet is the collection. |
+| 7 | **Ship** *(= container)* / **Service** | A single running container — one process group bounded by one security/isolation boundary. | The actual computation. One Ship typically runs one logical service. The agent (layer 8) lives in one specific Ship. |
+| 8 | **Dockworker** *(= the agent)* | The judgment-capable agent running inside one of the Fleet's Ships, with broker access. Responsible for *the work* of the DryDock. | Maintaining the DryDock's other services (restart crashed Ships, tune schedules, decide work strategy), proposing infrastructure amendments via the broker, exposing the DryDock's services to siblings. **Owns the work; consumes the harness.** |
 
-Sessions (ephemeral human or agent attachments to a drydock — IDE windows, SSH connections, claude.ai/code sessions) are explicitly *not* first-class. Multiple sessions can attach concurrently; Drydock does not track them.
+Sessions (ephemeral human or agent attachments — IDE windows, SSH connections, claude.ai/code sessions) are explicitly *not* first-class. Multiple sessions can attach concurrently; drydock does not track them.
 
-## The metaphor
+---
 
-An archipelago of Harbors — each Harbor an island machine the principal owns. A Harbor contains multiple Docks (instantiated DryDocks, each housing one Project's worktree), governed by a Harbormaster. A Dock is a bounded place where work gets done on a vessel, fitted with what that work needs. A Dockworker operates in the Dock. The vessel (project code, data, in-flight tasks) stays across many sessions of work — and ventures out as prod / function calls / external service interactions when the work is done. The metaphor stops at the harbor's edge; what the ship does at sea is its own concern.
+## The metaphor, fully extended
 
-Multiple Docks per Project is the common case, not the exception: a Project might have one Dock for steady-state work on `main`, a second Dock for an experimental branch, a third Dock dedicated to running the project's scheduled jobs. They share the Project's policy template but each Dock has its own runtime state, its own Dockworker, its own audit trail.
+An archipelago of Harbors — each Harbor an island machine the principal owns. On each Harbor, two governance roles operate the port-business concerns: a **Harbor Authority** that enforces the rules (paperwork, declarations, resource quotas, capability gates) and a **Port Auditor** that watches for divergence between what was declared and what's actually happening. Neither tells the captains how to navigate or what to load — those are the Dockworkers' decisions.
 
-### Internal note: archipelago vs. carrier group
+A future third role, **Harbormaster**, would be a holistic manager — coordinating across DryDocks, scheduling, balancing. Drydock doesn't need this initially; infrastructure provisioning + rule enforcement + audit-observation is the V3 starting point.
 
-"Fleet" was the wrong word for what we have today. A fleet is mobile — a collection of vessels under way. Our Harbors aren't moving; they're durable, address-stable, place-bound. **Harbors** is the operational/CLI term (concrete, easy to type — `ws harbors status`); **Archipelago** is the textual metaphor (use in prose when emphasizing the island-chain framing — "across the archipelago of Harbors"). Don't make "Archipelago" a technical noun; it's how we *describe* the harbors, not what we *call* them in code.
+A Harbor contains **Yards** (groups of related DryDocks with shared concerns) and standalone DryDocks. A **DryDock** is a structure — a harness — that holds a Fleet of Ships while work happens on them. The DryDock is *infrastructure*: the cranes, the scaffolding, the water-control, the power feeds, the dock-side warehousing. It exists to *serve* the Ships.
 
-The aspirational shape, when/if drydock runs on cloud-elastic infrastructure (Harbors that scale on demand, drydocks that float between hosts), is more like a **carrier group** — a coordinated mobile force with a flagship and supporting vessels — or a **mobile factory at sea**, large enough to do its own work without needing land. We're not there. The vocabulary should reflect what we are (archipelago of islands), not what we might become (carrier group at sea), so the mental model stays calibrated to actual capability.
+A **Fleet** of Ships sits in the DryDock. Each Ship is a single container running one service. The Ships are bounded individually (each is its own security boundary) but share the DryDock's harness collectively. They communicate with each other internally; they communicate with the outside world through the harness's controlled gates (proxy, firewall, NETWORK_REACH grants).
+
+The **Dockworker** (the agent) lives in one of the Ships. The Dockworker is the human-equivalent skilled worker who maintains the rest of the Fleet and decides what work needs doing. The Dockworker consumes the harness's resources (asks the broker for secrets, opens egress via NETWORK_REACH, registers heavy workloads); the Harbormaster watches that consumption and ensures it matches what was declared.
+
+The **Project** YAML is the **infrastructure-as-code** description of all of this for one DryDock — what Ships to launch, what harness to provide, what narrowness applies. The principal authors it directly; the Dockworker can propose amendments through a structured contract; the Harbormaster auto-applies amendments that fit standing policy and escalates novel ones to the principal.
+
+The metaphor stops at the Harbor's edge. What the Ships do at sea (in production, when called as a service from outside, when interacting with external APIs) is their own concern. We model the *workshop where work happens*, not the open ocean where the work-product is used.
+
+---
+
+## Infrastructure-as-code + the amendment contract
+
+The Project YAML is canonical IaC. Three classes of change:
+
+| Change author | Approval gate | Examples |
+|---|---|---|
+| **Principal direct** | None (you're the principal) | Edit YAML, `ws project edit auction-crawl`, git commit + reload |
+| **Dockworker, within standing policy** | Harbormaster auto-applies | Open a domain that matches `delegatable_network_reach` glob; register a workload within `workload_max`; request a secret already in `delegatable_secrets` |
+| **Dockworker, novel** | Harbormaster escalates to principal | Request a new domain not covered by glob; request permanent ceiling lift; propose a new Ship in the Fleet; request a new capability type |
+
+The Dockworker's amendment proposals carry structured metadata (the EGRESS_GRANTS prototype shape, generalized): `requested_by` service name, `reason` prose, `tos_notes`, `status: pending|approved|denied`, `reviewed_by/at/note` for review trail. The Harbormaster's audit log records every proposal, every approval/denial, every application. Principal review happens via Telegram (one-word reply) or by editing the YAML directly.
+
+This is the multi-author IaC pattern. Traditional IaC has one class of author (human + CI); we have three (principal, Dockworker-within-policy, Dockworker-novel-via-escalation). The novelty is one of the authors is an LLM and the approval surface is conversational.
+
+---
+
+## Container vs Resource boundaries — the V3 separation
+
+Pre-V3 drydock conflated two boundaries inside one container:
+- *Security boundary*: what code runs, what it can see internally
+- *Resource boundary*: what external resources it can reach (firewall in container, cgroup at create-time)
+
+V3 separates them:
+- **Security boundary = the Ship (container).** A bounded place where one service's code runs. Compromise stays inside. Recreating the Ship = a real security operation (fresh isolation slate).
+- **Resource boundary = the DryDock (harness).** External infrastructure the Ship consumes. Network policy, storage mounts, secrets, compute scaling, capability scope. **Mutable without touching the Ship** — proxy rules update, IAM grants change, secret rotates, all without container recreate.
+
+This separation is *the* V3 insight that resolves most of the "live vs pinned" friction from earlier designs. Most policy lives outside the container, so changing it doesn't require recreate. Container recreate becomes the rare event (security re-baseline, code update), not the routine one.
+
+---
 
 ## Canonical phrasings
 
 - "Harbor `drydock-hillsboro` runs `wsd`" — correct.
-- "The Harbormaster on `drydock-hillsboro` granted a lease" — correct.
-- "Create a Dock" / "spawn a Dock" — correct (instantiate a DryDock from a Project).
-- "Dock `auction-crawl` has a Dockworker named remote-control" — correct (Dock as the instance shorthand).
-- "The auction-crawl Project has three Docks: prod-main, exp-arbitrage, and scheduled-jobs" — correct (one Project, multiple Docks).
-- "Across the archipelago" / "across Harbors" — correct (multi-Harbor reference).
-- "The Dockworker requested a lease" — correct (audit records `desk_id` but the *agent* doing it is a Dockworker).
-- "Workspace X" — acceptable in code and registry contexts where the technical artifact is what's meant; in product docs prefer "Dock" or "DryDock".
-- "Employee worker" — a specific class of Dockworker: long-running, permissioned, judgment-capable, lives on Harbor infra. The Harbormaster is itself an employee-Dockworker — the canonical instance of the pattern.
+- "The Port Auditor on `drydock-hillsboro` flagged a resource anomaly" — correct (Port Auditor watches and flags).
+- "The Harbor Authority denied auction-crawl's NETWORK_REACH request for evil.com" — correct (Authority enforces narrowness).
+- "Principal escalation from Port Auditor: actual usage diverging from declared on dock auction-crawl @ hetzner" — correct (intrusive actions escalate; Auditor doesn't auto-stop).
+- "Yard `microfoundry` contains 3 DryDocks: main, auction-crawl, permits-pdx" — correct (Yard groups related Drydocks).
+- "Dock `auction-crawl` has a Fleet of 4 Ships: crawl-worker, api-server, db, agent" — correct (Fleet = containers within one Drydock).
+- "The Dockworker in auction-crawl restarted its crawl-worker Ships" — correct (Dockworker maintains the Fleet within its DryDock).
+- "Across the archipelago" / "across Harbors" — correct (multi-Harbor reference; archipelago is metaphor, harbors is technical).
+- "auction-crawl Project declares network_reach for govdeals.com" — correct (Project is the IaC declaration).
+- "The auction-crawl Dockworker requested NETWORK_REACH for a new domain; Harbormaster escalated" — correct (amendment outside standing policy → escalation).
 
 ### Dock vs DryDock — the type/instance distinction
 
@@ -45,68 +93,98 @@ The aspirational shape, when/if drydock runs on cloud-elastic infrastructure (Ha
 - **Dock** (shorthand) is the *instance* — a specific running thing. "The auction-crawl Dock," "spin up a fresh Dock," "this Dock has been running for two weeks." Reads more naturally in operational prose.
 - They refer to the same kind of thing; the distinction is register, not ontology.
 
+### Ship vs Container vs Service — the same thing, different angles
+
+- **Container** is the technical artifact — `docker run`, a process group bounded by namespaces and cgroups.
+- **Ship** is the metaphor — what's docked in the DryDock, what the Dockworker operates on.
+- **Service** is the function — what the Ship is *for* (serve API requests, run a crawler, hold a DB).
+
+Choose based on register: code/audit → container, prose/architecture → ship, business-purpose → service. They all refer to the same runtime entity.
+
+---
+
 ## Retired terms
 
 These appear in older docs and code identifiers but should not be used in new prose:
 
-- "**desk**" — colloquial alias for **Dock** / **DryDock**. Historical leak from office-metaphor talk; retired so the codebase stops mixing metaphors. Code identifiers (`desk_id`, `deskwatch`, `delegatable_*`) remain frozen.
-- "**deputy**" / "**Harbor agent**" — replaced by **Harbormaster**. The harbormaster is a real maritime role (the official who governs everything in a harbor — allocates berths, enforces regulations, mediates disputes between vessels) and matches what the role does in this fabric far better than "deputy."
-- "**Worker**" (capitalized as a role) — replaced by **Dockworker**. Lowercase "worker" remains acceptable in mechanical/computing contexts where the metaphor isn't load-bearing.
-- "**fleet**" (as the noun for "all my Harbors") — replaced by **Harbors** (technical/CLI: `ws harbors status`, `harbor-monitor.md`) and **archipelago** (textual metaphor: "across the archipelago"). The CLI rename `ws fleet` → `ws harbors` and the file rename `fleet-monitor.md` → `harbor-monitor.md` landed 2026-05-05.
+- "**workspace**" — was the original V1 name for what's now called **DryDock** (and historically the runtime concept; now the harness). Code keeps `Workspace` class and `workspaces` table as historical, but prose should use DryDock or Dock.
+- "**desk**" — colloquial alias for what's now called **Dock**. Office-metaphor leak. Code identifiers (`desk_id`, `deskwatch`, `delegatable_*`) remain frozen.
+- "**deputy**" / "**Harbor agent**" — was replaced by Harbormaster, now further split into **Harbor Authority** (rule enforcement) + **Port Auditor** (observation), with **Harbormaster** reserved as a future deferred manager role. Older docs that say "the Harbormaster does X" should be re-read as "the Authority does X" or "the Auditor does X" depending on whether X is enforcement or observation.
+- "**Worker**" (capitalized as a role) — replaced by **Dockworker**.
+- "**fleet**" (in the old "all my Harbors" sense) — replaced by **Harbors** (technical) and **archipelago** (metaphor). **Fleet has a NEW meaning in V3**: the containers/ships within one DryDock.
+- "**occupant**" — historical alias for what's now **Dockworker**.
 
-## Mapping to code / registry / RPC (unchanged)
+---
 
-| Product term | Code identifier |
-|---|---|
-| Harbor | the host running `wsd`; no separate identifier |
-| Project | `ProjectConfig` dataclass; `~/.drydock/projects/<name>.yaml` |
-| DryDock | `Workspace` class; `workspaces` SQLite table; `ws_<slug>` ids |
-| Dockworker | not first-class in v2 code; represented by the processes running inside a drydock (remote-control supervisor, cron job invocations, etc.) |
-| Harbormaster | not yet first-class; will be a `harbormaster_desks` registry table + `scope: "harbormaster"` token grade per [harbormaster-authority.md](harbormaster-authority.md) §2 |
-| Session | not first-class; implicit in any attached client |
+## Mapping to code identifiers (V1 frozen, prose updated)
 
-The v1 identifier `ws_<slug>` remains. Read it as **"workspace id"** = **"drydock id"** — same thing. CLI commands (`ws create`, `ws stop`, etc.) keep the `ws` prefix because `drydock` as a CLI prefix would collide with the project name and add no value.
+| Product term | Code identifier (frozen) | Notes |
+|---|---|---|
+| Harbor | host running `wsd`; no separate identifier | n/a |
+| Harbor Authority | mostly `wsd` itself today (capability handlers, narrowness validation, bearer-token auth) | the role mostly exists; just needs the name |
+| Port Auditor | not yet built; will combine deskwatch + harbors-monitor + new resource-anomaly detection | next-to-implement role |
+| Harbormaster (manager) | deferred; would be a separate Dockworker on a special drydock with cross-Yard read access + orchestration RPC | not for V3 |
+| Yard | not yet implemented | new; would be `yards` table + `yard_id` FK on Workspace |
+| Project | `ProjectConfig` dataclass; `~/.drydock/projects/<name>.yaml` | unchanged |
+| DryDock / Dock | `Workspace` class; `workspaces` SQLite table; `ws_<slug>` ids | renamable; deferred |
+| Fleet | not yet first-class; today each Workspace has one container_id | will need `dock_containers` table for multi-Ship |
+| Ship / Container | one row in (future) `dock_containers` table | n/a today; one container per Workspace |
+| Dockworker | not first-class in code; represented by the agent process running in its Ship | n/a |
+| Session | not first-class; implicit in any attached client | n/a |
 
-## Why these layers earn their naming
+---
 
-- **Harbor vs DryDock.** The daemon runs on a host; the host contains multiple work environments; separating them linguistically mirrors what Drydock's design enforces (host-authoritative state vs drydock-scoped state).
-- **DryDock vs Worker.** A drydock is a *place*; a worker is an *agent*. The same drydock can have successive workers (as tokens rotate, as agent generations replace each other) or a long-lived worker (the employee pattern). Separating them prevents the "is the desk the agent?" confusion the earlier `desk` + `occupant` split tried to patch.
-- **Project vs DryDock.** A project declares what a drydock should be; drydocks are instances. Many drydocks can share one project (`ws create microfoundry auction-crawl` and `ws create microfoundry experimental-auction-crawl` are two drydocks of the same project).
+## Why the layers earn their names
 
-## Implications that earn explicit callouts
+- **Archipelago vs Harbor.** Harbors are durable, address-stable, not mobile. "Archipelago" captures the static-islands shape better than "fleet" did. Archipelago is metaphor; "the harbors" is what you say in CLI/code.
 
-### Harbor owns authority
-- Policy validation, capability leases, audit emission, token issuance — all Harbor-level operations performed by `wsd`. The drydock is *subject* to these; it doesn't make them.
-- Fleet-level admin secrets (`~/.drydock/daemon-secrets/`) live at Harbor scope — not per-drydock.
+- **Harbor vs Harbor Authority vs Port Auditor.** A Harbor is a *place* (the host). The Harbor Authority is the *role* that enforces rules at the gate. The Port Auditor is the *role* that watches whether declared activity matches actual. Splitting these from a single "Harbormaster" lets us implement what's needed first (Authority + Auditor — both narrow, both well-shaped) and defer the holistic-manager role (true Harbormaster) until there's orchestration that needs doing.
+
+- **Yard vs DryDock.** A Yard groups DryDocks that share concerns (budget, network, secrets). Without a Yard, sharing is per-pair-declared and ceremonious. With a Yard, it's intrinsic. Optional layer — single DryDocks don't need it.
+
+- **Project vs DryDock.** A Project is the *declaration* (IaC); a DryDock is the *instance*. Same shape as Class vs Object. Multi-Dock-per-Project is rare in V3 (typically 1 Dock per Project per Harbor).
+
+- **DryDock vs Fleet vs Ship.** The DryDock is the *harness* (infrastructure around the work). The Fleet is *what's running* in the harness (one or more Ships). A Ship is *one* container/service. The DryDock holds a Fleet; the Fleet contains Ships. This corrects the V1/V2 conflation where DryDock was conflated with the single container running inside it.
+
+- **Ship vs Dockworker.** A Ship is a *runtime artifact*; the Dockworker is *the agent that maintains it*. The Dockworker happens to live in one of the Ships (its agent container) but is conceptually separate from the Ship-as-runtime. One Dockworker maintains the whole DryDock's Fleet from inside one of its Ships.
+
+---
+
+## Implications worth calling out
+
+### Harbor owns authority for resource enforcement
+- Capability broker, audit emission, token issuance — all Harbor-level performed by `wsd`. The DryDock is *subject* to these; it doesn't make them.
 - One `wsd` per Harbor. Multi-daemon single-host is out of scope.
 
-### DryDock owns durable state
-- Policy scoping happens at drydock level. Capability grants, firewall allowlists, delegatable secrets, delegatable firewall domains — all keyed on drydock id.
-- Audit principal = drydock id. "DryDock `auction-crawl` requested `ebay.com` at 14:23" is the canonical log shape.
-- Parent-child relationships live between drydocks. A parent drydock spawns a child drydock. Workers don't spawn anything directly — they ask Harbor (via `wsd`) to spawn on their behalf.
-- Bearer tokens are issued per drydock. Multiple workers / sessions inside the same drydock present the same token.
+### Harbor Authority + Port Auditor split — narrow and audit-shaped
+- **Harbor Authority's standing actions** (auto, per principal-set policy): throttle egress on ceiling breach, revoke leases, deny capability requests outside narrowness, enforce hard cgroup ceilings. The gate.
+- **Port Auditor's observation surface**: reads declared profiles, measures actual, flags divergences, escalates to principal via Telegram. Doesn't enforce — that's Authority's job.
+- **Escalations** (Auditor flags, principal acts): stop a Dock, restart a Dockworker, modify policy, anything intrusive to the work.
+- The principal is the manager. A formal "Harbormaster" manager role is a deferred future addition, not a V3 requirement.
 
-### Worker is the agent abstraction
-- A Worker is who's actually doing work — Claude Code remote-control, a cron-invoked scraper, a smart operator. Always bound to exactly one drydock.
-- Worker lifetime is independent of container lifetime: the drydock can rebuild its container (base image bump, upgrade) without losing the Worker's logical identity.
-- Worker classes emerge as a useful product abstraction: `employee-worker` (long-running, high-trust, narrow capabilities), `interactive-worker` (short-lived, human-driven), `batch-worker` (scheduled, deterministic). V2 doesn't formalize these as daemon types; product surfaces may.
+### DryDock owns the harness; Ships own their isolation
+- Network policy enforced at the DryDock harness (proxy, NETWORK_REACH grants). One change at the harness level affects all Ships.
+- Each Ship is its own security boundary internally. Compromised Ship doesn't see siblings' state.
+- Storage mounts, secrets, capability scope — all DryDock-level (apply to all Ships in the Fleet).
 
-### Session is explicitly out of scope
-- Agent-to-agent coordination within a drydock (two Claudes editing the same repo, pair-agent patterns, reviewer/actor) is a substrate/orchestrator problem, not a Harbor problem.
-- The daemon does not track session count, session attribution, or per-session policy. If two sessions on one drydock both call `RequestCapability`, `wsd` sees both calls as coming from the same drydock with the same token.
-- **Multi-user note (deferred):** when principals become explicit, a session carries a `principal_id`. The token → `(principal_id, desk_id)` lookup remains at drydock-level; per-session policy is never added.
+### Dockworker owns the work
+- Maintains the Fleet (restart crashed Ships, tune schedules, decide work strategy).
+- Proposes infrastructure amendments via broker (which the Harbormaster auto-applies or escalates).
+- Communicates with sibling DryDocks via narrowed network reach.
+- Does *not* have authority to modify its own DryDock's standing policy directly; goes through the amendment contract.
 
-## Historical note
+### Project is the IaC declaration
+- One YAML per DryDock (or one Yard-level YAML covering several, depending on tooling).
+- Lives at `~/.drydock/projects/<name>.yaml` today; could move to source repo (`.drydock/project.yaml` in the project's own repo) in a future Phase.
+- Editable by principal directly; amendable by Dockworker via broker contract.
+- Declares: fleet shape, narrowness, ceilings, infrastructure wiring, observability expectations.
 
-Earlier drafts of these docs used **workspace** / **desk** / **agent-desk** for the concept now called **DryDock**, and **occupant** for what's now called **Worker**. The older vocabulary came from a slip-box note titled *Drydock vocabulary — project desk session*; the three-layer split that doc pushed is preserved here (Project / DryDock / Worker), just renamed. The language shift landed 2026-04-17 after a session exploring the Harbor/DryDock/Worker framing and finding it cleaner than the desk/occupant anthropomorphism. Code identifiers (`ws_<slug>`, `workspaces` table, `Workspace` class) were intentionally left unchanged.
+---
 
-In-flight references in archived documents (notably `_archive/migration-vision.md`) and in older agent-session logs use the older terms. They are correct for their point in time; don't mass-rewrite them.
+## Versioning
 
-## Reversibility
+- **V1** (~early 2026): Workspace as the only concept. No Project layer.
+- **V2** (~mid 2026): Project YAML added. Capability broker. Narrowness. Pinning at create-time (inherited from spawn-time narrowness pattern).
+- **V3** (2026-05-05 reframe, this doc): DryDock-as-harness vs Ship-as-runtime separation. Yard layer. Harbormaster as bouncer/auditor only. Multi-Ship Fleets. Container = security boundary, DryDock = resource boundary. IaC + agent-amendment contract.
 
-| Decision | Cost of reversing |
-|---|---|
-| Harbor / DryDock / Worker product vocabulary | Low — pure documentation. Code identifiers untouched. |
-| Three-layer Project / DryDock / (Worker\|Session) split | Medium — the daemon RPC surface encodes the split (capabilities keyed on drydock, audit principal = drydock, tokens per drydock). The split is load-bearing; the naming on top of it is cheap. |
-| Keeping `ws_<slug>` as technical id | Low — pure naming; can alias later if needed. |
-| Session as explicitly out of scope | Medium — if session-level policy becomes required, the token model extends from drydock-only to drydock-plus-principal. Multi-user sketch already reserves this extension. |
+V3 is the conceptual model going forward. Implementation hasn't fully caught up — the code still has many V1/V2 shapes (one-container-per-Workspace, Project-as-YAML-not-tracked, Harbormaster-as-not-yet-implemented). The implementation work is to migrate code to this model incrementally; the docs (this one and others) describe the *target* model so all future work points the same direction.
