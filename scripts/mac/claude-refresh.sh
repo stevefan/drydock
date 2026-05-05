@@ -34,6 +34,40 @@ if ! [ -f "$CONF" ]; then
     exit 0
 fi
 
+# Warm up the keychain before extracting. Claude Code Desktop only
+# refreshes the OAuth tokens it stores in the keychain when something
+# actively uses them; if Mac has been idle for hours, the keychain
+# holds an already-expired token. Run a no-op `claude -p` with a
+# 30s timeout so it triggers an in-process refresh and writes the
+# new tokens back to keychain. Failure here is non-fatal — we still
+# push whatever the keychain has.
+#
+# launchd runs with a sparse PATH and won't see claude in nvm-managed
+# locations. Look for the binary in a few well-known nvm/Volta paths
+# and Homebrew, then fall back to PATH lookup.
+CLAUDE_BIN=""
+for p in \
+    "${HOME}/.nvm/versions/node"/*/bin/claude \
+    "${HOME}/.volta/bin/claude" \
+    /opt/homebrew/bin/claude \
+    /usr/local/bin/claude
+do
+    if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
+done
+if [ -z "$CLAUDE_BIN" ] && command -v claude >/dev/null 2>&1; then
+    CLAUDE_BIN=$(command -v claude)
+fi
+
+if [ -n "$CLAUDE_BIN" ]; then
+    if ! perl -e 'alarm 30; exec @ARGV' "$CLAUDE_BIN" -p ":" >/dev/null 2>&1; then
+        log "WARN: keychain warm-up via '$CLAUDE_BIN -p :' failed or timed out (will push current keychain anyway)"
+    else
+        log "keychain warmed via $CLAUDE_BIN"
+    fi
+else
+    log "WARN: claude CLI not found in nvm/volta/homebrew/PATH; skipping keychain warm-up"
+fi
+
 # Extract credentials ONCE; reuse across all targets.
 CREDS=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null) || {
     log "ERROR: keychain extraction failed — Claude Code-credentials not found"
