@@ -263,7 +263,7 @@ In normal operation: a quiet, scheduled summary (daily or on-demand). The Harbor
 
 ```
 📊 Harbormaster daily — 2026-05-05
-  harbors: 6 drydocks healthy, 1 throttled (auction-crawl, see below)
+  archipelago: 2 harbors, 6 docks healthy, 1 throttled (auction-crawl @ hetzner, see below)
   grants: 24 capability leases (22 routine, 2 escalated → approved)
   burn:   ~340k anthropic tokens (within budget)
   drift:  none
@@ -274,7 +274,7 @@ In normal operation: a quiet, scheduled summary (daily or on-demand). The Harbor
 In abnormal operation: structured escalation, principal replies with one word to act.
 
 ```
-🟡 Harbormaster escalation: auction-crawl
+🟡 Harbormaster escalation: dock auction-crawl @ hetzner
   reason: anthropic_tokens_per_day exceeded (1.4M / 1M)
   trajectory: linear since 03:00 UTC; likely crawl loop
   Harbormaster action: throttled api_call_budget to 0 until principal review

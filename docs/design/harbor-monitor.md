@@ -53,7 +53,7 @@ The CC-liveness probe is the headline feature. Everything else exists in `deskwa
 ### Telegram alert format
 
 ```
-🔴 harbors: hetzner/auction-crawl
+🔴 dock auction-crawl @ hetzner
   CC token invalid (probe failed: 401 from /v1/messages)
   last healthy: 2026-05-04T03:12Z (47min ago)
   → triggering auth-broker refresh
