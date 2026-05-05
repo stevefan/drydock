@@ -1,6 +1,6 @@
 # Resource ceilings + workload registration
 
-**Status:** sketch · not yet implemented · **Depends on:** [capability-broker.md](capability-broker.md), [narrowness.md](narrowness.md), [principal-harbormaster-governance.md](principal-harbormaster-governance.md), [deskwatch.md](deskwatch.md), [fleet-monitor.md](fleet-monitor.md)
+**Status:** sketch · not yet implemented · **Depends on:** [capability-broker.md](capability-broker.md), [narrowness.md](narrowness.md), [principal-harbormaster-governance.md](principal-harbormaster-governance.md), [deskwatch.md](deskwatch.md), [harbor-monitor.md](harbor-monitor.md)
 
 This is the doc that fills out §5(a) and §5(c) of the principal–Harbormaster–Dockworker governance paper: the schema for *resource ceilings* a drydock operates under, and the *workload registration* primitive that lets desks legitimately burst above their standing caps without being mistaken for a runaway.
 
@@ -177,7 +177,7 @@ The current single-cap model has a tuning paradox: tight enough to catch runaway
 - Failure mode: hard ceiling unset where global default exists → use global default; explicit `null` opts out (audited).
 
 ### Container running
-- Soft ceilings polled every N seconds (configurable; default 60s) by Harbormaster via fleet-monitor + in-desk probe.
+- Soft ceilings polled every N seconds (configurable; default 60s) by Harbormaster via harbor-monitor + in-desk probe.
 - Workload leases tracked in broker; expiry sweeper runs on Harbormaster cadence.
 
 ### Container stop
@@ -257,7 +257,7 @@ Phase C is where the model becomes self-regulating; A and B are the substrate fo
 
 **Mapping to the principal-Harbormaster roadmap.** Per [principal-harbormaster-governance.md §6](principal-harbormaster-governance.md), this work spans roadmap items #1 (resource ceilings + workload registration in `narrowness:`) and #2 (lease TTL + idle revocation, which is Phase C's lease-hold-max enforcement); Phase B's in-desk probe is roadmap item #4. Phase A is the only piece that can ship without the Harbormaster authority surface (item #5) being designed.
 
-**Where cgroup metrics come from.** Phase B's soft observation reads from the in-container `desk-probe` (per [principal-harbormaster-governance.md §5d](principal-harbormaster-governance.md)) for process/fd/disk-growth visibility, and from the Harbor's cgroup interface for CPU/memory totals. [fleet-monitor.md](fleet-monitor.md) is *not* extended to gather cgroup stats — it stays focused on liveness/health/CC-token probes; the Harbormaster joins fleet-monitor's signal with desk-probe's snapshot to reach a verdict.
+**Where cgroup metrics come from.** Phase B's soft observation reads from the in-container `desk-probe` (per [principal-harbormaster-governance.md §5d](principal-harbormaster-governance.md)) for process/fd/disk-growth visibility, and from the Harbor's cgroup interface for CPU/memory totals. [harbor-monitor.md](harbor-monitor.md) is *not* extended to gather cgroup stats — it stays focused on liveness/health/CC-token probes; the Harbormaster joins harbor-monitor's signal with desk-probe's snapshot to reach a verdict.
 
 ---
 

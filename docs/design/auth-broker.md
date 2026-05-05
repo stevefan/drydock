@@ -66,7 +66,7 @@ Decision: ship code-paste path first (zero-unknowns), then tailnet redirect once
 - **Refresh interval:** every 4h (well under the 8h decay window). Add jitter to avoid thundering herd if multiple identities ever share a clock.
 - **Peer discovery:** reuse `claude-refresh.conf` format (`harbor:desk` pairs) for v1. Migrate to "ask each peer Harbor what drydocks need `claude_credentials`" once `wsd` peer-RPC is in place.
 - **Mac role:** Mac stays a **co-refresher** for redundancy. If Mac pushes a different refresh token than the auth Harbor's loop, the Mac push wins (keychain is canonical for OAuth client identity). Logged as a rotation event.
-- **Failure mode:** if refresh fails 3× consecutive, deskwatch violation + Telegram alert (see fleet-monitor design). Keep the last-known-good token.
+- **Failure mode:** if refresh fails 3× consecutive, deskwatch violation + Telegram alert (see harbor-monitor design). Keep the last-known-good token.
 - **Daemon-secrets isolation:** `claude_master_refresh_token` lives in `~/.drydock/daemon-secrets/` (root:0600), NOT a per-drydock secret. Only `wsd` reads it. Peers never see the refresh token, only access tokens.
 
 ### Security

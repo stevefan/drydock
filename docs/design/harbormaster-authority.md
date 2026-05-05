@@ -69,7 +69,7 @@ Concrete RPC list for V1:
 | `ThrottleEgress(name, bandwidth_max, reason)` | NEW | tc/htb on the drydock's veth |
 | `RevokeLease(lease_id, reason)` | `release_capability` | reasoning + audit. (Bypasses caller-desk-id ownership check that release_capability normally enforces — Harbormaster can revoke leases it doesn't hold.) |
 | `RegisterWorkload(desk_id, workload_spec)` | (write side of resource-ceilings.md §3) | issues WorkloadLease |
-| `ReadFleetMetrics()` | host_audit + fleet-monitor | unified read for the Harbormaster's decision loop |
+| `ReadHarborMetrics()` | host_audit + harbor-monitor | unified read for the Harbormaster's decision loop |
 
 Notably absent from V1 — destructive operations the Harbormaster should *escalate*, not auto-execute:
 
@@ -130,7 +130,7 @@ The trade-off you're sensing into: **operational ease vs. constraint-rewriting-v
 Recommended V1 shape:
 
 - **Identity:** bearer-token grade with a `scope: "harbormaster"` field on the token. Same auth path as workers, distinguished at the dispatcher.
-- **RPC surface:** 6 new first-class methods (StopDesk, RestartDeskAgent, ThrottleEgress, RevokeLease, RegisterWorkload, ReadFleetMetrics), each thin-wrapping existing or new core functions, each emitting `harbormaster.action` audit events that capture the *why*.
+- **RPC surface:** 6 new first-class methods (StopDesk, RestartDeskAgent, ThrottleEgress, RevokeLease, RegisterWorkload, ReadHarborMetrics), each thin-wrapping existing or new core functions, each emitting `harbormaster.action` audit events that capture the *why*.
 - **Self-targeting:** structural — registry table of harbormaster-scoped desks, dispatcher rejects any harbormaster RPC where the target is in that table.
 - **Audit:** read-only access via existing `ws audit` machinery; writes happen only as the side-effect of the new RPC methods; no edit/delete surface.
 - **Policy mutation:** static — Harbormaster reads `~/.drydock/policy/`, reloads on mtime change. Dynamic-via-Telegram is V2.
@@ -144,5 +144,5 @@ Each of these is the *cheap* end of its respective tension except for **self-tar
 1. **Throttle persistence across desk restarts.** If the Harbormaster sets a tc/htb cap on a drydock's veth and the drydock's container restarts, the veth disappears and the throttle goes with it. Either the Harbormaster re-applies on the next observation cycle, or we persist the throttle as part of the drydock's overlay so it re-installs at create. The latter is cleaner but mixes throttle state with project config. Lean re-apply.
 2. **`RegisterWorkload` write-side ownership.** The Harbormaster issues WorkloadLeases. Does that mean the Harbormaster's RPC scope includes "create lease" (a thing today only `wsd`'s capability handlers do)? Or does the Harbormaster delegate by calling an internal `wsd` method that issues the lease on its behalf? Probably the latter — keeps lease minting in one place.
 3. **Multi-tenancy of the Harbormaster RPC surface.** If two desks both hold the harbormaster scope (against the design recommendation but possible), do they have equal authority? Probably yes; structural self-targeting prevents them from acting on each other; the ordering of conflicting actions is whoever-wins-the-race. Worth documenting that this is undefined and not designed-around.
-4. **What does `ReadFleetMetrics` actually return?** Right now `ws host audit` is one shape; `ws fleet status` is another. The Harbormaster wants a unified, structured-for-decision-making view. Either it composes the two existing surfaces, or there's a new third one. Lean compose.
+4. **What does `ReadHarborMetrics` actually return?** Right now `ws host audit` is one shape; `ws harbors status` is another. The Harbormaster wants a unified, structured-for-decision-making view. Either it composes the two existing surfaces, or there's a new third one. Lean compose.
 5. **Bootstrapping the first Harbormaster.** Chicken-and-egg: the Harbormaster grants and revokes things, but who grants the Harbormaster scope to the first Harbormaster drydock? The principal, manually, via `ws harbormaster designate <desk>` — a one-shot CLI command that writes to the `harbormaster_desks` registry table and issues a Harbormaster-scoped token. No Harbormaster involved in granting itself authority.

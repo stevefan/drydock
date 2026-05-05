@@ -1,4 +1,4 @@
-"""Fleet monitor — peer-Harbor probes over SSH.
+"""Harbor monitor — peer-Harbor probes over SSH (the archipelago view).
 
 V1 channel is plain SSH: each probe shells out to ``ssh <target> 'ws ... --json'``
 on the remote Harbor. This reuses existing SSH-key topology (already proven by
@@ -16,7 +16,7 @@ Probe set (V1):
   Claude OAuth is dead". A failure here is what the auth-broker exists to
   remediate.
 
-Peer config lives at ``~/.drydock/fleet/peers.yaml``::
+Peer config lives at ``~/.drydock/harbors/peers.yaml``::
 
     peers:
       - host: hetzner            # ssh target (resolves via .ssh/config)
@@ -40,7 +40,7 @@ import yaml
 from drydock.core import WsError
 
 
-CONFIG_PATH = Path.home() / ".drydock" / "fleet" / "peers.yaml"
+CONFIG_PATH = Path.home() / ".drydock" / "harbors" / "peers.yaml"
 SSH_TIMEOUT_DEFAULT = 15  # seconds; covers slow tailnet links without hanging
 CC_PROBE_TIMEOUT = 35     # claude -p ":" warm-up budget + ssh overhead
 
@@ -81,32 +81,32 @@ class ProbeResult:
 def load_peers(path: Path = CONFIG_PATH) -> list[PeerSpec]:
     if not path.exists():
         raise WsError(
-            f"Fleet config not found at {path}",
-            fix=f"Create {path} with a 'peers:' block — see docs/design/fleet-monitor.md",
-            code="fleet_config_missing",
+            f"Harbors config not found at {path}",
+            fix=f"Create {path} with a 'peers:' block — see docs/design/harbor-monitor.md",
+            code="harbors_config_missing",
         )
     try:
         raw = yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError as e:
         raise WsError(
-            f"Fleet config at {path} is not valid YAML: {e}",
+            f"Harbors config at {path} is not valid YAML: {e}",
             fix="Fix the YAML syntax",
-            code="fleet_config_invalid",
+            code="harbors_config_invalid",
         )
     peers_raw = raw.get("peers", [])
     if not isinstance(peers_raw, list):
         raise WsError(
-            f"Fleet config 'peers' must be a list (got {type(peers_raw).__name__})",
-            fix="See docs/design/fleet-monitor.md for the schema",
-            code="fleet_config_invalid",
+            f"Harbors config 'peers' must be a list (got {type(peers_raw).__name__})",
+            fix="See docs/design/harbor-monitor.md for the schema",
+            code="harbors_config_invalid",
         )
     peers = []
     for i, entry in enumerate(peers_raw):
         if not isinstance(entry, dict) or "host" not in entry:
             raise WsError(
-                f"Fleet config peer #{i} missing required 'host' field",
+                f"Harbors config peer #{i} missing required 'host' field",
                 fix="Each peer needs at least: '- host: <ssh-target>'",
-                code="fleet_config_invalid",
+                code="harbors_config_invalid",
             )
         peers.append(PeerSpec(
             host=entry["host"],

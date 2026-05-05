@@ -1,15 +1,15 @@
-"""ws fleet — central observer for peer Harbors.
+"""ws harbors — central observer for peer Harbors (the archipelago view).
 
 V1 surface (one-shot probes only; polling/storage/alerts come later):
 
-* ``ws fleet status``                       — probe every peer, roll up health.
-* ``ws fleet probe <host> [<desk>]``        — probe one peer (one desk if given).
+* ``ws harbors status``                       — probe every peer, roll up health.
+* ``ws harbors probe <host> [<dock>]``        — probe one peer (one Dock if given).
 
-Peer config: ``~/.drydock/fleet/peers.yaml``. See docs/design/fleet-monitor.md.
+Peer config: ``~/.drydock/harbors/peers.yaml``. See docs/design/harbor-monitor.md.
 
 Channel: SSH-shell to each peer's ``ws`` CLI. Auth: existing key-based SSH.
-Probe set: daemon ping → desk listing → per-Dock deskwatch + Claude-Code
-liveness. Exits 1 if any peer or desk is unhealthy (cron-friendly).
+Probe set: daemon ping → Dock listing → per-Dock deskwatch + Claude-Code
+liveness. Exits 1 if any peer or Dock is unhealthy (cron-friendly).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from __future__ import annotations
 import click
 
 from drydock.core import WsError
-from drydock.core.fleet import (
+from drydock.core.harbors import (
     PeerSpec,
     load_peers,
     probe_cc_liveness,
@@ -57,11 +57,11 @@ def _format_status_human(payload: dict) -> list[str]:
 
 
 @click.group()
-def fleet():
-    """Cross-Harbor health observer."""
+def harbors():
+    """Cross-Harbor health observer (the archipelago view)."""
 
 
-@fleet.command(name="status")
+@harbors.command(name="status")
 @click.pass_context
 def status(ctx):
     """Probe every configured peer and roll up health. Exit 1 if any unhealthy."""
@@ -89,7 +89,7 @@ def status(ctx):
         ctx.exit(1)
 
 
-@fleet.command(name="probe")
+@harbors.command(name="probe")
 @click.argument("host")
 @click.argument("desk", required=False)
 @click.option("--ssh-user", default=None,

@@ -48,7 +48,7 @@ from drydock.cli.overlay import overlay  # noqa: E402
 from drydock.cli.project import project  # noqa: E402
 from drydock.cli.sync import sync  # noqa: E402
 from drydock.cli.deskwatch import deskwatch, deskwatch_events, deskwatch_record  # noqa: E402
-from drydock.cli.fleet import fleet  # noqa: E402
+from drydock.cli.harbors import harbors  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(upgrade)
@@ -72,4 +72,4 @@ cli.add_command(sync)
 cli.add_command(deskwatch)
 cli.add_command(deskwatch_record, name="deskwatch-record")
 cli.add_command(deskwatch_events, name="deskwatch-events")
-cli.add_command(fleet)
+cli.add_command(harbors)

@@ -1,8 +1,8 @@
 # The principal–Harbormaster–Dockworker triangle
 
-**Status:** position paper · **Pulls together:** [vision.md](../vision.md), [capability-broker.md](capability-broker.md), [narrowness.md](narrowness.md), [employee-worker.md](employee-worker.md), [auth-broker.md](auth-broker.md), [fleet-monitor.md](fleet-monitor.md), [network-reach.md](network-reach.md), [deskwatch.md](deskwatch.md), [tailnet-identity.md](tailnet-identity.md)
+**Status:** position paper · **Pulls together:** [vision.md](../vision.md), [capability-broker.md](capability-broker.md), [narrowness.md](narrowness.md), [employee-worker.md](employee-worker.md), [auth-broker.md](auth-broker.md), [harbor-monitor.md](harbor-monitor.md), [network-reach.md](network-reach.md), [deskwatch.md](deskwatch.md), [tailnet-identity.md](tailnet-identity.md)
 
-This document is the umbrella over the recent run of design work (auth-broker, fleet-monitor, network-reach). Those each solve a concrete problem; this one names what they're collectively *building toward* — and what's missing before the picture closes.
+This document is the umbrella over the recent run of design work (auth-broker, harbor-monitor, network-reach). Those each solve a concrete problem; this one names what they're collectively *building toward* — and what's missing before the picture closes.
 
 ---
 
@@ -34,7 +34,7 @@ V1 (complete, per `project_v1_complete.md`):
 In flight (designs landed, implementation partial or pending):
 
 - **Auth-broker** (`auth-broker.md`). Designated Harbor holds master refresh token, mints fresh access tokens on a 4h cadence, distributes to peer Harbors. Closes the "laptop closed → archipelago drifts to expired" gap.
-- **Fleet-monitor** (`fleet-monitor.md`). Central observer that probes every peer Harbor (daemon liveness, deskwatch, **CC liveness** — the headline distinguishing "container up" from "container up but agent dead"). V1 ships SSH-shell channel + `ws fleet status/probe`; storage and Telegram alerts deferred.
+- **Harbor-monitor** (`harbor-monitor.md`). Central observer that probes every peer Harbor (daemon liveness, deskwatch, **CC liveness** — the headline distinguishing "container up" from "container up but agent dead"). V1 ships SSH-shell channel + `ws harbors status/probe`; storage and Telegram alerts deferred.
 - **Network-reach** (`network-reach.md`). `NETWORK_REACH` capability type. Workers request `RequestCapability type=NETWORK_REACH scope.domain=foo.com`; daemon validates against per-drydock `narrowness.network_reach` glob list; materializes via `add-allowed-domain.sh` inside the container (resolves A records, syncs to ipset, opens iptables rule for non-default ports). No restart. Additive-only V1.
 
 The pattern under all of these: **anything the worker wants from the outside flows through a broker the principal controls.** Recent work just extends "anything" — first secrets, then storage, then living credentials, then network reach, eventually compute quotas.
@@ -81,13 +81,13 @@ The principal does *not* want to be in the loop for every grant, every refresh, 
 
 ### Harbormaster (Harbor agent)
 
-A persistent employee-worker (`employee-worker.md`) running on a designated Harbor — concretely, the `infra` drydock on Hetzner, eventually upgraded with the auth-broker + fleet-monitor + governance roles described here. **Has master keys for archipelago operation but is constrained against itself.**
+A persistent employee-worker (`employee-worker.md`) running on a designated Harbor — concretely, the `infra` drydock on Hetzner, eventually upgraded with the auth-broker + harbor-monitor + governance roles described here. **Has master keys for archipelago operation but is constrained against itself.**
 
 What the Harbormaster *can* do (within standing principal policy):
 
 - Mint and distribute fresh access tokens to peer drydocks (auth-broker role).
 - Grant capability leases that fall within standing per-drydock narrowness — secrets, storage, network reach.
-- Observe archipelago health (fleet-monitor role) including **from inside containers** via a thin in-desk probe (see §5d), and trigger remediation that the principal has pre-authorized (e.g., "auto-refresh credentials when CC liveness fails").
+- Observe archipelago health (harbor-monitor role) including **from inside containers** via a thin in-desk probe (see §5d), and trigger remediation that the principal has pre-authorized (e.g., "auto-refresh credentials when CC liveness fails").
 - **Accept workload registrations** from workers that are about to do heavy lifting (see §5c) — granting temporary ceiling lifts within policy, refusing them otherwise.
 - **Stop, throttle, or restart-the-agent-inside** Dockworkers that exceed resource ceilings or whose agents are dead-but-container-healthy (the new layer this doc proposes).
 - **Talk to the principal over Telegram** in both directions: emit audit summaries and probe results on a schedule; ask for quick confirmation on novel requests; propose policy updates ("I keep escalating `huggingface.co` for this drydock — promote to standing entitlement?") that the principal accepts/rejects with one reply.
@@ -102,7 +102,7 @@ What the Harbormaster *cannot* do — these are structural, enforced by the subs
 - **Change its own resource limits.** The cgroup ceilings the Harbormaster operates under are set at container creation by the principal, recorded in the registry, and unchanged for the container's lifetime.
 - **Reach the principal's machine** beyond the audit-emit + escalation-notify channels. The Harbormaster has no shell on the principal's Mac, no write access to the principal's notebooks, no ability to exfiltrate.
 
-The Harbormaster's powers are **broad but shallow**: it can act across the whole fleet, but every action it takes is one of a small set of pre-defined operations, each gated by principal policy, each audited. This is the inverse shape of a normal Dockworker, which has **narrow but deep** powers (one project's worth of code, but free to run arbitrary computation within its bounds).
+The Harbormaster's powers are **broad but shallow**: it can act across the whole archipelago, but every action it takes is one of a small set of pre-defined operations, each gated by principal policy, each audited. This is the inverse shape of a normal Dockworker, which has **narrow but deep** powers (one project's worth of code, but free to run arbitrary computation within its bounds).
 
 ### Worker
 
@@ -147,7 +147,7 @@ The capability broker prevents a worker from acquiring permissions it shouldn't 
 | Fork / process count | Fork bomb, runaway subprocess tree | `ulimit -u` if set; cgroup pids if set | Often default-unlimited |
 | Lease lifetime | Holding `claude_credentials` lease forever | Today: leases are "until revoked"; nothing revokes | No TTL enforcement, no idle-revoke |
 
-The pattern: **detection** is partly there (deskwatch can notice job failures, output staleness; fleet-monitor can notice silent peers; cgroup metrics are readable). **Judgment** is missing (when does "high CPU" cross from legitimate to abuse?). **Action** is missing (revoke leases, throttle, stop the drydock, alert the principal).
+The pattern: **detection** is partly there (deskwatch can notice job failures, output staleness; harbor-monitor can notice silent peers; cgroup metrics are readable). **Judgment** is missing (when does "high CPU" cross from legitimate to abuse?). **Action** is missing (revoke leases, throttle, stop the drydock, alert the principal).
 
 The Harbormaster is the natural home for judgment + action. Detection feeds it; standing principal policy bounds what it does without escalation.
 
@@ -176,7 +176,7 @@ The hard ones (cpu, memory, pids, disk-via-volume-quota) are cgroup/docker-flag 
 
 **(b) Harbormaster as the judgment + action layer.**
 
-The Harbormaster reads aggregated metrics from fleet-monitor (extended to capture cgroup stats and broker-tracked API spend) and applies per-drydock policy. Roughly:
+The Harbormaster reads aggregated metrics from harbor-monitor (extended to capture cgroup stats and broker-tracked API spend) and applies per-drydock policy. Roughly:
 
 ```
 foreach drydock:
@@ -263,7 +263,7 @@ In normal operation: a quiet, scheduled summary (daily or on-demand). The Harbor
 
 ```
 📊 Harbormaster daily — 2026-05-05
-  fleet:  6 drydocks healthy, 1 throttled (auction-crawl, see below)
+  harbors: 6 drydocks healthy, 1 throttled (auction-crawl, see below)
   grants: 24 capability leases (22 routine, 2 escalated → approved)
   burn:   ~340k anthropic tokens (within budget)
   drift:  none
@@ -313,9 +313,9 @@ Mapping the recent designs onto the triangle:
 | `narrowness.md` | The **policy-as-data** the Harbormaster reads. Authored by principal. |
 | `employee-worker.md` | The **slot the Harbormaster lives in** — a persistent Harbor desk. Names the pattern. |
 | `auth-broker.md` | A **Harbormaster responsibility**: keeping archipelago OAuth state alive without principal involvement. |
-| `fleet-monitor.md` | The **Harbormaster's senses**: how it learns what's happening across the archipelago. CC-liveness probe is the canonical signal. |
+| `harbor-monitor.md` | The **Harbormaster's senses**: how it learns what's happening across the archipelago. CC-liveness probe is the canonical signal. |
 | `network-reach.md` | The **per-domain capability** the Harbormaster grants on request. First dynamic capability that mid-task discovery actually needs. |
-| `deskwatch.md` | The **per-drydock health observer**. Feeds signal into fleet-monitor → Harbormaster judgment loop. |
+| `deskwatch.md` | The **per-drydock health observer**. Feeds signal into harbor-monitor → Harbormaster judgment loop. |
 | `tailnet-identity.md` | The **substrate identity** that lets the Harbormaster reach peer Harbors safely. |
 
 What's not yet designed (and should be, in roughly this order):
@@ -324,7 +324,7 @@ What's not yet designed (and should be, in roughly this order):
 2. **Lease TTL + idle revocation** — extend the broker with `expires_at` and an idle sweeper. Closes the V1 hole in network-reach and any future capability.
 3. **`RestartDeskAgent` primitive** — new wsd RPC + in-container `restart-agent.sh` helper + project-YAML `agents:` declaration block. Sits between `ws exec` and `ws stop`.
 4. **`desk-probe` in-container observer** — minimal binary in `drydock-base`, read-only RPC, exposes process/fd/disk/agent snapshots to wsd.
-5. **Harbormaster authority surface** — what RPC methods does the Harbormaster have access to that workers don't? `StopDesk`, `ThrottleDesk`, `RestartDeskAgent`, `RevokeLease`, `ReadFleetMetrics`, `RegisterWorkload` (write-side). Define the bearer-token scope for "Harbormaster" as a distinct grade of identity, structurally distinct from worker scope.
+5. **Harbormaster authority surface** — what RPC methods does the Harbormaster have access to that workers don't? `StopDesk`, `ThrottleDesk`, `RestartDeskAgent`, `RevokeLease`, `ReadHarborMetrics`, `RegisterWorkload` (write-side). Define the bearer-token scope for "Harbormaster" as a distinct grade of identity, structurally distinct from worker scope.
 6. **Principal policy file format** — global at `~/.drydock/policy/global.yaml`, per-drydock at `~/.drydock/policy/<desk>.yaml`. Read-only to Harbormaster; reload on file change. Eventually git-backed for history. Schema enforces "per-drydock narrows global, never widens."
 7. **Bidirectional Telegram channel** — outbound (escalations, daily summaries, proposals); inbound (one-word confirms, audit queries, direct actions). Per `1439fce collab` this side-channel already exists; needs a Harbormaster-shaped front door.
 8. **Out-of-band kill protocol** — document the Mac-side procedure for revoking and re-seeding a compromised Harbormaster. This is more runbook than design doc, but it should exist before the Harbormaster holds enough power to matter.
@@ -345,4 +345,4 @@ The cost is real: every new "thing the worker wants" becomes a capability type. 
 
 The bet pays off if it makes the steady-state **boring**: agents work, credentials refresh, novel requests escalate when they should and not when they shouldn't, compromise is contained and recoverable, the principal sleeps. The infrastructure exists to make that the default outcome rather than the lucky one.
 
-The recent work — auth-broker, fleet-monitor, network-reach — is three more pieces of "agents work, credentials refresh, novel requests escalate." The resource-governance layer described in §5 is the missing piece for "compromise is contained and recoverable." Once that lands, V2 of the fabric has the shape it needs; everything after is filling in capability types and tightening the policy vocabulary.
+The recent work — auth-broker, harbor-monitor, network-reach — is three more pieces of "agents work, credentials refresh, novel requests escalate." The resource-governance layer described in §5 is the missing piece for "compromise is contained and recoverable." Once that lands, V2 of the fabric has the shape it needs; everything after is filling in capability types and tightening the policy vocabulary.
