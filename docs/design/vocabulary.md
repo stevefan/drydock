@@ -13,7 +13,7 @@ Code identifiers (`Workspace` class, `workspaces` SQLite table, `ws_<slug>` ID p
 | 0 | **Archipelago** *(textual metaphor)* | The collection of Harbors a principal owns. Currently a small set of static island machines (Mac, Hetzner). | A perspective the principal holds. No daemon owns the archipelago; it's how we *describe* the harbors collectively. The technical/CLI term is just **Harbors** (`ws harbors status`). |
 | 1 | **Harbor** | The host machine running `wsd`. An island in the archipelago. | The daemon, the registry, policy state, capability-broker leases, audit log, daemon-level admin secrets. One `wsd` per Harbor. |
 | 2a | **Harbor Authority** | The rule-enforcement role. The gate — capability broker, narrowness check, resource ceiling enforcement. | Auth, narrowness validation at every capability request, throttle/deny actions per standing policy, hard cgroup ceiling enforcement. Mostly what `wsd` *already does* in V1/V2; just needs naming as a distinct role. |
-| 2b | **Port Auditor** | The observation role. The watch. | Reads declared resource profiles and compares to actual (workload registrations vs measured usage, narrowness vs requested grants), flags anomalies, escalates to principal via Telegram. Doesn't enforce — observes and reports. |
+| 2b | **Port Auditor** | The observation role with **bounded defensive action authority**. The watch with a fire-axe. | Reads declared resource profiles and compares to actual; flags anomalies; escalates novel cases to principal via Telegram. Can take **defensive + reversible** actions directly (throttle, stop, freeze, revoke). Cannot take **destructive or expensive** actions (delete, provision, spend) — those always escalate. |
 | 2c | **Harbormaster** *(deferred — manager role, optional)* | The orchestration role. The big-picture manager. | Cross-DryDock coordination, scheduling decisions, balancing resources across Yards. Deferred until there's enough fleet activity that holistic orchestration earns its keep. Not why drydock exists initially. |
 | 3 | **Yard** *(optional)* | A grouping of related DryDocks that share concerns. | Shared budget envelope, internal address space (private inter-Drydock network), Yard-wide secrets pool, collective metering. Maps naturally to monorepos but isn't strictly tied. Standalone DryDocks live outside any Yard or in a Yard-of-one. |
 | 4 | **Project** | The infrastructure-as-code declaration for one DryDock. The YAML recipe. | Code pointer (repo + subdir), narrowness (capabilities, network reach, secrets), resource ceilings, fleet declaration (which containers to run), inter-Drydock service exposure. **Project = the IaC; DryDock = what gets instantiated from it.** |
@@ -156,11 +156,21 @@ These appear in older docs and code identifiers but should not be used in new pr
 - Capability broker, audit emission, token issuance — all Harbor-level performed by `wsd`. The DryDock is *subject* to these; it doesn't make them.
 - One `wsd` per Harbor. Multi-daemon single-host is out of scope.
 
-### Harbor Authority + Port Auditor split — narrow and audit-shaped
-- **Harbor Authority's standing actions** (auto, per principal-set policy): throttle egress on ceiling breach, revoke leases, deny capability requests outside narrowness, enforce hard cgroup ceilings. The gate.
-- **Port Auditor's observation surface**: reads declared profiles, measures actual, flags divergences, escalates to principal via Telegram. Doesn't enforce — that's Authority's job.
-- **Escalations** (Auditor flags, principal acts): stop a Dock, restart a Dockworker, modify policy, anything intrusive to the work.
-- The principal is the manager. A formal "Harbormaster" manager role is a deferred future addition, not a V3 requirement.
+### Harbor Authority + Port Auditor split — bucket-shaped action authority
+
+Three buckets of action, each with a different authority shape:
+
+**Bucket 1 — pure deterministic enforcement (Authority handles).** Capability gate, narrowness check, cgroup ceiling, lease expiry. No LLM; predictability + speed required. The Authority is mostly `wsd` as it already exists.
+
+**Bucket 2 — defensive + reversible actions (Auditor can take directly).** Throttle egress, stop a Dock (state preserved, resumable), freeze storage (unfreezable), revoke a lease (re-mintable), shut down cloud resources (re-launchable). The Auditor's LLM judges *when* to act; the Authority's RPC methods do the actual enforcement (Auditor calls them with reasoning attached). **Reversibility is the constraint** — every Auditor action must be undoable by principal within a short window.
+
+**Bucket 3 — destructive / expensive / irreversible (always escalate to principal).** Delete a database, destroy a Dock, provision new expensive compute (GPUs especially), modify policy files, rotate master credentials, spend above threshold. The Auditor flags + escalates; principal acts. Structural defense-in-depth: these RPCs reject the Auditor's bearer-token scope at the Authority's gate.
+
+**Why give the Auditor bucket-2 authority instead of escalating everything:** the cost of an Auditor false-positive on a reversible action is *recoverable* (Telegram override lifts it in seconds). The cost of damage running unchecked while waiting for the principal is sometimes *not*. The asymmetry favors letting the LLM intervene defensively, structurally bounded by what it's allowed to touch.
+
+**Why Bucket 3 stays principal-only:** material consequences with no recovery path. False positive on "delete the database" can't be undone. False positive on "provision $50K of GPUs" already cost the money. These are the actions where principal-in-the-loop is non-negotiable.
+
+The principal is the manager. A formal "Harbormaster" manager role is a deferred future addition, not a V3 requirement.
 
 ### DryDock owns the harness; Ships own their isolation
 - Network policy enforced at the DryDock harness (proxy, NETWORK_REACH grants). One change at the harness level affects all Ships.
