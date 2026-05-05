@@ -4,14 +4,14 @@
 
 ## Problem
 
-`ws deskwatch` is per-Harbor and exit-coded. Nothing aggregates across the fleet, and nothing alerts when a Harbor itself goes silent (daemon down, host rebooted, network partition). Token-invalidation specifically is invisible: a drydock's container can be `running` while its Claude Code remote-control is dead because the OAuth access token expired. Today this is discovered by trying to use the agent and finding it unreachable.
+`ws deskwatch` is per-Harbor and exit-coded. Nothing aggregates across the archipelago, and nothing alerts when a Harbor itself goes silent (daemon down, host rebooted, network partition). Token-invalidation specifically is invisible: a drydock's container can be `running` while its Claude Code remote-control is dead because the OAuth access token expired. Today this is discovered by trying to use the agent and finding it unreachable.
 
 ## Goal
 
 A central observer that, on a schedule:
 
 1. Pulls health from every peer Harbor (`ws daemon status`, `ws deskwatch`, plus a CC-liveness probe).
-2. Aggregates to a single fleet-status view (`ws fleet status`, JSON for agents, human table for terminals).
+2. Aggregates to a single archipelago-status view (`ws fleet status`, JSON for agents, human table for terminals).
 3. Alerts on transitions (healthy→degraded, silent peer, token-invalid) via Telegram (existing side-channel from `1439fce collab`).
 4. Stores recent history for trend / "when did this start failing."
 
@@ -63,7 +63,7 @@ Auto-recover actions are intentionally narrow: only **trigger an auth-broker ref
 
 ### Defaults to make this possible
 
-- **Monitor location:** auth Harbor by default (co-locates the two always-on responsibilities). One monitor per fleet; not federated.
+- **Monitor location:** auth Harbor by default (co-locates the two always-on responsibilities). One monitor per archipelago; not federated.
 - **Poll interval:** 60s for liveness, 5min for deskwatch (which has its own internal cadence), 4h for token-expiry check.
 - **Telegram destination:** reuse the existing collab bot's chat. Add a dedicated topic/thread for fleet alerts to separate from collab traffic.
 - **Alert debounce:** 3 consecutive failures before alerting; 1 success to clear. Prevents tailnet-blip noise.
@@ -75,7 +75,7 @@ Auto-recover actions are intentionally narrow: only **trigger an auth-broker ref
 
 - Cross-Harbor metric aggregation beyond probe results (CPU/disk/network).
 - Web dashboard. JSON output + Telegram is enough; if pull-up-on-laptop becomes painful, build later.
-- Federated monitor (multiple monitors voting). Single observer per fleet is fine until islanding pain shows up.
+- Federated monitor (multiple monitors voting). Single observer per archipelago is fine until islanding pain shows up.
 
 ## Channel decision (V1)
 
@@ -83,5 +83,5 @@ Peer RPC = **plain SSH to each peer's `ws` CLI** (`ssh hetzner 'ws daemon status
 
 ## Open questions
 
-1. Should the fleet-monitor itself be a worker pattern (long-running judgment agent per `employee-worker.md`), or a deterministic poller? Likely deterministic for V1; promote to judgment agent when alert routing becomes nuanced ("is this real or ignorable").
+1. Should the archipelago-monitor itself be a worker pattern (long-running judgment agent per `employee-worker.md`), or a deterministic poller? Likely deterministic for V1; promote to judgment agent when alert routing becomes nuanced ("is this real or ignorable").
 3. CC-liveness probe: does the access-token validation cost count against rate limits in a meaningful way at 60s × N drydocks? Probably negligible but check.

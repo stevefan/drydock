@@ -10,7 +10,7 @@ See [vocabulary.md](vocabulary.md) for Harbor / DryDock / Worker. See [capabilit
 |---|---|---|
 | Interactive Claude | Human's laptop | Short session. Scoped to the conversation. Fragile across reboots / OS updates / keychain invalidations. Bound to a human being present. |
 | Deterministic cron / scripts | Any Harbor | Persistent. Zero judgment. Breaks silently when assumptions drift. |
-| **Employee-worker** | Persistent Harbor (laptop is too ephemeral) | Runs continuously or wakes on schedule. Holds real permissions inside a narrow policy scope. Can read logs, notice anomalies, propose or make bounded fixes, refresh credentials, maintain fleet state. |
+| **Employee-worker** | Persistent Harbor (laptop is too ephemeral) | Runs continuously or wakes on schedule. Holds real permissions inside a narrow policy scope. Can read logs, notice anomalies, propose or make bounded fixes, refresh credentials, maintain archipelago state. |
 
 Laptops sleep, reboot, get OS-updated, travel. Hetzner-class Harbors are durable — same identity day after day, same audit principal, same policy scope. Credentials with multi-hour OAuth expiry want to live where something can refresh them on a timer, not where they decay in a sleeping keychain.
 
@@ -18,7 +18,7 @@ Laptops sleep, reboot, get OS-updated, travel. Hetzner-class Harbors are durable
 
 `infra` drydock on `drydock-hillsboro`. Its job:
 
-1. Hold fleet-level Claude Code OAuth credentials at `~/.drydock/secrets/ws_infra/{claude_credentials, claude_account_state}`.
+1. Hold archipelago-level Claude Code OAuth credentials at `~/.drydock/secrets/ws_infra/{claude_credentials, claude_account_state}`.
 2. Run `claude remote-control` inside the drydock — that process's built-in refresh loop keeps the OAuth token alive indefinitely.
 3. Delegate to peer drydocks on request: another drydock with `request_secret_leases` + `claude_credentials` in its `delegatable_secrets` calls `RequestCapability(type=SECRET, scope={secret_name: "claude_credentials", source_desk_id: "ws_infra"})`. The daemon reads bytes from infra's secret dir, writes a copy into the caller's secret dir (chowned to container uid), audits, returns the lease.
 
@@ -71,4 +71,4 @@ Each is a Worker class; the employee framing is the common pattern.
 - **Start narrow.** First employee owns one thing. Prove the pattern. Expand scope only when a forcing function surfaces.
 - **Persistence > cleverness.** An employee that runs dumbly once a day but has never missed is more valuable than a clever one that tries to do too much.
 - **Audit-first design.** Whatever the employee does, a human should be able to read a one-line summary per run. If that line grows noisy, the employee is overreaching.
-- **Name what it is.** Call it the fleet-auth employee, the provisioner employee, the auction-crawl smart operator. Anthropomorphizing here is honest — these ARE long-lived agents with judgment operating on behalf of a human.
+- **Name what it is.** Call it the archipelago-auth employee, the provisioner employee, the auction-crawl smart operator. Anthropomorphizing here is honest — these ARE long-lived agents with judgment operating on behalf of a human.

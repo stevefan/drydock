@@ -1,16 +1,16 @@
-"""ws sync — pull source-repo changes into a desk's worktree.
+"""ws sync — pull source-repo changes into a Dock's worktree.
 
 The worktree was cloned from ``ws.repo_path`` at create time and is
 never updated afterward — so changes the user makes in the source repo
 (fixing a bug, updating devcontainer.json, bumping a pinned version)
-don't reach the desk until a destroy + recreate. That's heavy enough
+don't reach the Dock until a destroy + recreate. That's heavy enough
 that people start editing files directly in the worktree on the
 Harbor, which drifts the worktree from the source repo and breaks the
 next rebuild.
 
 ``ws sync <name>`` adds a ``source`` remote pointing at ``ws.repo_path``
 (if not already present), fetches it, and fast-forward-merges the
-source repo's current branch into the desk's ``ws/<name>`` branch.
+source repo's current branch into the Dock's ``ws/<name>`` branch.
 
 Abort-loudly on:
 - worktree has uncommitted changes (user work would be clobbered)
@@ -49,7 +49,7 @@ def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
 )
 @click.pass_context
 def sync(ctx, name, source_branch):
-    """Fast-forward the desk's worktree from its source repo."""
+    """Fast-forward the Dock's worktree from its source repo."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
@@ -70,7 +70,7 @@ def sync(ctx, name, source_branch):
         return
     if not (source / ".git").exists():
         out.error(WsError(f"Source repo missing: {source}",
-                          fix="Check repo_path in the desk's project YAML",
+                          fix="Check repo_path in the Dock's project YAML",
                           code="source_missing"))
         return
 

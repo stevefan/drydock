@@ -2,39 +2,57 @@
 
 **Purpose.** Pin the vocabulary Drydock uses consistently across product docs, design specs, and the RPC surface. Code identifiers (`ws`, `wsd`, `ws_<slug>`, `Workspace` class, `workspaces` SQLite table) are frozen — renaming them would be cosmetic churn — but every human-facing surface uses the vocabulary below.
 
-## The five layers
+## The six layers
 
 | Layer | Canonical name | What it is | What it owns |
 |---|---|---|---|
-| 1 | **Harbor** | The host machine (laptop, home server, Hetzner VM) running `wsd`. Authority lives here. | The daemon, the registry, policy state, capability-broker leases, audit log, daemon-level admin secrets. One `wsd` per harbor. |
-| 2 | **Harbormaster** | The governing agent on a Harbor — broad-but-shallow authority across the fleet. (Earlier docs call this "the deputy" or "the Harbor agent"; **Harbormaster** is canonical going forward.) | Auth-broker refresh loop, capability grants on behalf of standing policy, throttle/stop/restart actions on misbehaving Dockworkers, escalation to principal via Telegram. Bounded against itself: cannot rewrite its own policy or reach its own master credentials directly. See [harbormaster-authority.md](harbormaster-authority.md). |
-| 3 | **Project** | YAML description + work-identity. | Immutable config template (`~/.drydock/projects/<project>.yaml`), repo path, policy template, declared capabilities, entitlements, and delegations. Multiple drydocks can derive from one project. |
-| 4 | **DryDock** | A durable, bounded work environment — the runtime unit. (The metaphor: a drydock is where work building or maintaining the ship happens; the ship itself ventures out into prod / function calls and the metaphor doesn't have to extend that far.) | Container lifecycle, git worktree, policy scope, registry row, named volumes, audit principal, bearer token, branch, accumulated tooling state. Persistent across container rebuilds. |
-| 5 | **Dockworker** | The agent bound to a drydock — the thing that actually does work. (Was: "Worker"; **Dockworker** is canonical for the role.) | Claude Code remote-control process, cron-invoked operator, research agent, schedule job. A Dockworker is durable per-drydock but containers are its body, not its identity. |
+| 0 | **Archipelago** *(internal term)* | The collection of Harbors a principal owns — currently a small set of static island machines (your Mac, Hetzner). Not a "fleet" because Harbors aren't mobile; they're place-bound landmasses connected by tailnet. (The forward-looking "carrier-group" / "mobile factory at sea" shape — cloud-elastic infrastructure with Harbors on it — is aspirational, not where we are.) | The cross-Harbor view: peer-RPC channels, fleet-monitor probes, principal's bird's-eye visibility. No daemon owns the archipelago; it's a perspective the principal holds. |
+| 1 | **Harbor** | The host machine (laptop, home server, Hetzner VM) running `wsd`. An island in the archipelago. Authority lives here. | The daemon, the registry, policy state, capability-broker leases, audit log, daemon-level admin secrets. One `wsd` per harbor. |
+| 2 | **Harbormaster** | The governing agent on a Harbor — broad-but-shallow authority across all Docks on its Harbor and (via peer-RPC) the rest of the archipelago. | Auth-broker refresh loop, capability grants on behalf of standing policy, throttle/stop/restart actions on misbehaving Dockworkers, escalation to principal via Telegram. Bounded against itself: cannot rewrite its own policy or reach its own master credentials directly. See [harbormaster-authority.md](harbormaster-authority.md). |
+| 3 | **Project** | The logical work unit — a body of code + the policy / capability template that should govern any Dock instantiated to work on it. | Immutable config template (`~/.drydock/projects/<project>.yaml`), repo path, policy template, declared capabilities, entitlements, and delegations. **One project may have many Docks** (different worktrees, different branches, different parts of the same codebase, an experimental fork, etc.) — Project is the type, Dock is the instance. |
+| 4 | **DryDock** *(formal)* / **Dock** *(shorthand)* | A durable, bounded work environment — the runtime unit. An *instantiation* of a Project on a Harbor. (The metaphor: a drydock is where work building or maintaining the ship happens; the ship itself ventures out into prod / function calls and the metaphor doesn't have to extend that far.) | Container lifecycle, git worktree, policy scope, registry row, named volumes, audit principal, bearer token, branch, accumulated tooling state. Persistent across container rebuilds. |
+| 5 | **Dockworker** | The agent bound to a Dock — the thing that actually does work. | Claude Code remote-control process, cron-invoked operator, research agent, schedule job. A Dockworker is durable per-Dock but containers are its body, not its identity. |
 
 Sessions (ephemeral human or agent attachments to a drydock — IDE windows, SSH connections, claude.ai/code sessions) are explicitly *not* first-class. Multiple sessions can attach concurrently; Drydock does not track them.
 
 ## The metaphor
 
-A harbor contains multiple drydocks, governed by a Harbormaster. A drydock is a bounded place where work gets done on a vessel, fitted with what that work needs. A Dockworker operates in the drydock. The vessel (project code, data, in-flight tasks) stays across many sessions of work — and ventures out as prod / function calls / external service interactions when the work is done. The metaphor stops at the harbor's edge; what the ship does at sea is its own concern.
+An archipelago of Harbors — each Harbor an island machine the principal owns. A Harbor contains multiple Docks (instantiated DryDocks, each housing one Project's worktree), governed by a Harbormaster. A Dock is a bounded place where work gets done on a vessel, fitted with what that work needs. A Dockworker operates in the Dock. The vessel (project code, data, in-flight tasks) stays across many sessions of work — and ventures out as prod / function calls / external service interactions when the work is done. The metaphor stops at the harbor's edge; what the ship does at sea is its own concern.
+
+Multiple Docks per Project is the common case, not the exception: a Project might have one Dock for steady-state work on `main`, a second Dock for an experimental branch, a third Dock dedicated to running the project's scheduled jobs. They share the Project's policy template but each Dock has its own runtime state, its own Dockworker, its own audit trail.
+
+### Internal note: archipelago vs. carrier group
+
+"Fleet" is the wrong word for what we have today. A fleet is mobile — a collection of vessels under way. Our Harbors aren't moving; they're durable, address-stable, place-bound. **Archipelago** captures this better: an island chain where each landmass is independently self-sufficient and the connection between them is the sea (the tailnet). Use "the archipelago" or "across Harbors" in prose; reserve "fleet" for the legacy CLI command name (`ws fleet status`) until that gets renamed too.
+
+The aspirational shape, when/if drydock runs on cloud-elastic infrastructure (Harbors that scale on demand, drydocks that float between hosts), is more like a **carrier group** — a coordinated mobile force with a flagship and supporting vessels — or a **mobile factory at sea**, large enough to do its own work without needing land. We're not there. The vocabulary should reflect what we are (archipelago of islands), not what we might become (carrier group at sea), so the mental model stays calibrated to actual capability.
 
 ## Canonical phrasings
 
 - "Harbor `drydock-hillsboro` runs `wsd`" — correct.
 - "The Harbormaster on `drydock-hillsboro` granted a lease" — correct.
-- "Create a drydock" / "spawn a drydock" — correct.
-- "DryDock `auction-crawl` has a Dockworker named remote-control" — correct.
+- "Create a Dock" / "spawn a Dock" — correct (instantiate a DryDock from a Project).
+- "Dock `auction-crawl` has a Dockworker named remote-control" — correct (Dock as the instance shorthand).
+- "The auction-crawl Project has three Docks: prod-main, exp-arbitrage, and scheduled-jobs" — correct (one Project, multiple Docks).
+- "Across the archipelago" / "across Harbors" — correct (multi-Harbor reference).
 - "The Dockworker requested a lease" — correct (audit records `desk_id` but the *agent* doing it is a Dockworker).
-- "Workspace X" — acceptable in code and registry contexts where the technical artifact is what's meant; in product docs prefer "drydock".
+- "Workspace X" — acceptable in code and registry contexts where the technical artifact is what's meant; in product docs prefer "Dock" or "DryDock".
 - "Employee worker" — a specific class of Dockworker: long-running, permissioned, judgment-capable, lives on Harbor infra. The Harbormaster is itself an employee-Dockworker — the canonical instance of the pattern.
+
+### Dock vs DryDock — the type/instance distinction
+
+- **DryDock** (formal) is the *type* — the concept, the class, the pattern. Use in design docs, schema descriptions, anywhere you're talking about "what a DryDock is."
+- **Dock** (shorthand) is the *instance* — a specific running thing. "The auction-crawl Dock," "spin up a fresh Dock," "this Dock has been running for two weeks." Reads more naturally in operational prose.
+- They refer to the same kind of thing; the distinction is register, not ontology.
 
 ## Retired terms
 
 These appear in older docs and code identifiers but should not be used in new prose:
 
-- "**desk**" — colloquial alias for **drydock**. Historical leak from office-metaphor talk; retired so the codebase stops mixing metaphors. Code identifiers (`desk_id`, `deskwatch`, `delegatable_*`) remain frozen.
+- "**desk**" — colloquial alias for **Dock** / **DryDock**. Historical leak from office-metaphor talk; retired so the codebase stops mixing metaphors. Code identifiers (`desk_id`, `deskwatch`, `delegatable_*`) remain frozen.
 - "**deputy**" / "**Harbor agent**" — replaced by **Harbormaster**. The harbormaster is a real maritime role (the official who governs everything in a harbor — allocates berths, enforces regulations, mediates disputes between vessels) and matches what the role does in this fabric far better than "deputy."
 - "**Worker**" (capitalized as a role) — replaced by **Dockworker**. Lowercase "worker" remains acceptable in mechanical/computing contexts where the metaphor isn't load-bearing.
+- "**fleet**" (as the noun for "all my Harbors") — replaced by **archipelago** in prose. "Fleet" survives in the legacy `ws fleet` CLI command name; expected to rename to `ws harbors` or `ws archipelago` in a future pass.
 
 ## Mapping to code / registry / RPC (unchanged)
 

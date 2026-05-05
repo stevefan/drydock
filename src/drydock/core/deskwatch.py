@@ -1,6 +1,6 @@
 """Deskwatch — workload health layer.
 
-Observes (does not repair) whether a desk's declared workload is
+Observes (does not repair) whether a Dock's declared workload is
 actually doing its job:
 
 - **Scheduled jobs**: last success within `expect_success_within` of

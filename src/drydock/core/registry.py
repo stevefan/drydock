@@ -110,7 +110,7 @@ def _migrate_to_v2(conn: sqlite3.Connection) -> None:
     conn.executescript(V2_TABLES)
 
 
-# Deskwatch: observational record of workload health for each desk.
+# Deskwatch: observational record of workload health for each Dock.
 # `kind` is a short tag ('job_run', 'probe_result', 'output_check'),
 # `name` is the caller-defined identifier within that kind (the job
 # name from schedule.yaml, the probe name from the project YAML, the

@@ -10,7 +10,7 @@ Probe set (V1):
 
 * ``daemon`` — ``ws daemon status`` round-trip; verifies wsd is responsive.
 * ``desks`` — ``ws list``; rolls up state per declared peer-desk.
-* ``deskwatch`` — ``ws deskwatch <desk>``; per-desk workload health.
+* ``deskwatch`` — ``ws deskwatch <desk>``; per-Dock workload health.
 * ``cc_liveness`` — ``ws exec <desk> -- timeout 30 claude -p ":"``; the
   headline probe — distinguishes "container up" from "container up but
   Claude OAuth is dead". A failure here is what the auth-broker exists to
@@ -237,7 +237,7 @@ def probe_deskwatch(peer: PeerSpec, desk: str) -> ProbeResult:
 
 
 def probe_cc_liveness(peer: PeerSpec, desk: str) -> ProbeResult:
-    """Verify Claude Code's OAuth state inside the desk is still valid.
+    """Verify Claude Code's OAuth state inside the Dock is still valid.
 
     A successful ``claude -p ":"`` confirms the access token (or in-memory
     refresh) is working. Failure here is the headline event: container is
@@ -281,7 +281,7 @@ def resolve_desks(peer: PeerSpec, listed: list[dict]) -> list[str]:
 
 def probe_peer(peer: PeerSpec) -> list[ProbeResult]:
     """Run the full probe set against one peer. Order matters: skip
-    per-desk probes if the peer is unreachable."""
+    per-Dock probes if the peer is unreachable."""
     results: list[ProbeResult] = []
     daemon = probe_daemon(peer)
     results.append(daemon)
@@ -302,7 +302,7 @@ def probe_peer(peer: PeerSpec) -> list[ProbeResult]:
 
 
 def rollup(results: list[ProbeResult]) -> dict:
-    """Summarize a flat probe-result list into per-peer / per-desk health."""
+    """Summarize a flat probe-result list into per-peer / per-Dock health."""
     peers: dict[str, dict] = {}
     for r in results:
         p = peers.setdefault(r.peer, {

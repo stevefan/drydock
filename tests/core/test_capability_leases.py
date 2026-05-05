@@ -5,7 +5,7 @@ Contracts these tests pin:
   optional expiry.
 - revoke_lease is idempotent (second call returns False; original
   revocation_reason preserved).
-- revoke_leases_for_desk cascades to every active lease for the desk
+- revoke_leases_for_desk cascades to every active lease for the Dock
   and ignores already-revoked rows. This is the destroy-cascade
   contract (capability-broker.md §6a).
 - find_active_secret_lease distinguishes per-(desk, secret_name) so the

@@ -747,7 +747,7 @@ def _destroy_one(
             logger.warning("wsd: failed to remove container for %s: %s", workspace.id, exc)
             failures.append(_failure(workspace.id, "container_remove", exc))
 
-    # Capability-broker.md §6a: outstanding leases for the desk are
+    # Capability-broker.md §6a: outstanding leases for the Dock are
     # marked revoked before token + container teardown, so a racing
     # in-flight RequestCapability sees `desk_destroyed` rather than a
     # phantom lease against a soon-to-be-gone desk.
@@ -1041,7 +1041,7 @@ def _perform_create(
 
     _ensure_gitconfig_stub()
     # Bind-mount source paths must exist before docker run. Creating
-    # empty per-desk secrets dir here (mode 0700) matches the CLI path
+    # empty per-Dock secrets dir here (mode 0700) matches the CLI path
     # and prevents the "invalid mount config" failure on first create.
     (secrets_root / ws.id).mkdir(mode=0o700, parents=True, exist_ok=True)
     overlay_path = write_overlay(
@@ -1219,7 +1219,7 @@ def stop_desk(
     registry_path: Path,
     dry_run: bool,
 ) -> dict[str, object]:
-    """Stop a desk's container without destroying the workspace."""
+    """Stop a Dock's container without destroying the workspace."""
     del request_id
     del caller_desk_id
     target_name, target_desk_id = _validated_stop_target(params)

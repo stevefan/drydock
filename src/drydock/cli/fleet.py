@@ -8,7 +8,7 @@ V1 surface (one-shot probes only; polling/storage/alerts come later):
 Peer config: ``~/.drydock/fleet/peers.yaml``. See docs/design/fleet-monitor.md.
 
 Channel: SSH-shell to each peer's ``ws`` CLI. Auth: existing key-based SSH.
-Probe set: daemon ping → desk listing → per-desk deskwatch + Claude-Code
+Probe set: daemon ping → desk listing → per-Dock deskwatch + Claude-Code
 liveness. Exits 1 if any peer or desk is unhealthy (cron-friendly).
 """
 

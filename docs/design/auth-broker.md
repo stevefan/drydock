@@ -8,7 +8,7 @@ Claude Code's OAuth credentials decay. The remote-control process inside a drydo
 
 This breaks in two ways:
 
-1. **Laptop closed → no refresh.** The Mac keychain is the only source of truth, and the cron only fires when Mac is awake. Overnight the fleet drifts to expired tokens.
+1. **Laptop closed → no refresh.** The Mac keychain is the only source of truth, and the cron only fires when Mac is awake. Overnight the archipelago drifts to expired tokens.
 2. **Initial login on headless remotes is awful.** `claude /login` wants an interactive browser + code paste. The tmux/OSC52 backup works but is per-Harbor manual.
 
 ## Goal
@@ -57,7 +57,7 @@ Decision: ship code-paste path first (zero-unknowns), then tailnet redirect once
 | `ws auth seed --from-keychain` | One-time: extract refresh token from Mac keychain, push to auth Harbor's daemon-secrets. |
 | `ws auth login --on <harbor>` | Print authorize URL; on auth Harbor, start callback listener (5min window). |
 | `ws auth submit-code <code> --on <harbor>` | Submit OAuth code from out-of-band browser. |
-| `ws auth status` | Show last-refresh time, expiry, peer push status across the fleet. |
+| `ws auth status` | Show last-refresh time, expiry, peer push status across the archipelago. |
 | `ws auth refresh --on <harbor>` | Force a refresh now (debugging). |
 
 ### Defaults to make this possible

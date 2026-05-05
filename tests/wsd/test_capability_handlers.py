@@ -6,7 +6,7 @@ These pin the contracts:
 - Entitlement narrowness (delegatable_secrets membership).
 - Backend dispatch + error taxonomy mapping.
 - Materialization + ref-counted removal at release.
-- Cross-desk lease access returns lease_not_found (no info leak).
+- Cross-Dock lease access returns lease_not_found (no info leak).
 """
 
 from datetime import datetime, timezone
@@ -188,7 +188,7 @@ class TestReleaseCapability:
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "lease_not_found"
 
-    # Cross-desk access must return the same code as not-found so we
+    # Cross-Dock access must return the same code as not-found so we
     # don't leak existence of leases to other desks.
     def test_cross_desk_access_returns_lease_not_found(self, env):
         self._make_lease(env["registry"], desk_id="ws_other", lease_id="ls_other")
@@ -222,7 +222,7 @@ class TestReleaseCapability:
         assert second["revoked"] is False
 
 
-# --- V2.1: Cross-desk secret delegation tests ---
+# --- V2.1: Cross-Dock secret delegation tests ---
 
 class TestCrossDeskDelegation:
     """RequestCapability with source_desk_id reads from the source desk's
@@ -274,7 +274,7 @@ class TestCrossDeskDelegation:
         # Place the secret in the SOURCE desk's secret dir (not the caller's)
         source_secrets = secrets_root / source_id
         source_secrets.mkdir()
-        (source_secrets / "shared_cred").write_bytes(b"cross-desk-value\n")
+        (source_secrets / "shared_cred").write_bytes(b"cross-Dock-value\n")
 
         yield {
             "db": db,
@@ -303,7 +303,7 @@ class TestCrossDeskDelegation:
         # Secret materialized in CALLER's host secret dir
         caller_file = cross_env["secrets_root"] / cross_env["caller_id"] / "shared_cred"
         assert caller_file.exists()
-        assert caller_file.read_bytes() == b"cross-desk-value\n"
+        assert caller_file.read_bytes() == b"cross-Dock-value\n"
 
     def test_cross_desk_requires_caller_entitlement(self, cross_env):
         # Remove the entitlement from the caller
@@ -367,7 +367,7 @@ class TestCrossDeskDelegation:
         # Source desk's original file is untouched
         source_file = cross_env["secrets_root"] / cross_env["source_id"] / "shared_cred"
         assert source_file.exists()
-        assert source_file.read_bytes() == b"cross-desk-value\n"
+        assert source_file.read_bytes() == b"cross-Dock-value\n"
 
     def test_same_desk_source_id_is_noop(self, cross_env):
         """Passing source_desk_id == caller_desk_id is treated as same-desk."""
@@ -779,7 +779,7 @@ class TestInfraProvision:
 
 # NETWORK_REACH scope validator. Pin the contract for what the worker is
 # allowed to put in scope.* — intentionally narrower than the entitlement
-# patterns themselves (a desk's policy may say "*.foo.com", but a single
+# patterns themselves (a Dock's policy may say "*.foo.com", but a single
 # RequestCapability call must name a concrete domain). The validator is
 # the safety boundary before docker-exec.
 class TestValidateNetworkReachScope:

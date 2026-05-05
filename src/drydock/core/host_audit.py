@@ -16,8 +16,8 @@ Layers, in order of "where things drift":
                     unsupported types.
 4. **base_images**— drydock-base image tags pulled locally + how many
                     desks reference each tag.
-5. **desks**      — per-desk: state, container, base-tag actually used
-                    in the desk's Dockerfile, capability gates declared,
+5. **desks**      — per-Dock: state, container, base-tag actually used
+                    in the Dock's Dockerfile, capability gates declared,
                     secret slot count, project-YAML mtime (drift hint).
 6. **leases**     — count of active vs revoked from the broker table.
 
@@ -305,7 +305,7 @@ def _describe_desk(registry: Registry, ws) -> dict:
 
 
 def _read_desk_base_tag(ws, proj_cfg) -> str | None:
-    """Parse the FROM ghcr.io/stevefan/drydock-base:<tag> line in the desk's
+    """Parse the FROM ghcr.io/stevefan/drydock-base:<tag> line in the Dock's
     Dockerfile. Returns None if the file isn't there or doesn't reference
     the base image (e.g. project uses a custom image)."""
     if not ws.repo_path:

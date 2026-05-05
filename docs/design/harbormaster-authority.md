@@ -84,7 +84,7 @@ Notably absent from V1 — destructive operations the Harbormaster should *escal
 
 Three places a self-targeting bug could land if we don't think about it:
 
-- Harbormaster calls `StopDesk(self_desk_name)` and stops itself. Recoverable (systemd restarts the desk) but creates a brief loss of the only thing watching the fleet.
+- Harbormaster calls `StopDesk(self_desk_name)` and stops itself. Recoverable (systemd restarts the desk) but creates a brief loss of the only thing watching the archipelago.
 - Harbormaster calls `RevokeLease(lease_held_by_self)` and revokes its own credentials.
 - Harbormaster calls `ThrottleEgress(self_name, 0)` and bricks its own connectivity.
 
@@ -94,7 +94,7 @@ Three places a self-targeting bug could land if we don't think about it:
 
 **Recommended: structural.** The cost is one query in the dispatcher; the benefit is "you cannot accidentally write a self-targeting RPC." Code-guard works but assumes every future RPC author remembers to add the check. Structural assumes nothing.
 
-There's a corollary: if you ever run *multiple* Harbormasters on the same Harbor (you probably won't — one per fleet by design), the structural check naturally generalizes to "no harbormaster-scoped action against any drydock in `harbormaster_desks`." Harbormasters can't act on each other either. This is a property worth keeping even at one-Harbormaster scale because it removes a future foot-gun.
+There's a corollary: if you ever run *multiple* Harbormasters on the same Harbor (you probably won't — one per archipelago by design), the structural check naturally generalizes to "no harbormaster-scoped action against any drydock in `harbormaster_desks`." Harbormasters can't act on each other either. This is a property worth keeping even at one-Harbormaster scale because it removes a future foot-gun.
 
 ---
 

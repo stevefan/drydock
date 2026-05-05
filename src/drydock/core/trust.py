@@ -5,7 +5,7 @@ to mark the workspace as trusted. The trust state lives at
 /home/node/.claude/.claude.json (a shared Docker volume across desks).
 We seed it via docker exec right after the container is up.
 
-Failures are logged and swallowed — the desk is functional without trust
+Failures are logged and swallowed — the Dock is functional without trust
 seeded; the user just falls back to manual one-time accept.
 """
 
@@ -77,7 +77,7 @@ def _already_trusted(data: dict, workspace_folder: str) -> bool:
 
 
 def seed_workspace_trust(container_id: str, workspace_folder: str) -> bool:
-    """Idempotently mark workspace_folder as trusted in the desk's claude config.
+    """Idempotently mark workspace_folder as trusted in the Dock's claude config.
 
     Returns True on success or already-trusted; False on any failure (logged).
     """

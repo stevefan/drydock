@@ -168,14 +168,14 @@ def render_cron_file(desk: str, jobs: list[ScheduleJob]) -> str:
     Each line wraps the job command so its outcome is recorded via
     `ws deskwatch-record`. The wrapper preserves the original exit code
     (cron reports failures via MAILTO as before) and adds a deskwatch
-    event regardless of whether the desk declares deskwatch expectations
+    event regardless of whether the Dock declares deskwatch expectations
     — the history is free, expectations gate only the `ws deskwatch`
     evaluation.
 
     Log paths are shell-quoted to prevent command injection — a malicious
     schedule.yaml with `log: "/tmp/x; rm -rf /"` must not be executable.
     The command field is intentionally NOT quoted (it's a shell command
-    by design), but the desk name, job name, and log path are
+    by design), but the Dock name, job name, and log path are
     user-controlled strings that land in a cron line interpreted by
     /bin/sh.
     """

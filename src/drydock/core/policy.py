@@ -37,7 +37,7 @@ class CapabilityKind(str, Enum):
     REQUEST_PROVISION_LEASES = "request_provision_leases"
     # Coarse gate for type=NETWORK_REACH lease requests (live firewall opens).
     # Per-domain narrowness via delegatable_network_reach + network_reach_ports
-    # on the desk policy. See docs/design/network-reach.md.
+    # on the Dock policy. See docs/design/network-reach.md.
     REQUEST_NETWORK_REACH = "request_network_reach"
 
 
@@ -404,7 +404,7 @@ def matches_network_reach(
     granted_domains: list[str] | tuple[str, ...],
     granted_ports: list[int] | tuple[int, ...],
 ) -> tuple[bool, str | None]:
-    """Match a NETWORK_REACH request against a desk's network_reach policy.
+    """Match a NETWORK_REACH request against a Dock's network_reach policy.
 
     Returns (allowed, reason). When allowed=False, reason is one of:
       "no_entitlement"        — granted_domains is empty

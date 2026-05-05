@@ -70,7 +70,7 @@ class ProjectConfig:
     delegatable_firewall_domains: list[str] = field(default_factory=list)
     delegatable_storage_scopes: list[str] = field(default_factory=list)
     delegatable_provision_scopes: list[str] = field(default_factory=list)
-    # NETWORK_REACH narrowness: per-desk allowlist of domain glob patterns
+    # NETWORK_REACH narrowness: per-Dock allowlist of domain glob patterns
     # the worker may dynamically request via RequestCapability(NETWORK_REACH).
     # Empty = no dynamic opens (deny-all). See docs/design/network-reach.md.
     delegatable_network_reach: list[str] = field(default_factory=list)

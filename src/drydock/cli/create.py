@@ -380,7 +380,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
     overlay_dir = Path.home() / ".drydock" / "overlays"
     overlay_config = _overlay_from_project(proj_cfg)
     # Docker bind-mounts with missing source paths fail with an opaque
-    # "invalid mount config" error. Ensure the per-desk secrets dir
+    # "invalid mount config" error. Ensure the per-Dock secrets dir
     # exists (empty is fine — secrets land here later via `ws secret
     # set`) so we fail loudly on real problems and never on first-ever
     # desk creation.

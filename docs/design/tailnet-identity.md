@@ -32,7 +32,7 @@ Not in scope:
 
 ## 3. Why the API token is daemon-level, not a capability
 
-The admin token grants "delete any device on this tailnet." No drydock should hold that authority — it's a fleet-wide sysadmin credential. Modeling it as a `CapabilityType.TAILNET_ADMIN` lease (per the capability-broker shape) would either:
+The admin token grants "delete any device on this tailnet." No drydock should hold that authority — it's a archipelago-wide sysadmin credential. Modeling it as a `CapabilityType.TAILNET_ADMIN` lease (per the capability-broker shape) would either:
 
 (a) require every drydock to hold the lease — wrong, blast-radius explosion, and
 (b) require special-casing to ensure no drydock holds it — exactly the "scoped entitlements that aren't in `DeskPolicy`" anti-pattern Codex flagged in the rule-5 review.

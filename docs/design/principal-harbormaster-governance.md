@@ -10,7 +10,7 @@ This document is the umbrella over the recent run of design work (auth-broker, f
 
 A personal computing fabric increasingly contains a population of **agents** (Claude instances doing real work in bounded environments) running across multiple machines. Three pressures emerge that V1 didn't have to answer:
 
-1. **Living credentials decay.** Claude Code OAuth tokens, AWS STS leases, Tailscale auth keys — none of these are static. Some refresh in-memory but never write back; some need periodic re-minting from a master credential; some require interactive re-login. The fleet drifts to expired auth overnight if no living thing tends it.
+1. **Living credentials decay.** Claude Code OAuth tokens, AWS STS leases, Tailscale auth keys — none of these are static. Some refresh in-memory but never write back; some need periodic re-minting from a master credential; some require interactive re-login. The archipelago drifts to expired auth overnight if no living thing tends it.
 
 2. **Standing entitlements are too coarse.** A drydock's project YAML declares everything it might ever need at create time. In practice agents discover dependencies dynamically — a research drydock needs `huggingface.co` it didn't list; a coding drydock needs to fetch from a new package mirror. The current resolution is "edit YAML, recreate container," which kills any pretense of dynamic operation. Either you over-grant up front (broad attack surface, nothing learned about actual reach) or you constantly interrupt the agent to recreate.
 
@@ -33,7 +33,7 @@ V1 (complete, per `project_v1_complete.md`):
 
 In flight (designs landed, implementation partial or pending):
 
-- **Auth-broker** (`auth-broker.md`). Designated Harbor holds master refresh token, mints fresh access tokens on a 4h cadence, distributes to peer Harbors. Closes the "laptop closed → fleet drifts to expired" gap.
+- **Auth-broker** (`auth-broker.md`). Designated Harbor holds master refresh token, mints fresh access tokens on a 4h cadence, distributes to peer Harbors. Closes the "laptop closed → archipelago drifts to expired" gap.
 - **Fleet-monitor** (`fleet-monitor.md`). Central observer that probes every peer Harbor (daemon liveness, deskwatch, **CC liveness** — the headline distinguishing "container up" from "container up but agent dead"). V1 ships SSH-shell channel + `ws fleet status/probe`; storage and Telegram alerts deferred.
 - **Network-reach** (`network-reach.md`). `NETWORK_REACH` capability type. Workers request `RequestCapability type=NETWORK_REACH scope.domain=foo.com`; daemon validates against per-drydock `narrowness.network_reach` glob list; materializes via `add-allowed-domain.sh` inside the container (resolves A records, syncs to ipset, opens iptables rule for non-default ports). No restart. Additive-only V1.
 
@@ -52,13 +52,13 @@ Worth being honest about prior art so the design choices read as choices, not in
 | **gVisor / Firecracker / microVM sandboxing** | Strong isolation primitives — kernel attack surface drastically reduced. | Orthogonal to the policy question. They make "what's inside the box" safer; they don't speak to "what should the box be allowed to ask for over time." |
 | **Capability OS (seL4, Genode)** | The principled foundation for what we're approximating. | Doesn't compose with the Linux ecosystem agents actually need. Decades-long bet, not a year-long bet. |
 | **AWS IAM + STS short-lived credentials** | Closest production analogue to what drydock's broker does. Identity-bound, time-bounded, narrowly-scoped. | Cloud-only, vendor-specific, and the policy authoring surface is famously hostile. Drydock's STS-lease pattern (Phase B `INFRA_PROVISION`, per `project_phase_b_infra_provision.md`) already mirrors this — IAM is the model, not the substrate. |
-| **OpenAI / Anthropic agent sandboxes** (browser-tool, code-interpreter) | Per-task egress firewalls, ephemeral envs, principal-of-last-resort is the platform. | Stateless model. No notion of a *persistent* drydock with policy carried over time. No multi-Harbor fleet shape. Principal is the platform vendor, not you. |
+| **OpenAI / Anthropic agent sandboxes** (browser-tool, code-interpreter) | Per-task egress firewalls, ephemeral envs, principal-of-last-resort is the platform. | Stateless model. No notion of a *persistent* drydock with policy carried over time. No multi-Harbor archipelago shape. Principal is the platform vendor, not you. |
 | **Cloudflare Workers / Deno Deploy** | Capability-per-isolate, deny-by-default network. | Compute model is request/response, not "an agent that lives in a drydock and works on a project." |
 | **Tailscale ACLs** | Identity-based network policy across an overlay. | Tailnet-wide configuration, not per-container per-domain dynamic. The right tool for *peer* policy (Harbor↔Harbor), not *worker* policy. Drydock already uses Tailscale this way. |
 | **macOS Seatbelt / SELinux / AppArmor** | Process-level mandatory access control. | Policy is the developer's, not a separable principal's. No notion of an agent requesting a wider grant over time. |
 | **Smallweb / personal-cloud projects (e.g. Coolify, Caprover)** | Self-hosted multi-app fabrics with deploy automation. | Operator-shaped (humans deploy services); not agent-shaped (agents request capabilities). |
 
-The synthesis drydock is converging on isn't novel in any one dimension — it's the **combination of bounded environments + capability broker + persistent Harbormaster + per-drydock narrowness policy** at *personal* scale (one principal, ~10s of drydocks, no platform team). The closest analogue in spirit is what good cloud-engineering teams build internally on top of IAM + cgroups + an internal control plane — drydock just collapses that stack to a single human's home fleet.
+The synthesis drydock is converging on isn't novel in any one dimension — it's the **combination of bounded environments + capability broker + persistent Harbormaster + per-drydock narrowness policy** at *personal* scale (one principal, ~10s of drydocks, no platform team). The closest analogue in spirit is what good cloud-engineering teams build internally on top of IAM + cgroups + an internal control plane — drydock just collapses that stack to a single human's home archipelago.
 
 ---
 
@@ -70,7 +70,7 @@ Three roles. The whole point of the architecture is keeping their action spaces 
 
 - Holds the **master OAuth identity** (Mac keychain remains the seed-of-record for Claude Code).
 - Authors **policies at two levels**:
-  - **Global** (`~/.drydock/policy/global.yaml`) — fleet-wide defaults, escalation thresholds, Harbormaster authority caps, default resource ceilings, the principal's standing answers ("any new domain request from a `*-research` drydock auto-approves; from anything else escalates").
+  - **Global** (`~/.drydock/policy/global.yaml`) — archipelago-wide defaults, escalation thresholds, Harbormaster authority caps, default resource ceilings, the principal's standing answers ("any new domain request from a `*-research` drydock auto-approves; from anything else escalates").
   - **Per-drydock** (project YAML's `narrowness:` block, plus `~/.drydock/policy/<desk>.yaml` for principal-only overrides the project author shouldn't touch) — drydock-specific entitlements, ceilings, and exception flags.
   - Per-drydock policy *narrows* global policy, never widens it. The Harbormaster's effective policy for a drydock is the conjunction.
 - Holds the **out-of-band kill switch** for the Harbormaster (described below — this matters).
@@ -81,13 +81,13 @@ The principal does *not* want to be in the loop for every grant, every refresh, 
 
 ### Harbormaster (Harbor agent)
 
-A persistent employee-worker (`employee-worker.md`) running on a designated Harbor — concretely, the `infra` drydock on Hetzner, eventually upgraded with the auth-broker + fleet-monitor + governance roles described here. **Has master keys for fleet operation but is constrained against itself.**
+A persistent employee-worker (`employee-worker.md`) running on a designated Harbor — concretely, the `infra` drydock on Hetzner, eventually upgraded with the auth-broker + fleet-monitor + governance roles described here. **Has master keys for archipelago operation but is constrained against itself.**
 
 What the Harbormaster *can* do (within standing principal policy):
 
 - Mint and distribute fresh access tokens to peer drydocks (auth-broker role).
 - Grant capability leases that fall within standing per-drydock narrowness — secrets, storage, network reach.
-- Observe fleet health (fleet-monitor role) including **from inside containers** via a thin in-desk probe (see §5d), and trigger remediation that the principal has pre-authorized (e.g., "auto-refresh credentials when CC liveness fails").
+- Observe archipelago health (fleet-monitor role) including **from inside containers** via a thin in-desk probe (see §5d), and trigger remediation that the principal has pre-authorized (e.g., "auto-refresh credentials when CC liveness fails").
 - **Accept workload registrations** from workers that are about to do heavy lifting (see §5c) — granting temporary ceiling lifts within policy, refusing them otherwise.
 - **Stop, throttle, or restart-the-agent-inside** Dockworkers that exceed resource ceilings or whose agents are dead-but-container-healthy (the new layer this doc proposes).
 - **Talk to the principal over Telegram** in both directions: emit audit summaries and probe results on a schedule; ask for quick confirmation on novel requests; propose policy updates ("I keep escalating `huggingface.co` for this drydock — promote to standing entitlement?") that the principal accepts/rejects with one reply.
@@ -126,7 +126,7 @@ Dockworker compromise is the threat model the Harbormaster exists to mitigate.
 
 The principal talks to the Harbormaster *through standing policy* and *through escalation review*. The Harbormaster talks to workers *through capability grants* and *through enforcement actions*. The principal talks to workers *only through the Harbormaster* in steady state — direct intervention is reserved for cases the Harbormaster escalated or for explicit ad-hoc work the principal initiates.
 
-This is roughly the same pattern as a senior engineer running an on-call rotation: the senior writes runbooks (policy), the on-call executes them (Harbormaster), services keep running (workers), the senior is paged for novel situations (escalation). Drydock's contribution is making this work for a single human's fleet of agent drydocks rather than a team of humans operating services.
+This is roughly the same pattern as a senior engineer running an on-call rotation: the senior writes runbooks (policy), the on-call executes them (Harbormaster), services keep running (workers), the senior is paged for novel situations (escalation). Drydock's contribution is making this work for a single human's archipelago of agent Docks rather than a team of humans operating services.
 
 ---
 
@@ -312,8 +312,8 @@ Mapping the recent designs onto the triangle:
 | `capability-broker.md` | The **mediation channel** between worker and Harbormaster. The Harbormaster's grants flow through this; the workers' requests flow through this. |
 | `narrowness.md` | The **policy-as-data** the Harbormaster reads. Authored by principal. |
 | `employee-worker.md` | The **slot the Harbormaster lives in** — a persistent Harbor desk. Names the pattern. |
-| `auth-broker.md` | A **Harbormaster responsibility**: keeping fleet OAuth state alive without principal involvement. |
-| `fleet-monitor.md` | The **Harbormaster's senses**: how it learns what's happening across the fleet. CC-liveness probe is the canonical signal. |
+| `auth-broker.md` | A **Harbormaster responsibility**: keeping archipelago OAuth state alive without principal involvement. |
+| `fleet-monitor.md` | The **Harbormaster's senses**: how it learns what's happening across the archipelago. CC-liveness probe is the canonical signal. |
 | `network-reach.md` | The **per-domain capability** the Harbormaster grants on request. First dynamic capability that mid-task discovery actually needs. |
 | `deskwatch.md` | The **per-drydock health observer**. Feeds signal into fleet-monitor → Harbormaster judgment loop. |
 | `tailnet-identity.md` | The **substrate identity** that lets the Harbormaster reach peer Harbors safely. |
@@ -331,7 +331,7 @@ What's not yet designed (and should be, in roughly this order):
 
 What's *deliberately* deferred:
 
-- **Federated multi-Harbormaster.** Per `project_peer_harbors_decision.md`, the peer-Harbors model is sovereign-peers, not federated. One Harbormaster per fleet. Revisit when islanding pain is real.
+- **Federated multi-Harbormaster.** Per `project_peer_harbors_decision.md`, the peer-Harbors model is sovereign-peers, not federated. One Harbormaster per archipelago. Revisit when islanding pain is real.
 - **Harbormaster as judgment-LLM vs deterministic policy-engine.** Today most Harbormaster decisions are policy-table lookups (entitlement match, ceiling comparison). Some are genuinely judgmental ("is this novel domain request reasonable?"). V1 Harbormaster can be mostly deterministic with escalation-on-uncertainty; promote to LLM-in-the-loop only where the determinism breaks down. Avoid making the Harbormaster itself a black box.
 - **Cross-principal delegation.** The model assumes one human principal. Multi-user (`project_multi_user_sketch.md`) is an orthogonal axis; the principal-Harbormaster-worker triangle composes inside each principal's slice but the federation across principals is its own design.
 

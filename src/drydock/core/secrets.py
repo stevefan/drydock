@@ -76,7 +76,7 @@ class FileBackend:
 
     Phase-1 convention shipped with `ws secret set/list/rm/push`. The
     daemon's lease handler reads bytes via `fetch()` and materializes them
-    into the desk's `/run/secrets/<name>` (separate from this backend's
+    into the Dock's `/run/secrets/<name>` (separate from this backend's
     storage path).
 
     Mode-0400 ownership belongs to the file write path (`ws secret set`),

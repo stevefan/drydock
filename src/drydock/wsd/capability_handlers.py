@@ -7,11 +7,11 @@ Per docs/v2-design-capability-broker.md and docs/v2-design-protocol.md:
 - V2.0 ships type=SECRET. V2.1 added cross-drydock secret delegation via
   `source_desk_id`. V4 Phase 1 adds type=STORAGE_MOUNT (scoped AWS STS
   credentials). Phase 1c adds type=NETWORK_REACH (live firewall opens
-  via add-allowed-domain.sh; per-desk delegatable_network_reach +
+  via add-allowed-domain.sh; per-Dock delegatable_network_reach +
   network_reach_ports policy). Only COMPUTE_QUOTA remains reserved-but-
   unsupported.
 - Entitlement check for SECRET is a trivial subset lookup against the
-  desk's `delegatable_secrets` (which doubles as the desk's own
+  desk's `delegatable_secrets` (which doubles as the Dock's own
   entitlements in the V2 model — see capability-broker.md §4 closing
   note "Post-spawn narrowness is a trivial lookup").
 - STORAGE_MOUNT gate in Phase 1 is coarse: the capability
@@ -86,11 +86,11 @@ def _policy_list(policy_row: dict, key: str) -> list:
 def _check_capability(
     policy_row: dict, kind: "CapabilityKind", *, fix_hint: str,
 ) -> None:
-    """Enforce that the desk has been granted `kind` in its capabilities list.
+    """Enforce that the Dock has been granted `kind` in its capabilities list.
 
     Raises _RpcError(capability_not_granted) on failure. The fix_hint is the
     user-facing remediation string surfaced in the error data — usually
-    "Grant <kind.value> in the desk's project YAML capabilities" but worded
+    "Grant <kind.value> in the Dock's project YAML capabilities" but worded
     per call site so it can name the right capability.
     """
     capabilities = {CapabilityKind(v) for v in _policy_list(policy_row, "capabilities")}
@@ -167,7 +167,7 @@ def _handle_network_reach_request(
     request_id: str | int | None,
     registry_path: Path,
 ) -> dict:
-    """Issue a NETWORK_REACH lease: open the desk's container firewall to
+    """Issue a NETWORK_REACH lease: open the Dock's container firewall to
     one (domain, port) pair via the in-container add-allowed-domain.sh
     helper. Additive-only (V1) per docs/design/network-reach.md.
 
@@ -185,7 +185,7 @@ def _handle_network_reach_request(
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_NETWORK_REACH,
-            fix_hint="Grant request_network_reach in the desk's project YAML capabilities",
+            fix_hint="Grant request_network_reach in the Dock's project YAML capabilities",
         )
 
         granted_domains = _policy_list(policy_row, "delegatable_network_reach")
@@ -228,7 +228,7 @@ def _handle_network_reach_request(
             }
             raise _RpcError(
                 code=-32006, message="narrowness_violated",
-                data={**audit_detail, "fix": fix_map.get(reason, "Tighten/widen the desk's network_reach policy")},
+                data={**audit_detail, "fix": fix_map.get(reason, "Tighten/widen the Dock's network_reach policy")},
             )
 
         # Wildcard grants are audited at INFO with explicit flag so
@@ -353,7 +353,7 @@ def _handle_secret_request(
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_SECRET_LEASES,
-            fix_hint="Grant request_secret_leases in the desk's project YAML capabilities",
+            fix_hint="Grant request_secret_leases in the Dock's project YAML capabilities",
         )
 
         entitlements = set(_policy_list(policy_row, "delegatable_secrets"))
@@ -403,11 +403,11 @@ def _handle_secret_request(
         # Materialization: make the secret bytes available at
         # /run/secrets/<name> inside the caller's container.
         #
-        # Same-desk + file-backed (V2.0): the overlay bind-mounts
+        # Same-Dock + file-backed (V2.0): the overlay bind-mounts
         # ~/.drydock/secrets/<caller_desk_id>/ at /run/secrets/ read-only.
         # The file is already visible. No materialization needed.
         #
-        # Cross-desk + file-backed (V2.1): the source desk's file is NOT
+        # Cross-Dock + file-backed (V2.1): the source desk's file is NOT
         # in the caller's bind mount. The daemon writes the bytes into
         # the CALLER's host secret dir (on the host filesystem). The bind
         # mount makes it visible in the caller's container immediately.
@@ -420,7 +420,7 @@ def _handle_secret_request(
                             data={"desk_id": caller_desk_id})
 
         if is_cross_desk and isinstance(backend, FileBackend):
-            # Cross-desk file-backed: write source bytes into caller's
+            # Cross-Dock file-backed: write source bytes into caller's
             # host secret dir so the bind mount picks them up.
             try:
                 _materialize_to_host_secret_dir(
@@ -531,7 +531,7 @@ def _handle_storage_request(
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_STORAGE_LEASES,
-            fix_hint="Grant request_storage_leases in the desk's project YAML capabilities",
+            fix_hint="Grant request_storage_leases in the Dock's project YAML capabilities",
         )
 
         # Phase 1b: per-bucket narrowness. Empty list in the registry
@@ -670,7 +670,7 @@ def _handle_provision_request(
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_PROVISION_LEASES,
-            fix_hint="Grant request_provision_leases in the desk's project YAML capabilities",
+            fix_hint="Grant request_provision_leases in the Dock's project YAML capabilities",
         )
 
         granted = _policy_list(policy_row, "delegatable_provision_scopes")
@@ -779,10 +779,10 @@ def release_capability(
 
         revoked = registry.revoke_lease(lease_id, "released")
 
-        # Cleanup materialized cross-desk secrets.
-        # Same-desk file-backed: secret lives in the desk's own bind mount,
+        # Cleanup materialized cross-Dock secrets.
+        # Same-Dock file-backed: secret lives in the Dock's own bind mount,
         # daemon doesn't own it (ws secret set does). Leave it.
-        # Cross-desk file-backed: daemon copied bytes into the caller's
+        # Cross-Dock file-backed: daemon copied bytes into the caller's
         # secret dir. On release, remove the copy so the caller loses
         # access through the bind mount.
         if lease.type == CapabilityType.SECRET and revoked:
@@ -794,7 +794,7 @@ def release_capability(
             )
             if is_cross_desk and isinstance(secret_name, str):
                 # Only remove if no other active lease still grants the
-                # same cross-desk secret to this caller.
+                # same cross-Dock secret to this caller.
                 still_active = registry.find_active_secret_lease(
                     caller_desk_id, secret_name,
                 )
@@ -890,7 +890,7 @@ def _validate_network_reach_scope(scope: dict) -> dict:
     """NETWORK_REACH scope shape: {domain, port?}.
 
     Domain must be a lowercased FQDN with no wildcards or shell metachars
-    (the entitlement *patterns* on the desk policy may include `*.x.com`
+    (the entitlement *patterns* on the Dock policy may include `*.x.com`
     or `*`; the *request* is always a concrete domain). Port defaults to
     443 and must be in 1..65535.
     """
@@ -919,7 +919,7 @@ def _validate_secret_scope(scope: dict) -> dict:
         raise _RpcError(code=-32602, message="invalid_params",
                         data={"reason": "scope.secret_name must match [A-Za-z0-9_.-]{1,64}"})
 
-    # V2.1: optional source_desk_id for cross-desk secret delegation.
+    # V2.1: optional source_desk_id for cross-Dock secret delegation.
     # When present, the daemon reads from the source desk's secret dir
     # instead of the caller's. The caller must still have the secret in
     # its own entitlements (the capability broker gate is on the CALLER's
@@ -1032,7 +1032,7 @@ def _materialize_storage_credentials(
 
 
 def _remove_storage_credentials(secrets_root: Path, desk_id: str) -> None:
-    """Remove the 4 aws_* storage-lease files from the desk's secret dir."""
+    """Remove the 4 aws_* storage-lease files from the Dock's secret dir."""
     desk_dir = secrets_root / desk_id
     for name in _STORAGE_CRED_FILENAMES:
         target = desk_dir / name
@@ -1081,9 +1081,9 @@ def _materialize_secret(container_id: str, secret_name: str, payload: bytes) -> 
 def _materialize_to_host_secret_dir(
     secrets_root: Path, desk_id: str, secret_name: str, payload: bytes,
 ) -> None:
-    """Write secret bytes into a desk's host secret directory.
+    """Write secret bytes into a Dock's host secret directory.
 
-    For cross-desk file-backed delegation: the source desk's bytes get
+    For cross-Dock file-backed delegation: the source desk's bytes get
     written into the CALLER's secret dir on the host. The overlay's bind
     mount at /run/secrets/ picks them up immediately inside the container.
 
@@ -1098,7 +1098,7 @@ def _materialize_to_host_secret_dir(
     chown_to_container(target)
     os.chmod(target, 0o400)
     logger.info(
-        "wsd: cross-desk secret materialized at %s (%d bytes)",
+        "wsd: cross-Dock secret materialized at %s (%d bytes)",
         target, len(payload),
     )
 
@@ -1106,7 +1106,7 @@ def _materialize_to_host_secret_dir(
 def _remove_from_host_secret_dir(
     secrets_root: Path, desk_id: str, secret_name: str,
 ) -> None:
-    """Remove a cross-desk materialized secret from the host secret dir.
+    """Remove a cross-Dock materialized secret from the host secret dir.
 
     Best-effort: logs on failure, does not raise. The lease is already
     revoked in the registry; the file is a convenience copy.
@@ -1114,13 +1114,13 @@ def _remove_from_host_secret_dir(
     target = secrets_root / desk_id / secret_name
     try:
         target.unlink(missing_ok=True)
-        logger.info("wsd: cross-desk secret removed from %s", target)
+        logger.info("wsd: cross-Dock secret removed from %s", target)
     except OSError as exc:
-        logger.warning("wsd: failed to remove cross-desk secret %s: %s", target, exc)
+        logger.warning("wsd: failed to remove cross-Dock secret %s: %s", target, exc)
 
 
 def _remove_materialized_secret(container_id: str, secret_name: str) -> None:
-    """Best-effort: remove /run/secrets/<name> in the desk container.
+    """Best-effort: remove /run/secrets/<name> in the Dock container.
 
     Failures are logged, not raised — the lease is already revoked in
     the registry, so the daemon's authoritative grant state is correct
