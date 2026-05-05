@@ -302,3 +302,168 @@ def host_check(ctx):
 
     if fails:
         raise SystemExit(1)
+
+
+# --------------- ws host audit ---------------
+
+@host.command("audit")
+@click.option("--probe-desks", is_flag=True,
+              help="Also docker-exec into one desk per project to probe "
+                   "in-container helper presence (slower; detects "
+                   "feature-merged-but-base-image-not-rebuilt).")
+@click.pass_context
+def host_audit(ctx, probe_desks):
+    """Snapshot what's actually live on this Harbor.
+
+    Closes the gap between "code in main" and "code running here".
+    Six layers (plus optional helpers probe): code, daemon, capability
+    surface, base images, desks, leases. Each layer fails independently;
+    a single broken layer doesn't kill the whole audit.
+    """
+    out = ctx.obj["output"]
+    from drydock.core.host_audit import gather_audit
+    audit = gather_audit(probe_desks=probe_desks)
+    out.success(audit, human_lines=_format_audit_human(audit))
+
+
+def _format_audit_human(audit: dict) -> list[str]:
+    lines: list[str] = []
+    lines.append(f"Harbor audit  ({audit['audited_at']})")
+    lines.append("")
+
+    # ---- code ----
+    c = audit.get("code") or {}
+    lines.append("== Code ==")
+    if c.get("ok") is False:
+        lines.append(f"  ! {c.get('error')}")
+    else:
+        ver = c.get("package_version", "?")
+        loc = c.get("install_location", "?")
+        editable = " (editable)" if c.get("editable") else ""
+        lines.append(f"  package: drydock {ver}{editable}")
+        lines.append(f"  install: {loc}")
+        if c.get("git_sha"):
+            branch = c.get("git_branch") or "?"
+            dirty = "  ⚠ DIRTY" if c.get("dirty") else ""
+            ahead = c.get("ahead_origin_main")
+            behind = c.get("behind_origin_main")
+            drift = ""
+            if ahead is not None and behind is not None:
+                if ahead == 0 and behind == 0:
+                    drift = "  (in sync with origin/main)"
+                else:
+                    bits = []
+                    if ahead:  bits.append(f"+{ahead} ahead")
+                    if behind: bits.append(f"-{behind} behind")
+                    drift = f"  ({', '.join(bits)} origin/main)"
+            lines.append(f"  git:     {branch}@{c['git_sha']}{drift}{dirty}")
+    lines.append("")
+
+    # ---- daemon ----
+    d = audit.get("daemon") or {}
+    lines.append("== Daemon ==")
+    if d.get("ok") is False:
+        lines.append(f"  ! {d.get('error')}")
+    else:
+        running = d.get("running")
+        mark = "✓" if running and d.get("health_responsive") else ("⚠" if running else "✗")
+        state = "running + responsive" if (running and d.get("health_responsive")) \
+            else ("running but socket unresponsive" if running else "NOT RUNNING")
+        lines.append(f"  [{mark}] wsd: {state}")
+        if d.get("pid"):
+            lines.append(f"      pid={d['pid']}  uptime={d.get('uptime_human', '?')}")
+        lines.append(f"      socket={d.get('socket_path')}  present={d.get('socket_present')}")
+        if d.get("last_log_line"):
+            lines.append(f"      last log: {d['last_log_line'][:120]}")
+    lines.append("")
+
+    # ---- capability surface ----
+    cs = audit.get("capability") or {}
+    lines.append("== Capability surface (per running CLI code) ==")
+    if cs.get("ok") is False:
+        lines.append(f"  ! {cs.get('error')}")
+    else:
+        lines.append(f"  supported: {', '.join(cs.get('supported_types', []))}")
+        if cs.get("reserved_types"):
+            lines.append(f"  reserved:  {', '.join(cs['reserved_types'])}")
+        lines.append(f"  kinds:     {', '.join(cs.get('capability_kinds', []))}")
+    lines.append("")
+
+    # ---- base images ----
+    bi = audit.get("base_images") or {}
+    lines.append("== drydock-base images ==")
+    if bi.get("ok") is False:
+        lines.append(f"  ! {bi.get('error')}")
+    else:
+        tags = bi.get("tags", [])
+        if not tags:
+            lines.append(f"  (none pulled)")
+        for t in tags:
+            lines.append(f"  {t['tag']:<14} id={t['id']:<12}  pulled {t['created']}")
+    lines.append("")
+
+    # ---- desks ----
+    ds = audit.get("desks") or {}
+    lines.append(f"== Desks ({ds.get('count', 0)}) ==")
+    if ds.get("ok") is False:
+        lines.append(f"  ! {ds.get('error')}")
+    else:
+        for desk in ds.get("desks", []):
+            state_mark = {"running": "✓", "suspended": "·", "created": "·"}.get(desk["state"], "?")
+            base = desk.get("base_image_tag") or "(custom)"
+            lines.append(f"  [{state_mark}] {desk['name']:<24} state={desk['state']:<10} base={base}")
+            caps = desk.get("capabilities") or []
+            if caps:
+                lines.append(f"        capabilities: {', '.join(caps)}")
+            ent_bits = []
+            for label, key in (
+                ("secrets", "delegatable_secrets"),
+                ("storage", "delegatable_storage_scopes"),
+                ("network", "delegatable_network_reach"),
+            ):
+                v = desk.get(key) or []
+                if v:
+                    ent_bits.append(f"{label}={len(v)}")
+            sc = desk.get("secrets_count", 0)
+            if sc:
+                ent_bits.append(f"secret-files={sc}")
+            if ent_bits:
+                lines.append(f"        entitlements: {', '.join(ent_bits)}")
+    lines.append("")
+
+    # ---- leases ----
+    ls = audit.get("leases") or {}
+    lines.append("== Leases ==")
+    if ls.get("ok") is False:
+        lines.append(f"  ! {ls.get('error')}")
+    else:
+        active = ls.get("active_total", 0)
+        revoked = ls.get("revoked_total", 0)
+        lines.append(f"  active={active}  revoked={revoked}")
+        for t, n in (ls.get("active_by_type") or {}).items():
+            lines.append(f"    active {t}: {n}")
+    lines.append("")
+
+    # ---- helpers (only if probed) ----
+    h = audit.get("helpers")
+    if h is not None:
+        lines.append("== In-container helpers ==")
+        if h.get("ok") is False:
+            lines.append(f"  ! {h.get('error')}")
+        elif not h.get("probed"):
+            lines.append(f"  ({h.get('note', 'nothing probed')})")
+        else:
+            for p in h["probed"]:
+                missing = p.get("missing", [])
+                if not missing:
+                    lines.append(f"  ✓ {p['desk']} ({p['project']}): all helpers present")
+                else:
+                    lines.append(f"  ⚠ {p['desk']} ({p['project']}): missing {len(missing)} helper(s)")
+                    for path, implication in zip(missing, p.get("feature_implications", [])):
+                        lines.append(f"      ✗ {path}  →  {implication}")
+        lines.append("")
+
+    # Trim trailing blank
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
