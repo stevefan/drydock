@@ -364,6 +364,14 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         params.get("delegatable_provision_scopes"),
         field_name="delegatable_provision_scopes",
     )
+    delegatable_network_reach = _validated_string_list(
+        params.get("delegatable_network_reach"),
+        field_name="delegatable_network_reach",
+    )
+    network_reach_ports = _validated_int_list(
+        params.get("network_reach_ports"),
+        field_name="network_reach_ports",
+    )
     tailscale_hostname = _validated_optional_string(
         params.get("tailscale_hostname"),
         field_name="tailscale_hostname",
@@ -432,6 +440,8 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "capabilities": capabilities,
         "delegatable_storage_scopes": delegatable_storage_scopes,
         "delegatable_provision_scopes": delegatable_provision_scopes,
+        "delegatable_network_reach": delegatable_network_reach,
+        "network_reach_ports": network_reach_ports,
     }
 
 
@@ -971,6 +981,8 @@ def _perform_create(
         capabilities=list(spec["capabilities"]),
         delegatable_storage_scopes=list(spec.get("delegatable_storage_scopes") or []),
         delegatable_provision_scopes=list(spec.get("delegatable_provision_scopes") or []),
+        delegatable_network_reach=list(spec.get("delegatable_network_reach") or []),
+        network_reach_ports=list(spec.get("network_reach_ports") or []),
     )
     if parent_desk_id is not None:
         ws = registry.update_workspace(ws.name, parent_desk_id=parent_desk_id)

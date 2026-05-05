@@ -35,6 +35,10 @@ class CapabilityKind(str, Enum):
     # Provisioner drydocks: coarse gate for type=INFRA_PROVISION lease
     # requests. Per-action narrowness via delegatable_provision_scopes.
     REQUEST_PROVISION_LEASES = "request_provision_leases"
+    # Coarse gate for type=NETWORK_REACH lease requests (live firewall opens).
+    # Per-domain narrowness via delegatable_network_reach + network_reach_ports
+    # on the desk policy. See docs/design/network-reach.md.
+    REQUEST_NETWORK_REACH = "request_network_reach"
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,19 @@ class DeskPolicy:
     # for storage scopes above. A request's action list must be a subset
     # of the union of matches against granted globs.
     delegatable_provision_scopes: tuple[str, ...] = ()
+    # NETWORK_REACH narrowness: list of domain glob patterns. Match rules:
+    #   "foo.com"     — exact
+    #   "*.foo.com"   — any single-level subdomain (api.foo.com, not a.b.foo.com)
+    #   "*"           — unconstrained (audited on every grant)
+    # Empty tuple = no dynamic opens permitted (deny-all). This is stricter
+    # than the default-permissive-when-empty used for storage/provision
+    # scopes — by deliberate design choice in network-reach.md, since
+    # opening egress to a never-listed domain is the kind of expansion
+    # that should require explicit declaration.
+    delegatable_network_reach: tuple[str, ...] = ()
+    # Companion port allowlist. Empty = default [80, 443]. Anything else
+    # requires explicit declaration. See network-reach.md §4.
+    network_reach_ports: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -379,6 +396,63 @@ def _iam_glob_match(action: str, pattern: str) -> bool:
     if pattern == "*" or pattern == action:
         return True
     return fnmatch.fnmatchcase(action, pattern)
+
+
+def matches_network_reach(
+    requested_domain: str,
+    requested_port: int,
+    granted_domains: list[str] | tuple[str, ...],
+    granted_ports: list[int] | tuple[int, ...],
+) -> tuple[bool, str | None]:
+    """Match a NETWORK_REACH request against a desk's network_reach policy.
+
+    Returns (allowed, reason). When allowed=False, reason is one of:
+      "no_entitlement"        — granted_domains is empty
+      "domain_not_entitled"   — domain matches no pattern
+      "port_not_entitled"     — port not in effective port allowlist
+
+    Match rules per pattern:
+      "*"           — matches any domain
+      "foo.com"     — exact match (case-insensitive)
+      "*.foo.com"   — single-level subdomain only (api.foo.com matches;
+                      a.b.foo.com does not)
+
+    Effective port allowlist defaults to (80, 443) when granted_ports is empty.
+    """
+    if not granted_domains:
+        return False, "no_entitlement"
+
+    domain = requested_domain.strip().lower().rstrip(".")
+    if not _matches_any_domain_pattern(domain, granted_domains):
+        return False, "domain_not_entitled"
+
+    effective_ports = tuple(granted_ports) if granted_ports else (80, 443)
+    if requested_port not in effective_ports:
+        return False, "port_not_entitled"
+
+    return True, None
+
+
+def _matches_any_domain_pattern(
+    domain: str, patterns: list[str] | tuple[str, ...],
+) -> bool:
+    for raw in patterns:
+        if not isinstance(raw, str) or not raw:
+            continue
+        pat = raw.strip().lower().rstrip(".")
+        if pat == "*":
+            return True
+        if pat == domain:
+            return True
+        if pat.startswith("*.") and len(pat) > 2:
+            suffix = pat[1:]            # ".foo.com"
+            if domain.endswith(suffix):
+                head = domain[: -len(suffix)]
+                # Single-level subdomain only: head must be non-empty and
+                # contain no dots.
+                if head and "." not in head:
+                    return True
+    return False
 
 
 def _prefix_matches(requested: str, granted: str) -> bool:

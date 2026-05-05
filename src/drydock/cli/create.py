@@ -71,6 +71,10 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["delegatable_storage_scopes"] = proj_cfg.delegatable_storage_scopes
     if proj_cfg.delegatable_provision_scopes:
         params["delegatable_provision_scopes"] = proj_cfg.delegatable_provision_scopes
+    if proj_cfg.delegatable_network_reach:
+        params["delegatable_network_reach"] = proj_cfg.delegatable_network_reach
+    if proj_cfg.network_reach_ports:
+        params["network_reach_ports"] = proj_cfg.network_reach_ports
     if proj_cfg.extra_env:
         params["extra_env"] = proj_cfg.extra_env
     if proj_cfg.storage_mounts:

@@ -6,7 +6,10 @@ Per docs/v2-design-capability-broker.md and docs/v2-design-protocol.md:
   taken as an RPC argument. Mitigates a confused-deputy class of bugs.
 - V2.0 ships type=SECRET. V2.1 added cross-drydock secret delegation via
   `source_desk_id`. V4 Phase 1 adds type=STORAGE_MOUNT (scoped AWS STS
-  credentials); reserved COMPUTE_QUOTA/NETWORK_REACH still reject.
+  credentials). Phase 1c adds type=NETWORK_REACH (live firewall opens
+  via add-allowed-domain.sh; per-desk delegatable_network_reach +
+  network_reach_ports policy). Only COMPUTE_QUOTA remains reserved-but-
+  unsupported.
 - Entitlement check for SECRET is a trivial subset lookup against the
   desk's `delegatable_secrets` (which doubles as the desk's own
   entitlements in the V2 model — see capability-broker.md §4 closing
@@ -36,6 +39,7 @@ from drydock.core.audit import emit_audit
 from drydock.core.capability import CapabilityLease, CapabilityType
 from drydock.core.policy import (
     CapabilityKind,
+    matches_network_reach,
     matches_provision_actions,
     matches_storage_scope,
 )
@@ -116,9 +120,186 @@ def request_capability(
             secrets_root=secrets_root,
             storage_backend=storage_backend,
         )
+    if request_type == "NETWORK_REACH":
+        return _handle_network_reach_request(
+            spec,
+            caller_desk_id=caller_desk_id,
+            request_id=request_id,
+            registry_path=registry_path,
+        )
     # _validate_request_params already rejects unsupported types; defense in depth.
     raise _RpcError(code=-32013, message="capability_unsupported",
                     data={"type": request_type})
+
+
+def _handle_network_reach_request(
+    spec: dict,
+    *,
+    caller_desk_id: str,
+    request_id: str | int | None,
+    registry_path: Path,
+) -> dict:
+    """Issue a NETWORK_REACH lease: open the desk's container firewall to
+    one (domain, port) pair via the in-container add-allowed-domain.sh
+    helper. Additive-only (V1) per docs/design/network-reach.md.
+
+    Defaults committed in network-reach.md §entitlement-model:
+    - Empty `delegatable_network_reach` = no dynamic opens (deny-all).
+    - Wildcard "*" allowed; audited explicitly.
+    - Default port allowlist [80, 443] when `network_reach_ports` is empty.
+    """
+    registry = Registry(db_path=registry_path)
+    try:
+        policy_row = registry.load_desk_policy(caller_desk_id)
+        if policy_row is None:
+            raise _RpcError(code=-32001, message="desk_not_found",
+                            data={"desk_id": caller_desk_id})
+
+        capabilities_raw = json.loads(policy_row.get("capabilities") or "[]")
+        capabilities = {CapabilityKind(value) for value in capabilities_raw}
+        if CapabilityKind.REQUEST_NETWORK_REACH not in capabilities:
+            raise _RpcError(
+                code=-32005, message="capability_not_granted",
+                data={
+                    "missing": CapabilityKind.REQUEST_NETWORK_REACH.value,
+                    "fix": "Grant request_network_reach in the desk's project YAML capabilities",
+                },
+            )
+
+        granted_domains = json.loads(policy_row.get("delegatable_network_reach") or "[]")
+        granted_ports = json.loads(policy_row.get("network_reach_ports") or "[]")
+        allowed, reason = matches_network_reach(
+            spec["domain"], spec["port"], granted_domains, granted_ports,
+        )
+        if not allowed:
+            audit_detail = {
+                "rule": "network_reach",
+                "subreason": reason,
+                "requested": {"domain": spec["domain"], "port": spec["port"]},
+                "granted_domains": granted_domains,
+                "granted_ports": granted_ports or [80, 443],
+            }
+            emit_audit(
+                "lease.denied",
+                principal=caller_desk_id,
+                request_id=request_id,
+                method="RequestCapability",
+                result="denied",
+                details={"type": "NETWORK_REACH", **audit_detail},
+            )
+            fix_map = {
+                "no_entitlement":
+                    "Add at least one entry to delegatable_network_reach in the project YAML",
+                "domain_not_entitled":
+                    f"Add '{spec['domain']}' or a covering glob (e.g. '*.{spec['domain'].split('.', 1)[1] if '.' in spec['domain'] else spec['domain']}') to delegatable_network_reach",
+                "port_not_entitled":
+                    f"Add port {spec['port']} to network_reach_ports (default allowlist is [80, 443])",
+            }
+            raise _RpcError(
+                code=-32006, message="narrowness_violated",
+                data={**audit_detail, "fix": fix_map.get(reason, "Tighten/widen the desk's network_reach policy")},
+            )
+
+        # Wildcard grants are audited at INFO with explicit flag so
+        # ungated desks don't go dark in operation.
+        is_wildcard_grant = "*" in granted_domains
+
+        workspace = _lookup_workspace(registry, caller_desk_id)
+        if workspace is None or not workspace.container_id:
+            raise _RpcError(code=-32010, message="desk_not_running",
+                            data={"desk_id": caller_desk_id})
+
+        try:
+            add_result = _materialize_network_reach(
+                workspace.container_id, spec["domain"], spec["port"],
+            )
+        except RuntimeError as exc:
+            raise _RpcError(code=-32011, message="materialization_failed",
+                            data={"detail": str(exc)})
+
+        if not add_result.get("ok"):
+            err = add_result.get("error", "add_failed")
+            emit_audit(
+                "lease.denied",
+                principal=caller_desk_id,
+                request_id=request_id,
+                method="RequestCapability",
+                result="denied",
+                details={"type": "NETWORK_REACH", "error": err, "domain": spec["domain"]},
+            )
+            fix = ("DNS resolution failed — check that the domain is reachable from the Harbor"
+                   if err == "dns_resolution_failed"
+                   else "Check container logs at /tmp/firewall-add.log for ipset/iptables errors")
+            raise _RpcError(
+                code=-32011, message="materialization_failed",
+                data={"detail": add_result, "fix": fix},
+            )
+
+        lease_scope: dict = {
+            "domain": spec["domain"],
+            "port": spec["port"],
+            "resolved_ips": list(add_result.get("added", [])) + list(add_result.get("already_present", [])),
+        }
+        lease = CapabilityLease(
+            lease_id=f"nr_{uuid4().hex}",
+            desk_id=caller_desk_id,
+            type=CapabilityType.NETWORK_REACH,
+            scope=lease_scope,
+            issued_at=_utc_now(),
+            expiry=None,    # additive-only V1; container restart wipes
+            issuer="wsd",
+        )
+        registry.insert_lease(lease)
+        logger.info(
+            "wsd: NETWORK_REACH lease issued lease_id=%s desk_id=%s domain=%s port=%s wildcard=%s",
+            lease.lease_id, caller_desk_id, spec["domain"], spec["port"], is_wildcard_grant,
+        )
+        emit_audit(
+            "lease.issued",
+            principal=caller_desk_id,
+            request_id=request_id,
+            method="RequestCapability",
+            result="ok",
+            details={
+                "lease_id": lease.lease_id,
+                "desk_id": caller_desk_id,
+                "type": lease.type.value,
+                "scope": dict(lease.scope),
+                "expiry": None,
+                "wildcard_grant": is_wildcard_grant,
+            },
+        )
+        return lease.to_wire()
+    finally:
+        registry.close()
+
+
+def _materialize_network_reach(
+    container_id: str, domain: str, port: int,
+) -> dict:
+    """Invoke add-allowed-domain.sh inside the container and parse its
+    JSON output. Helper script ships in drydock-base; runs as root for
+    sudo access to ipset/iptables.
+    """
+    proc = subprocess.run(
+        ["docker", "exec", "--user", "root", container_id,
+         "/usr/local/bin/add-allowed-domain.sh", domain, str(port)],
+        capture_output=True, text=True, timeout=_DOCKER_EXEC_TIMEOUT,
+    )
+    if proc.returncode != 0 and not proc.stdout.strip():
+        # Helper missing entirely (old base image) or hard exec failure.
+        raise RuntimeError(
+            f"add-allowed-domain.sh failed (exit {proc.returncode}): "
+            f"{proc.stderr.strip() or 'no output'}"
+        )
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"add-allowed-domain.sh returned non-JSON: {exc}; "
+            f"stdout={proc.stdout!r}; stderr={proc.stderr!r}"
+        )
+    return result
 
 
 def _handle_secret_request(
@@ -642,7 +823,13 @@ def release_capability(
 _BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_.\-/]{0,256}$")
 _STORAGE_MODES = {"ro", "rw"}
-_SUPPORTED_CAPABILITY_TYPES = {"SECRET", "STORAGE_MOUNT", "INFRA_PROVISION"}
+_SUPPORTED_CAPABILITY_TYPES = {"SECRET", "STORAGE_MOUNT", "INFRA_PROVISION", "NETWORK_REACH"}
+# Domain shape for NETWORK_REACH scope. Mirrors add-allowed-domain.sh's
+# in-container check; we validate before invoking docker exec so a malformed
+# request never reaches a privileged shell.
+_NETWORK_REACH_DOMAIN_RE = re.compile(
+    r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$"
+)
 _IAM_ACTION_RE = re.compile(r"^[A-Za-z0-9*]+:[A-Za-z0-9*]+$|^\*$")
 
 
@@ -672,9 +859,38 @@ def _validate_request_params(params: object) -> dict:
         return _validate_storage_scope(scope)
     if type_str == "INFRA_PROVISION":
         return _validate_provision_scope(scope)
+    if type_str == "NETWORK_REACH":
+        return _validate_network_reach_scope(scope)
     # Unreachable — _SUPPORTED_CAPABILITY_TYPES exhausted above.
     raise _RpcError(code=-32013, message="capability_unsupported",
                     data={"type": type_str})
+
+
+def _validate_network_reach_scope(scope: dict) -> dict:
+    """NETWORK_REACH scope shape: {domain, port?}.
+
+    Domain must be a lowercased FQDN with no wildcards or shell metachars
+    (the entitlement *patterns* on the desk policy may include `*.x.com`
+    or `*`; the *request* is always a concrete domain). Port defaults to
+    443 and must be in 1..65535.
+    """
+    domain = scope.get("domain")
+    if not isinstance(domain, str):
+        raise _RpcError(code=-32602, message="invalid_params",
+                        data={"reason": "scope.domain must be a string"})
+    canonical = domain.strip().lower().rstrip(".")
+    if not _NETWORK_REACH_DOMAIN_RE.match(canonical):
+        raise _RpcError(code=-32602, message="invalid_params",
+                        data={"reason": "scope.domain must be a valid lowercase FQDN",
+                              "got": domain})
+
+    port = scope.get("port", 443)
+    if not isinstance(port, int) or isinstance(port, bool) or port < 1 or port > 65535:
+        raise _RpcError(code=-32602, message="invalid_params",
+                        data={"reason": "scope.port must be an integer in 1..65535",
+                              "got": port})
+
+    return {"type": "NETWORK_REACH", "domain": canonical, "port": port}
 
 
 def _validate_secret_scope(scope: dict) -> dict:

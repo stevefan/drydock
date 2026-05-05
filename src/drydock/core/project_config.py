@@ -29,6 +29,8 @@ KNOWN_KEYS = {
     "delegatable_firewall_domains",
     "delegatable_storage_scopes",
     "delegatable_provision_scopes",
+    "delegatable_network_reach",
+    "network_reach_ports",
     "storage_mounts",
     "deskwatch",
 }
@@ -67,6 +69,12 @@ class ProjectConfig:
     delegatable_firewall_domains: list[str] = field(default_factory=list)
     delegatable_storage_scopes: list[str] = field(default_factory=list)
     delegatable_provision_scopes: list[str] = field(default_factory=list)
+    # NETWORK_REACH narrowness: per-desk allowlist of domain glob patterns
+    # the worker may dynamically request via RequestCapability(NETWORK_REACH).
+    # Empty = no dynamic opens (deny-all). See docs/design/network-reach.md.
+    delegatable_network_reach: list[str] = field(default_factory=list)
+    # Companion port allowlist; empty = default [80, 443].
+    network_reach_ports: list[int] = field(default_factory=list)
     # Declarative S3 mounts; expand_storage_mounts fills in the capability,
     # scope, and firewall entries each one implies. See storage-mount.md.
     storage_mounts: list[dict] = field(default_factory=list)
@@ -144,6 +152,8 @@ def load_project_config(
         delegatable_firewall_domains=raw.get("delegatable_firewall_domains", []),
         delegatable_storage_scopes=raw.get("delegatable_storage_scopes", []),
         delegatable_provision_scopes=raw.get("delegatable_provision_scopes", []),
+        delegatable_network_reach=raw.get("delegatable_network_reach", []),
+        network_reach_ports=raw.get("network_reach_ports", []),
         storage_mounts=raw.get("storage_mounts", []),
         deskwatch=raw.get("deskwatch") or {},
     )

@@ -53,6 +53,12 @@ V2_WORKSPACE_COLUMNS = (
     # INFRA_PROVISION narrowness: list of IAM action globs. Empty list =
     # no narrowness declared (capability gate alone). See policy.DeskPolicy.
     ("delegatable_provision_scopes", "TEXT DEFAULT '[]'"),
+    # NETWORK_REACH narrowness: list of domain glob patterns. Empty list =
+    # NO dynamic firewall opens permitted. Stricter empty semantics than
+    # storage/provision by deliberate design (see network-reach.md).
+    ("delegatable_network_reach", "TEXT DEFAULT '[]'"),
+    # Companion port allowlist for NETWORK_REACH. Empty = default [80, 443].
+    ("network_reach_ports", "TEXT DEFAULT '[]'"),
 )
 
 V2_TABLES = """
@@ -306,7 +312,8 @@ class Registry:
         row = self._conn.execute(
             """
             SELECT delegatable_firewall_domains, delegatable_secrets, capabilities,
-                   delegatable_storage_scopes, delegatable_provision_scopes, config
+                   delegatable_storage_scopes, delegatable_provision_scopes,
+                   delegatable_network_reach, network_reach_ports, config
             FROM workspaces
             WHERE id = ?
             """,
@@ -325,6 +332,8 @@ class Registry:
         capabilities: list[str] | None = None,
         delegatable_storage_scopes: list[str] | None = None,
         delegatable_provision_scopes: list[str] | None = None,
+        delegatable_network_reach: list[str] | None = None,
+        network_reach_ports: list[int] | None = None,
     ) -> None:
         fields: dict[str, str] = {}
         if delegatable_firewall_domains is not None:
@@ -337,6 +346,10 @@ class Registry:
             fields["delegatable_storage_scopes"] = json.dumps(delegatable_storage_scopes)
         if delegatable_provision_scopes is not None:
             fields["delegatable_provision_scopes"] = json.dumps(delegatable_provision_scopes)
+        if delegatable_network_reach is not None:
+            fields["delegatable_network_reach"] = json.dumps(delegatable_network_reach)
+        if network_reach_ports is not None:
+            fields["network_reach_ports"] = json.dumps(network_reach_ports)
         if not fields:
             return
         self.update_workspace(name, **fields)
