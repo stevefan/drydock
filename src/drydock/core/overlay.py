@@ -56,6 +56,10 @@ class OverlayConfig:
     # (e.g. running a drydock on a Harbor with no wsd daemon yet).
     wsd_run_host_dir: str | None = DEFAULT_WSD_RUN_HOST_DIR
     drydock_rpc_host_path: str | None = DEFAULT_DRYDOCK_RPC_HOST_PATH
+    # Phase A hard resource ceilings — raw dict from project YAML.
+    # Translated to docker --cpus / --memory / --pids-limit runArgs by
+    # generate_overlay via HardCeilings.from_dict + .to_docker_runargs.
+    resources_hard: dict = field(default_factory=dict)
 
 
 def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict:
@@ -84,6 +88,15 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
             "--device=/dev/fuse",
             "--security-opt=apparmor=unconfined",
         ])
+    # Phase A hard resource ceilings → docker run flags. The kernel enforces;
+    # nothing in drydock observes for breach (that's Phase B). Validation
+    # already happened in CreateDesk RPC; .from_dict raising here would
+    # indicate registry corruption, not user input error.
+    if config.resources_hard:
+        from .resource_ceilings import HardCeilings
+        ceiling_args = HardCeilings.from_dict(config.resources_hard).to_docker_runargs()
+        if ceiling_args:
+            overlay["runArgs"].extend(ceiling_args)
 
     # When a desk declares workspace_subdir, land the container's default
     # WORKDIR at /workspace/<subdir> so relative paths in schedule.yaml
@@ -245,6 +258,8 @@ def regenerate_overlay_from_workspace(
         kwargs["extra_env"] = dict(cfg["extra_env"])
     if cfg.get("storage_mounts"):
         kwargs["storage_mounts"] = list(cfg["storage_mounts"])
+    if cfg.get("resources_hard"):
+        kwargs["resources_hard"] = dict(cfg["resources_hard"])
 
     overlay_config = OverlayConfig(**kwargs)
     # When workspace_subdir is set, the base devcontainer.json lives

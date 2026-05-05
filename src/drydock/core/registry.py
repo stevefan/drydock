@@ -59,6 +59,9 @@ V2_WORKSPACE_COLUMNS = (
     ("delegatable_network_reach", "TEXT DEFAULT '[]'"),
     # Companion port allowlist for NETWORK_REACH. Empty = default [80, 443].
     ("network_reach_ports", "TEXT DEFAULT '[]'"),
+    # Phase A hard resource ceilings (cpu_max, memory_max, pids_max).
+    # JSON dict; empty {} = no cgroup ceiling. See resource-ceilings.md.
+    ("resources_hard", "TEXT DEFAULT '{}'"),
 )
 
 V2_TABLES = """
@@ -313,7 +316,8 @@ class Registry:
             """
             SELECT delegatable_firewall_domains, delegatable_secrets, capabilities,
                    delegatable_storage_scopes, delegatable_provision_scopes,
-                   delegatable_network_reach, network_reach_ports, config
+                   delegatable_network_reach, network_reach_ports,
+                   resources_hard, config
             FROM workspaces
             WHERE id = ?
             """,
@@ -334,6 +338,7 @@ class Registry:
         delegatable_provision_scopes: list[str] | None = None,
         delegatable_network_reach: list[str] | None = None,
         network_reach_ports: list[int] | None = None,
+        resources_hard: dict | None = None,
     ) -> None:
         fields: dict[str, str] = {}
         if delegatable_firewall_domains is not None:
@@ -350,6 +355,8 @@ class Registry:
             fields["delegatable_network_reach"] = json.dumps(delegatable_network_reach)
         if network_reach_ports is not None:
             fields["network_reach_ports"] = json.dumps(network_reach_ports)
+        if resources_hard is not None:
+            fields["resources_hard"] = json.dumps(resources_hard)
         if not fields:
             return
         self.update_workspace(name, **fields)

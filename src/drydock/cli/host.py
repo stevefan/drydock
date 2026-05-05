@@ -429,6 +429,10 @@ def _format_audit_human(audit: dict) -> list[str]:
                 ent_bits.append(f"secret-files={sc}")
             if ent_bits:
                 lines.append(f"        entitlements: {', '.join(ent_bits)}")
+            rh = desk.get("resources_hard") or {}
+            if rh:
+                rh_bits = [f"{k}={v}" for k, v in rh.items()]
+                lines.append(f"        ceilings: {', '.join(rh_bits)}")
     lines.append("")
 
     # ---- leases ----

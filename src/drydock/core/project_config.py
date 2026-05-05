@@ -31,6 +31,7 @@ KNOWN_KEYS = {
     "delegatable_provision_scopes",
     "delegatable_network_reach",
     "network_reach_ports",
+    "resources_hard",
     "storage_mounts",
     "deskwatch",
 }
@@ -75,6 +76,11 @@ class ProjectConfig:
     delegatable_network_reach: list[str] = field(default_factory=list)
     # Companion port allowlist; empty = default [80, 443].
     network_reach_ports: list[int] = field(default_factory=list)
+    # Phase A hard resource ceilings — translated to docker --cpus,
+    # --memory, --pids-limit at container creation. Empty = no cgroup
+    # ceiling at this layer (substrate default applies). Validated by
+    # core.resource_ceilings.HardCeilings.from_dict.
+    resources_hard: dict = field(default_factory=dict)
     # Declarative S3 mounts; expand_storage_mounts fills in the capability,
     # scope, and firewall entries each one implies. See storage-mount.md.
     storage_mounts: list[dict] = field(default_factory=list)
@@ -154,6 +160,7 @@ def load_project_config(
         delegatable_provision_scopes=raw.get("delegatable_provision_scopes", []),
         delegatable_network_reach=raw.get("delegatable_network_reach", []),
         network_reach_ports=raw.get("network_reach_ports", []),
+        resources_hard=raw.get("resources_hard") or {},
         storage_mounts=raw.get("storage_mounts", []),
         deskwatch=raw.get("deskwatch") or {},
     )

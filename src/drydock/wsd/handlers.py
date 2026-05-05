@@ -54,6 +54,7 @@ _OVERLAY_PARAM_FIELDS = (
     "claude_profile",
     "extra_env",
     "storage_mounts",
+    "resources_hard",
 )
 
 
@@ -405,6 +406,26 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         field_name="storage_mounts",
     )
 
+    # resources_hard is validated by HardCeilings.from_dict — that's the
+    # single source of truth for the schema. Surface its error as
+    # invalid_params so the user sees the same fix: hint regardless of
+    # whether they trigger it via project YAML or the daemon RPC.
+    resources_hard_raw = params.get("resources_hard") or {}
+    if not isinstance(resources_hard_raw, dict):
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "resources_hard", "reason": "must be an object"},
+        )
+    if resources_hard_raw:
+        from drydock.core.resource_ceilings import HardCeilings, ResourceCeilingError
+        try:
+            HardCeilings.from_dict(resources_hard_raw)
+        except ResourceCeilingError as exc:
+            raise _RpcError(
+                code=-32602, message="invalid_params",
+                data={"field": "resources_hard", "reason": str(exc)},
+            )
+
     workspace_subdir = params.get("workspace_subdir") or ""
     if not isinstance(workspace_subdir, str):
         raise _RpcError(
@@ -442,6 +463,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "delegatable_provision_scopes": delegatable_provision_scopes,
         "delegatable_network_reach": delegatable_network_reach,
         "network_reach_ports": network_reach_ports,
+        "resources_hard": resources_hard_raw,
     }
 
 
@@ -625,6 +647,10 @@ def _overlay_from_spec(spec: dict[str, object]) -> OverlayConfig:
     storage_mounts = spec.get("storage_mounts")
     if isinstance(storage_mounts, list) and storage_mounts:
         kwargs["storage_mounts"] = list(storage_mounts)
+
+    resources_hard = spec.get("resources_hard")
+    if isinstance(resources_hard, dict) and resources_hard:
+        kwargs["resources_hard"] = dict(resources_hard)
 
     return OverlayConfig(**kwargs)
 
@@ -983,6 +1009,7 @@ def _perform_create(
         delegatable_provision_scopes=list(spec.get("delegatable_provision_scopes") or []),
         delegatable_network_reach=list(spec.get("delegatable_network_reach") or []),
         network_reach_ports=list(spec.get("network_reach_ports") or []),
+        resources_hard=dict(spec.get("resources_hard") or {}),
     )
     if parent_desk_id is not None:
         ws = registry.update_workspace(ws.name, parent_desk_id=parent_desk_id)

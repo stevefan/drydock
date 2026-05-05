@@ -277,6 +277,14 @@ def _describe_desk(registry: Registry, ws) -> dict:
     pol = registry.load_desk_policy(ws.id) or {}
 
     capabilities = _safe_json_list(pol.get("capabilities"))
+    # resources_hard is a JSON dict, not a list — parse separately.
+    rh_raw = pol.get("resources_hard")
+    try:
+        resources_hard = json.loads(rh_raw) if rh_raw else {}
+        if not isinstance(resources_hard, dict):
+            resources_hard = {}
+    except (json.JSONDecodeError, TypeError):
+        resources_hard = {}
     return {
         "name": ws.name,
         "id": ws.id,
@@ -290,6 +298,7 @@ def _describe_desk(registry: Registry, ws) -> dict:
         "delegatable_storage_scopes":  _safe_json_list(pol.get("delegatable_storage_scopes")),
         "delegatable_network_reach":   _safe_json_list(pol.get("delegatable_network_reach")),
         "network_reach_ports":         _safe_json_list(pol.get("network_reach_ports")),
+        "resources_hard":              resources_hard,
         "secrets_count": secrets_count,
         "project_yaml_mtime": yaml_mtime,
     }

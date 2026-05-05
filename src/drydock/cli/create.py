@@ -75,6 +75,8 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["delegatable_network_reach"] = proj_cfg.delegatable_network_reach
     if proj_cfg.network_reach_ports:
         params["network_reach_ports"] = proj_cfg.network_reach_ports
+    if proj_cfg.resources_hard:
+        params["resources_hard"] = proj_cfg.resources_hard
     if proj_cfg.extra_env:
         params["extra_env"] = proj_cfg.extra_env
     if proj_cfg.storage_mounts:
@@ -458,6 +460,8 @@ def _overlay_from_project(proj_cfg) -> OverlayConfig:
         kwargs["extra_mounts"] = proj_cfg.extra_mounts
     if proj_cfg.claude_profile is not None:
         kwargs["claude_profile"] = proj_cfg.claude_profile
+    if proj_cfg.resources_hard:
+        kwargs["resources_hard"] = proj_cfg.resources_hard
     return OverlayConfig(**kwargs)
 
 
