@@ -187,11 +187,20 @@ def _handle_network_reach_request(
                 result="denied",
                 details={"type": "NETWORK_REACH", **audit_detail},
             )
+            # Suggest a covering glob only when the request has 3+ labels —
+            # for 2-label FQDNs like "github.com" the glob "*.com" is far too
+            # broad to ever be a sensible suggestion. Surface the bare domain
+            # as the safe default in that case.
+            labels = spec["domain"].split(".")
+            if len(labels) >= 3:
+                glob_hint = f"or a covering glob like '*.{'.'.join(labels[1:])}'"
+            else:
+                glob_hint = "(no covering glob suggested for short FQDNs — add the bare domain)"
             fix_map = {
                 "no_entitlement":
                     "Add at least one entry to delegatable_network_reach in the project YAML",
                 "domain_not_entitled":
-                    f"Add '{spec['domain']}' or a covering glob (e.g. '*.{spec['domain'].split('.', 1)[1] if '.' in spec['domain'] else spec['domain']}') to delegatable_network_reach",
+                    f"Add '{spec['domain']}' {glob_hint} to delegatable_network_reach",
                 "port_not_entitled":
                     f"Add port {spec['port']} to network_reach_ports (default allowlist is [80, 443])",
             }
@@ -801,6 +810,13 @@ def release_capability(
             still_active_aws = registry.find_active_aws_lease(caller_desk_id)
             if still_active_aws is None:
                 _remove_storage_credentials(secrets_root, caller_desk_id)
+
+        # NETWORK_REACH release is bookkeeping-only in V1 (additive-only
+        # firewall model per network-reach.md). The ipset entry stays put
+        # until container restart wipes it; calling ReleaseCapability
+        # marks the lease revoked and emits an audit event but does NOT
+        # close the firewall. Per-IP reaper is a resource-ceilings.md
+        # Phase C deliverable.
 
         if revoked:
             emit_audit(

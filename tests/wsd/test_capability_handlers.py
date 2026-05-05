@@ -775,3 +775,62 @@ class TestInfraProvision:
         still_active = env["registry"].find_active_aws_lease(env["desk_id"])
         assert still_active is not None
         assert still_active.lease_id == provision_result["lease_id"]
+
+
+# NETWORK_REACH scope validator. Pin the contract for what the worker is
+# allowed to put in scope.* — intentionally narrower than the entitlement
+# patterns themselves (a desk's policy may say "*.foo.com", but a single
+# RequestCapability call must name a concrete domain). The validator is
+# the safety boundary before docker-exec.
+class TestValidateNetworkReachScope:
+    def _validate(self, scope):
+        from drydock.wsd.capability_handlers import _validate_network_reach_scope
+        return _validate_network_reach_scope(scope)
+
+    def test_canonicalizes_case_and_trailing_dot(self):
+        out = self._validate({"domain": "GitHub.com.", "port": 443})
+        assert out == {"type": "NETWORK_REACH", "domain": "github.com", "port": 443}
+
+    def test_default_port_443(self):
+        out = self._validate({"domain": "foo.com"})
+        assert out["port"] == 443
+
+    def test_rejects_wildcard_in_request_scope(self):
+        # Patterns may contain *, but request scope.domain must be concrete.
+        # Belt-and-suspenders: the in-container helper would also reject it.
+        with pytest.raises(_RpcError):
+            self._validate({"domain": "*.foo.com", "port": 443})
+        with pytest.raises(_RpcError):
+            self._validate({"domain": "*", "port": 443})
+
+    def test_rejects_shell_metachars_and_spaces(self):
+        for bad in ("foo .com", "foo;rm.com", "foo|bar.com", "foo.com/path"):
+            with pytest.raises(_RpcError):
+                self._validate({"domain": bad, "port": 443})
+
+    def test_rejects_non_string_domain(self):
+        for bad in (None, 42, ["foo.com"], {"d": "foo.com"}):
+            with pytest.raises(_RpcError):
+                self._validate({"domain": bad, "port": 443})
+
+    def test_rejects_out_of_range_port(self):
+        for bad_port in (0, -1, 65536, 99999):
+            with pytest.raises(_RpcError):
+                self._validate({"domain": "foo.com", "port": bad_port})
+
+    def test_rejects_bool_port(self):
+        # Python's True is an int (1), False is 0 — but accepting them as a
+        # port would let `scope.port=true` pass through as port 1. Reject.
+        with pytest.raises(_RpcError):
+            self._validate({"domain": "foo.com", "port": True})
+        with pytest.raises(_RpcError):
+            self._validate({"domain": "foo.com", "port": False})
+
+    def test_rejects_non_int_port(self):
+        for bad in ("443", 443.0, None):
+            with pytest.raises(_RpcError):
+                self._validate({"domain": "foo.com", "port": bad})
+
+    def test_accepts_subdomain_concrete_domain(self):
+        out = self._validate({"domain": "api.github.com", "port": 80})
+        assert out == {"type": "NETWORK_REACH", "domain": "api.github.com", "port": 80}

@@ -1,6 +1,6 @@
 # Auth broker
 
-**Status:** sketch · **Depends on:** capability-broker, in-desk-rpc, tailnet-identity
+**Status:** sketch · **Depends on:** [capability-broker.md](capability-broker.md), [in-desk-rpc.md](in-desk-rpc.md), [tailnet-identity.md](tailnet-identity.md), [principal-deputy-governance.md](principal-deputy-governance.md) (auth-Harbor *is* the deputy in the principal-deputy-worker triangle; this doc describes one of its responsibilities)
 
 ## Problem
 

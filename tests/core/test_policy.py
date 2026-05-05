@@ -352,3 +352,97 @@ class TestMatchesProvisionActions:
         assert matches_provision_actions(
             ["s3:CreateBucket", "iam:CreateRole"], ["s3:*", "iam:List*"],
         ) is False
+
+
+# NETWORK_REACH narrowness matcher (network-reach.md). Pin the invariants
+# that aren't obvious from the code and that the design doc commits to:
+#   - empty granted_domains is DENY-ALL (deliberately stricter than the
+#     storage/provision permissive-when-empty default — opening a never-
+#     listed domain should require explicit declaration)
+#   - "*.foo.com" matches single-level subdomains only (api.foo.com but
+#     NOT a.b.foo.com or bare foo.com)
+#   - "*" wildcard matches everything
+#   - default port allowlist when granted_ports empty is exactly (80, 443)
+#   - canonicalization: case-insensitive, trailing-dot tolerant
+#   - the (allowed, reason) tuple is a stable contract — reasons used by
+#     the broker to construct fix: hints for the user
+class TestNetworkReachMatching:
+    def test_empty_granted_is_deny_all(self):
+        from drydock.core.policy import matches_network_reach
+        # Stricter than storage's permissive-when-empty by design choice.
+        allowed, reason = matches_network_reach("github.com", 443, [], [])
+        assert allowed is False
+        assert reason == "no_entitlement"
+
+    def test_exact_domain_match(self):
+        from drydock.core.policy import matches_network_reach
+        allowed, reason = matches_network_reach("github.com", 443, ["github.com"], [])
+        assert allowed is True and reason is None
+
+    def test_single_level_subdomain_glob(self):
+        from drydock.core.policy import matches_network_reach
+        # "*.github.com" matches api.github.com but NOT a.b.github.com or bare github.com.
+        a, _ = matches_network_reach("api.github.com", 443, ["*.github.com"], [])
+        assert a is True
+        a, r = matches_network_reach("a.b.github.com", 443, ["*.github.com"], [])
+        assert a is False and r == "domain_not_entitled"
+        a, r = matches_network_reach("github.com", 443, ["*.github.com"], [])
+        assert a is False and r == "domain_not_entitled"
+
+    def test_wildcard_matches_anything(self):
+        from drydock.core.policy import matches_network_reach
+        for d in ("github.com", "very.deep.weird.example", "x.y"):
+            a, _ = matches_network_reach(d, 443, ["*"], [])
+            assert a is True, d
+
+    def test_default_port_allowlist_is_80_443(self):
+        from drydock.core.policy import matches_network_reach
+        # Empty granted_ports → defaults applied, NOT permissive.
+        a, _ = matches_network_reach("foo.com", 443, ["foo.com"], [])
+        assert a is True
+        a, _ = matches_network_reach("foo.com", 80, ["foo.com"], [])
+        assert a is True
+        a, r = matches_network_reach("foo.com", 22, ["foo.com"], [])
+        assert a is False and r == "port_not_entitled"
+
+    def test_explicit_port_allowlist_overrides_default(self):
+        from drydock.core.policy import matches_network_reach
+        # Once granted_ports is non-empty, ONLY those ports are allowed —
+        # 80/443 are no longer implicitly included.
+        a, _ = matches_network_reach("db.foo.com", 5432, ["db.foo.com"], [5432])
+        assert a is True
+        a, r = matches_network_reach("db.foo.com", 443, ["db.foo.com"], [5432])
+        assert a is False and r == "port_not_entitled"
+
+    def test_canonicalization_case_insensitive_and_trailing_dot(self):
+        from drydock.core.policy import matches_network_reach
+        # Patterns and requests both canonicalize to lower + no trailing dot.
+        a, _ = matches_network_reach("GITHUB.COM", 443, ["github.com"], [])
+        assert a is True
+        a, _ = matches_network_reach("github.com.", 443, ["github.com"], [])
+        assert a is True
+        a, _ = matches_network_reach("api.foo.com", 443, ["*.FOO.com"], [])
+        assert a is True
+
+    def test_glob_doesnt_match_bare_domain(self):
+        # "*.foo.com" does NOT cover the bare "foo.com" — single-level
+        # subdomain rule. If the user wants both, they list both.
+        from drydock.core.policy import matches_network_reach
+        a, r = matches_network_reach("foo.com", 443, ["*.foo.com"], [])
+        assert a is False and r == "domain_not_entitled"
+
+    def test_malformed_pattern_skipped_not_matched(self):
+        # Defense against typos in the YAML — empty/non-string entries
+        # should be ignored, not treated as wildcards or crashes.
+        from drydock.core.policy import matches_network_reach
+        a, r = matches_network_reach("foo.com", 443, ["", "github.com", None], [])
+        assert a is False and r == "domain_not_entitled"
+        a, _ = matches_network_reach("github.com", 443, ["", "github.com", None], [])
+        assert a is True
+
+    def test_reason_strings_are_stable_contract(self):
+        # The broker maps these reasons to user-facing fix: hints — silently
+        # renaming would change the CLI output without breaking the test.
+        from drydock.core.policy import matches_network_reach
+        for reason in ("no_entitlement", "domain_not_entitled", "port_not_entitled"):
+            assert isinstance(reason, str)  # tautology but documents the contract

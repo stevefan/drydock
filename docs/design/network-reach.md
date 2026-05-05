@@ -86,7 +86,9 @@ Daemon returns the resolved IPs in the lease so the caller can sanity-check.
 
 V1 ships **additive-only**, no TTL enforcement. Matches `refresh-firewall-allowlist.sh`'s philosophy (stale CDN IPs in the set are harmless because the CDN no longer routes to them). Container restart wipes the additions; project YAML carries the durable allowlist.
 
-V2 (when needed): a daemon-side reaper removes IPs from the ipset after the TTL. Requires the helper to track which IPs came from which lease; deferred until a real use case appears.
+A consequence to know about: calling `ReleaseCapability` on a NETWORK_REACH lease today is **bookkeeping-only**. The lease row is marked revoked and an audit event fires, but the ipset entry stays put. This matches the additive-only model — the worker has no way to "close" a domain it opened — but it's worth being explicit about because SECRET and STORAGE_MOUNT releases *do* clean up materialization.
+
+TTL + per-IP revocation lands as part of [resource-ceilings.md](resource-ceilings.md) Phase C, when `lease_hold_max` and `idle_lease_revoke_after` become general broker primitives. At that point a NETWORK_REACH lease's IPs become reaper-tracked alongside other capability types — no per-feature reaper.
 
 ### Audit
 

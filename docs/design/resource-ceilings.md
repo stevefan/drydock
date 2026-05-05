@@ -1,6 +1,6 @@
 # Resource ceilings + workload registration
 
-**Status:** sketch · **Depends on:** [capability-broker.md](capability-broker.md), [narrowness.md](narrowness.md), [principal-deputy-governance.md](principal-deputy-governance.md), [deskwatch.md](deskwatch.md)
+**Status:** sketch · not yet implemented · **Depends on:** [capability-broker.md](capability-broker.md), [narrowness.md](narrowness.md), [principal-deputy-governance.md](principal-deputy-governance.md), [deskwatch.md](deskwatch.md), [fleet-monitor.md](fleet-monitor.md)
 
 This is the doc that fills out §5(a) and §5(c) of the principal–deputy–worker governance paper: the schema for *resource ceilings* a desk operates under, and the *workload registration* primitive that lets desks legitimately burst above their standing caps without being mistaken for a runaway.
 
@@ -254,6 +254,10 @@ This makes consumption visible without enforcement. Calibration phase — the pr
 - Bidirectional Telegram for escalations (per principal-deputy-governance §5).
 
 Phase C is where the model becomes self-regulating; A and B are the substrate for it.
+
+**Mapping to the principal-deputy roadmap.** Per [principal-deputy-governance.md §6](principal-deputy-governance.md), this work spans roadmap items #1 (resource ceilings + workload registration in `narrowness:`) and #2 (lease TTL + idle revocation, which is Phase C's lease-hold-max enforcement); Phase B's in-desk probe is roadmap item #4. Phase A is the only piece that can ship without the deputy authority surface (item #5) being designed.
+
+**Where cgroup metrics come from.** Phase B's soft observation reads from the in-container `desk-probe` (per [principal-deputy-governance.md §5d](principal-deputy-governance.md)) for process/fd/disk-growth visibility, and from the Harbor's cgroup interface for CPU/memory totals. [fleet-monitor.md](fleet-monitor.md) is *not* extended to gather cgroup stats — it stays focused on liveness/health/CC-token probes; the deputy joins fleet-monitor's signal with desk-probe's snapshot to reach a verdict.
 
 ---
 
