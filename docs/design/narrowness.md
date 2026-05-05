@@ -131,3 +131,26 @@ At spawn time, a rejection emits:
 At lease-request time, the capability handler raises `narrowness_violated` directly; the generic RPC-error audit path covers it. The `data.rule` field on the error matches the `Reject.rule` string so downstream log consumers can classify violations uniformly across spawn and lease.
 
 On allow, a positive event (`desk.spawned` with `narrowness_check: "allow"`, `lease.issued` with the full scope) lands instead. Every grant is audited; every rejection is audited.
+
+---
+
+## 6. Schema reference — every narrowness field in one place
+
+Each row is a per-desk policy field declared in project YAML, persisted in the `workspaces` registry table, and consulted by exactly one matcher at lease time. This is the canonical inventory; per-feature design docs link here rather than re-listing.
+
+| YAML key                          | Registry column                   | Companion fields           | Capability gate                | Matcher                          | Empty-list semantics    | Owning design                                   |
+|---|---|---|---|---|---|---|
+| `delegatable_firewall_domains`    | `delegatable_firewall_domains`    | —                          | (spawn-time only)              | subset check in `validate_spawn` | empty = no delegation   | this doc                                        |
+| `delegatable_secrets`             | `delegatable_secrets`             | —                          | `request_secret_leases`        | `secret_name ∈ set`              | empty = no delegation   | [capability-broker.md](capability-broker.md)    |
+| `delegatable_storage_scopes`      | `delegatable_storage_scopes`      | —                          | `request_storage_leases`       | `matches_storage_scope`          | **permissive**          | [storage-mount.md](storage-mount.md)            |
+| `delegatable_provision_scopes`    | `delegatable_provision_scopes`    | —                          | `request_provision_leases`     | `matches_provision_actions`      | **permissive**          | (V4 Phase B notes)                              |
+| `delegatable_network_reach`       | `delegatable_network_reach`       | `network_reach_ports`      | `request_network_reach`        | `matches_network_reach`          | **deny-all** (stricter) | [network-reach.md](network-reach.md)            |
+
+Two empty-list conventions exist in the codebase, both deliberate:
+
+- **Permissive-when-empty** (storage, provision) preserves pre-narrowness behavior — a desk granted `request_X_leases` keeps working until the principal narrows it. Chosen to avoid breaking existing desks when narrowness was added post-hoc.
+- **Deny-all-when-empty** (network-reach, and the future default for any narrowness field added going forward) — opening egress to a never-listed domain is the kind of expansion that should require explicit declaration. Newer designs default this way; the older permissive defaults are grandfathered.
+
+The `matches_*` functions live in `src/drydock/core/policy.py`. The `_check_capability` + `_policy_list` helpers in `src/drydock/wsd/capability_handlers.py` are the single read-side surface for all of these — every capability handler uses them, so changes propagate without touching per-handler code.
+
+Workload registration ([resource-ceilings.md](resource-ceilings.md) §3) extends this model with *temporary* narrowness lifts: a `WorkloadLease` widens select fields for a declared duration, then they snap back. The schema for that lives in resource-ceilings.md and isn't re-listed here.

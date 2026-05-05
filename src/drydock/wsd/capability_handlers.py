@@ -73,6 +73,34 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _policy_list(policy_row: dict, key: str) -> list:
+    """Pull a JSON-encoded list out of a desk_policy row, defaulting to [].
+
+    Every policy column we read in this module is stored as JSON-text and
+    represents a list (or set, treated as list at the wire boundary). This
+    is the single place that knows about that encoding.
+    """
+    return json.loads(policy_row.get(key) or "[]")
+
+
+def _check_capability(
+    policy_row: dict, kind: "CapabilityKind", *, fix_hint: str,
+) -> None:
+    """Enforce that the desk has been granted `kind` in its capabilities list.
+
+    Raises _RpcError(capability_not_granted) on failure. The fix_hint is the
+    user-facing remediation string surfaced in the error data — usually
+    "Grant <kind.value> in the desk's project YAML capabilities" but worded
+    per call site so it can name the right capability.
+    """
+    capabilities = {CapabilityKind(v) for v in _policy_list(policy_row, "capabilities")}
+    if kind not in capabilities:
+        raise _RpcError(
+            code=-32005, message="capability_not_granted",
+            data={"missing": kind.value, "fix": fix_hint},
+        )
+
+
 def request_capability(
     params: dict | list | None,
     request_id: str | int | None,
@@ -155,19 +183,13 @@ def _handle_network_reach_request(
             raise _RpcError(code=-32001, message="desk_not_found",
                             data={"desk_id": caller_desk_id})
 
-        capabilities_raw = json.loads(policy_row.get("capabilities") or "[]")
-        capabilities = {CapabilityKind(value) for value in capabilities_raw}
-        if CapabilityKind.REQUEST_NETWORK_REACH not in capabilities:
-            raise _RpcError(
-                code=-32005, message="capability_not_granted",
-                data={
-                    "missing": CapabilityKind.REQUEST_NETWORK_REACH.value,
-                    "fix": "Grant request_network_reach in the desk's project YAML capabilities",
-                },
-            )
+        _check_capability(
+            policy_row, CapabilityKind.REQUEST_NETWORK_REACH,
+            fix_hint="Grant request_network_reach in the desk's project YAML capabilities",
+        )
 
-        granted_domains = json.loads(policy_row.get("delegatable_network_reach") or "[]")
-        granted_ports = json.loads(policy_row.get("network_reach_ports") or "[]")
+        granted_domains = _policy_list(policy_row, "delegatable_network_reach")
+        granted_ports = _policy_list(policy_row, "network_reach_ports")
         allowed, reason = matches_network_reach(
             spec["domain"], spec["port"], granted_domains, granted_ports,
         )
@@ -329,18 +351,12 @@ def _handle_secret_request(
             raise _RpcError(code=-32001, message="desk_not_found",
                             data={"desk_id": caller_desk_id})
 
-        capabilities_raw = json.loads(policy_row.get("capabilities") or "[]")
-        capabilities = {CapabilityKind(value) for value in capabilities_raw}
-        if CapabilityKind.REQUEST_SECRET_LEASES not in capabilities:
-            raise _RpcError(
-                code=-32005, message="capability_not_granted",
-                data={
-                    "missing": CapabilityKind.REQUEST_SECRET_LEASES.value,
-                    "fix": "Grant request_secret_leases in the desk's project YAML capabilities",
-                },
-            )
+        _check_capability(
+            policy_row, CapabilityKind.REQUEST_SECRET_LEASES,
+            fix_hint="Grant request_secret_leases in the desk's project YAML capabilities",
+        )
 
-        entitlements = set(json.loads(policy_row.get("delegatable_secrets") or "[]"))
+        entitlements = set(_policy_list(policy_row, "delegatable_secrets"))
         if spec["secret_name"] not in entitlements:
             raise _RpcError(
                 code=-32006, message="narrowness_violated",
@@ -513,22 +529,16 @@ def _handle_storage_request(
             raise _RpcError(code=-32001, message="desk_not_found",
                             data={"desk_id": caller_desk_id})
 
-        capabilities_raw = json.loads(policy_row.get("capabilities") or "[]")
-        capabilities = {CapabilityKind(value) for value in capabilities_raw}
-        if CapabilityKind.REQUEST_STORAGE_LEASES not in capabilities:
-            raise _RpcError(
-                code=-32005, message="capability_not_granted",
-                data={
-                    "missing": CapabilityKind.REQUEST_STORAGE_LEASES.value,
-                    "fix": "Grant request_storage_leases in the desk's project YAML capabilities",
-                },
-            )
+        _check_capability(
+            policy_row, CapabilityKind.REQUEST_STORAGE_LEASES,
+            fix_hint="Grant request_storage_leases in the desk's project YAML capabilities",
+        )
 
         # Phase 1b: per-bucket narrowness. Empty list in the registry
         # means "no narrowness declared" — capability gate alone governs,
         # matching pre-Phase-1b behavior. Once declared, every request
         # must match at least one scope.
-        granted_scopes = json.loads(policy_row.get("delegatable_storage_scopes") or "[]")
+        granted_scopes = _policy_list(policy_row, "delegatable_storage_scopes")
         if not matches_storage_scope(
             {"bucket": spec["bucket"], "prefix": spec["prefix"], "mode": spec["mode"]},
             granted_scopes,
@@ -658,18 +668,12 @@ def _handle_provision_request(
             raise _RpcError(code=-32001, message="desk_not_found",
                             data={"desk_id": caller_desk_id})
 
-        capabilities_raw = json.loads(policy_row.get("capabilities") or "[]")
-        capabilities = {CapabilityKind(value) for value in capabilities_raw}
-        if CapabilityKind.REQUEST_PROVISION_LEASES not in capabilities:
-            raise _RpcError(
-                code=-32005, message="capability_not_granted",
-                data={
-                    "missing": CapabilityKind.REQUEST_PROVISION_LEASES.value,
-                    "fix": "Grant request_provision_leases in the desk's project YAML capabilities",
-                },
-            )
+        _check_capability(
+            policy_row, CapabilityKind.REQUEST_PROVISION_LEASES,
+            fix_hint="Grant request_provision_leases in the desk's project YAML capabilities",
+        )
 
-        granted = json.loads(policy_row.get("delegatable_provision_scopes") or "[]")
+        granted = _policy_list(policy_row, "delegatable_provision_scopes")
         if not matches_provision_actions(spec["actions"], granted):
             raise _RpcError(
                 code=-32006, message="narrowness_violated",
