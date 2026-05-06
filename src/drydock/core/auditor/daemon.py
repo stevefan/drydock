@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 from .scheduler import next_cadence
 from .watch import WatchVerdict, watch_once
+from .measurement import snapshot_harbor
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class DaemonStats:
     last_tick_at: str = ""
     consecutive_errors: int = 0
     cadences_chosen: list[int] = field(default_factory=list)
+    deep_analyses: int = 0  # PA2: count of deep_analyze invocations
+    telegram_escalations: int = 0  # PA2: count of escalations actually sent
 
 
 def run(
@@ -51,6 +54,7 @@ def run(
     sleep_fn=time.sleep,
     next_cadence_fn=next_cadence,
     watch_once_fn=watch_once,
+    deep_analyze_fn=None,  # PA2: triggered when watch flags
     on_iteration_complete=None,
 ) -> DaemonStats:
     """Run the watch loop.
@@ -77,6 +81,11 @@ def run(
     """
     stats = DaemonStats()
     stop_requested = False
+
+    # Lazy default for deep_analyze (so tests can pass mock-or-None)
+    if deep_analyze_fn is None:
+        from .deep import deep_analyze as _real_deep_analyze
+        deep_analyze_fn = _real_deep_analyze
 
     def _sigterm_handler(signum, frame):
         nonlocal stop_requested
@@ -120,6 +129,32 @@ def run(
                     "auditor daemon: tick %d verdict=%s reason=%r",
                     stats.iterations, verdict.verdict, verdict.reason[:80],
                 )
+
+            # PA2: trigger deep analysis when watch flagged.
+            # 'unsure' counts as flagged — better to wake the deeper tier
+            # for nothing than to silently miss something (per design).
+            if verdict.verdict in ("anomaly_suspected", "unsure"):
+                logger.info(
+                    "auditor daemon: tick %d → triggering deep analysis (verdict=%s)",
+                    stats.iterations, verdict.verdict,
+                )
+                try:
+                    snap = snapshot_harbor(registry)
+                    deep_result = deep_analyze_fn(
+                        watch_verdict=verdict, snapshot=snap,
+                    )
+                    stats.deep_analyses += 1
+                    if deep_result.telegram_sent:
+                        stats.telegram_escalations += 1
+                    logger.info(
+                        "auditor daemon: deep verdict=%s telegram_sent=%s",
+                        deep_result.verdict, deep_result.telegram_sent,
+                    )
+                except Exception:
+                    logger.exception(
+                        "auditor daemon: deep analysis raised "
+                        "(verdict logged; continuing)",
+                    )
 
             cadence = next_cadence_fn(registry=registry)
             stats.cadences_chosen.append(cadence)

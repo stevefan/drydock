@@ -175,6 +175,37 @@ def auditor_watch_once(ctx, no_log, no_snapshot):
     out.success(payload, human_lines=human)
 
 
+@auditor.command("deep-log")
+@click.option("--limit", default=10, show_default=True)
+@click.pass_context
+def auditor_deep_log(ctx, limit):
+    """Show recent deep-analysis results (Phase PA2)."""
+    out = ctx.obj["output"]
+    from drydock.core.auditor.deep import read_deep_log
+    items = read_deep_log(limit=limit)
+    payload = {"count": len(items), "deep_analyses": items}
+    if not items:
+        out.success(payload, human_lines=["(no deep analyses logged yet)"])
+        return
+    human = [f"{len(items)} deep analysis result(s):", ""]
+    for d in items:
+        marker = {
+            "action_recommended": "→",
+            "escalate_only": "⚠",
+            "informational": "·",
+            "false_alarm": "·",
+            "error": "✗",
+        }.get(d.get("verdict", ""), "?")
+        sent = " [tg-sent]" if d.get("telegram_sent") else ""
+        human.append(
+            f"  [{marker}] {d.get('analyzed_at', '?')[:19]}  "
+            f"{d.get('verdict', '?'):<20} conf={d.get('confidence', '?')}{sent}"
+        )
+        if d.get("reasoning"):
+            human.append(f"      {d['reasoning'][:120]}")
+    out.success(payload, human_lines=human)
+
+
 @auditor.command("watch-loop")
 @click.option("--max-iterations", type=int, default=None,
               help="Run at most N iterations (default: unbounded)")
@@ -214,12 +245,16 @@ def auditor_watch_loop(ctx, max_iterations):
             "last_tick_at": stats.last_tick_at,
             "consecutive_errors": stats.consecutive_errors,
             "cadences_chosen": stats.cadences_chosen,
+            "deep_analyses": stats.deep_analyses,
+            "telegram_escalations": stats.telegram_escalations,
         },
         human_lines=[
             f"watch loop completed: {stats.iterations} iteration(s)",
-            f"  last verdict: {stats.last_verdict}",
-            f"  last tick:    {stats.last_tick_at}",
-            f"  consecutive errors at exit: {stats.consecutive_errors}",
+            f"  last verdict:        {stats.last_verdict}",
+            f"  last tick:           {stats.last_tick_at}",
+            f"  consecutive errors:  {stats.consecutive_errors}",
+            f"  deep analyses fired: {stats.deep_analyses}",
+            f"  telegram escalations: {stats.telegram_escalations}",
         ],
     )
 
