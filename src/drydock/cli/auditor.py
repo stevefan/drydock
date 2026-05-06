@@ -175,6 +175,55 @@ def auditor_watch_once(ctx, no_log, no_snapshot):
     out.success(payload, human_lines=human)
 
 
+@auditor.command("watch-loop")
+@click.option("--max-iterations", type=int, default=None,
+              help="Run at most N iterations (default: unbounded)")
+@click.pass_context
+def auditor_watch_loop(ctx, max_iterations):
+    """Run the watch loop daemon (foreground).
+
+    Adaptive cadence per scheduler.next_cadence:
+      1 min  — open Telegram thread, active workload
+      2 min  — recent broker activity (last 10 min)
+      5 min  — default
+      15 min — night-time (02:00-06:00 local) OR sustained quiet (1h+)
+
+    Each iteration: snapshot Harbor → call Haiku → record verdict.
+    The verdict is appended to ~/.drydock/auditor/watch_log.jsonl;
+    heartbeat updates on LLM-reachable (any verdict including 'error'
+    from malformed-response).
+
+    Stops on SIGTERM/SIGINT/KeyboardInterrupt. For production, run
+    under systemd / launchd with Restart=on-failure.
+    """
+    out = ctx.obj["output"]
+    registry = ctx.obj["registry"]
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+
+    from drydock.core.auditor.daemon import run as run_daemon
+    try:
+        stats = run_daemon(registry=registry, max_iterations=max_iterations)
+    except KeyboardInterrupt:
+        out.success({"interrupted": True}, human_lines=["watch loop interrupted"])
+        return
+    out.success(
+        {
+            "iterations": stats.iterations,
+            "last_verdict": stats.last_verdict,
+            "last_tick_at": stats.last_tick_at,
+            "consecutive_errors": stats.consecutive_errors,
+            "cadences_chosen": stats.cadences_chosen,
+        },
+        human_lines=[
+            f"watch loop completed: {stats.iterations} iteration(s)",
+            f"  last verdict: {stats.last_verdict}",
+            f"  last tick:    {stats.last_tick_at}",
+            f"  consecutive errors at exit: {stats.consecutive_errors}",
+        ],
+    )
+
+
 @auditor.command("watch-log")
 @click.option("--limit", default=20, show_default=True,
               help="Show only the most recent N verdicts.")
