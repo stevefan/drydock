@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Auditor deadman switch.
+
+Runs periodically (cron / systemd-timer / launchd). Reads the Auditor's
+heartbeat file; if stale beyond threshold, alerts via Telegram. Logs to
+stderr always so the failure mode is observable from journald / launchd
+log even when Telegram is down.
+
+Exit codes:
+  0  — heartbeat fresh OR no Auditor designated (no action needed)
+  1  — heartbeat stale; alert sent (or attempted)
+  2  — heartbeat stale; alert FAILED (Telegram down + log fallback)
+  3  — invocation error (bad arguments)
+
+Usage:
+  auditor-deadman [--threshold-seconds N] [--harbor-name NAME]
+
+Default threshold: 1800s (30 min). Per port-auditor.md, this is much longer
+than the Auditor's 5-min default watch cadence so we don't false-alarm on
+brief delays; long enough to give breathing room for transient slowness.
+
+Per docs/design/port-auditor.md: "the failure-detector for the LLM agent
+must NOT itself be an LLM agent." This script is pure deterministic Python.
+"""
+
+from __future__ import annotations
+
+import argparse
+import platform
+import sys
+from datetime import datetime, timezone
+
+# This script is deployed as a standalone executable; import path needs
+# to find the drydock package. Falls back to system-installed pipx version.
+try:
+    from drydock.core.auditor.heartbeat import (
+        HEARTBEAT_PATH, is_stale, last_heartbeat, staleness_seconds,
+    )
+    from drydock.core.telegram import is_configured, send_with_fallback
+except ImportError:
+    print(
+        "auditor-deadman: cannot import drydock package; "
+        "is `pipx install drydock` complete on this Harbor?",
+        file=sys.stderr,
+    )
+    sys.exit(3)
+
+
+DEFAULT_THRESHOLD_SECONDS = 1800  # 30 min, per port-auditor.md
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="auditor-deadman",
+        description="Alert via Telegram when Auditor heartbeat goes stale.",
+    )
+    parser.add_argument(
+        "--threshold-seconds", type=int, default=DEFAULT_THRESHOLD_SECONDS,
+        help=f"Staleness threshold in seconds (default: {DEFAULT_THRESHOLD_SECONDS})",
+    )
+    parser.add_argument(
+        "--harbor-name", default=None,
+        help="Harbor name for the alert message (default: hostname)",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="Suppress 'all good' stderr output; only log on alert.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.threshold_seconds < 1:
+        print("auditor-deadman: --threshold-seconds must be >= 1", file=sys.stderr)
+        return 3
+
+    last = last_heartbeat()
+    if last is None:
+        # No Auditor designated yet (heartbeat file never created).
+        # Silent — don't alert the principal that they haven't built the
+        # Auditor; that's not a failure mode worth waking them for.
+        if not args.quiet:
+            print(
+                f"auditor-deadman: no heartbeat at {HEARTBEAT_PATH} "
+                "(no Auditor designated yet — skipping check)",
+                file=sys.stderr,
+            )
+        return 0
+
+    age = staleness_seconds() or 0
+    if not is_stale(args.threshold_seconds):
+        if not args.quiet:
+            print(
+                f"auditor-deadman: heartbeat fresh "
+                f"(last={last.isoformat()}, age={int(age)}s, "
+                f"threshold={args.threshold_seconds}s)",
+                file=sys.stderr,
+            )
+        return 0
+
+    # Stale — compose alert and send.
+    harbor = args.harbor_name or platform.node() or "unknown"
+    message = (
+        f"🔴 Auditor on {harbor} hasn't checked in for {int(age // 60)} min. "
+        f"Drydock is supposedly running but observation has gone dark. "
+        f"Last heartbeat: {last.isoformat()} (threshold: {args.threshold_seconds // 60} min)."
+    )
+    print(f"auditor-deadman: ALERT — {message}", file=sys.stderr)
+
+    if not is_configured():
+        print(
+            "auditor-deadman: telegram not configured — "
+            "alert logged to stderr only. To enable telegram alerts, place "
+            "the bot token + chat_id at ~/.drydock/daemon-secrets/telegram_*",
+            file=sys.stderr,
+        )
+        return 2
+
+    sent, channel = send_with_fallback(message)
+    if sent:
+        print(f"auditor-deadman: alert sent via {channel}", file=sys.stderr)
+        return 1
+    print(f"auditor-deadman: alert FAILED via telegram; channel={channel}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
