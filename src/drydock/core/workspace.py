@@ -22,6 +22,10 @@ class Workspace:
     created_at: str = ""
     updated_at: str = ""
     config: dict = field(default_factory=dict)
+    # Phase 0 (project-dock-ontology.md): SHA-256 of the project YAML
+    # at the moment this Drydock's policy was last pinned (create or
+    # `ws project reload`). Empty string = never pinned (legacy row).
+    pinned_yaml_sha256: str = ""
 
     def __post_init__(self):
         if not self.id:

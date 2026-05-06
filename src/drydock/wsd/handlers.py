@@ -984,6 +984,11 @@ def _perform_create(
     overlay_config = _overlay_from_spec(spec)
     overlay_config_data = _overlay_config_data(spec)
     workspace_subdir = str(spec.get("workspace_subdir") or "")
+    # Phase 0 (project-dock-ontology.md): pin the SHA of the project YAML
+    # at create-time so `ws host audit` can surface drift later if the
+    # YAML changes without a `ws project reload`.
+    from drydock.core.project_yaml_sha import compute_project_yaml_sha
+    pinned_yaml_sha256 = compute_project_yaml_sha(str(spec["project"]))
     ws = Workspace(
         name=str(spec["name"]),
         project=str(spec["project"]),
@@ -1013,6 +1018,9 @@ def _perform_create(
     )
     if parent_desk_id is not None:
         ws = registry.update_workspace(ws.name, parent_desk_id=parent_desk_id)
+
+    if pinned_yaml_sha256:
+        ws = registry.update_workspace(ws.name, pinned_yaml_sha256=pinned_yaml_sha256)
 
     checkout_path = create_checkout(ws)
     ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))

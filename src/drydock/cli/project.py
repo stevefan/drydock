@@ -128,6 +128,13 @@ def project_reload(ctx, name, no_regenerate):
     if delegation_kwargs:
         registry.update_desk_delegations(name, **delegation_kwargs)
 
+    # Phase 0 (project-dock-ontology.md): re-pin the YAML SHA so the
+    # next `ws host audit` correctly shows in_sync rather than drifted.
+    from drydock.core.project_yaml_sha import compute_project_yaml_sha
+    new_sha = compute_project_yaml_sha(ws.project)
+    if new_sha:
+        registry.update_workspace(name, pinned_yaml_sha256=new_sha)
+
     overlay_path: Path | None = None
     if not no_regenerate:
         # Re-fetch so the overlay regen sees the updated config JSON.

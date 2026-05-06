@@ -285,6 +285,19 @@ def _describe_desk(registry: Registry, ws) -> dict:
             resources_hard = {}
     except (json.JSONDecodeError, TypeError):
         resources_hard = {}
+
+    # Phase 0 (project-dock-ontology.md): YAML drift detection. Compare
+    # the pinned SHA against the current project YAML's SHA. Surfaces
+    # the silent-drift class of bug where principal edited YAML but
+    # forgot to `ws project reload`.
+    from drydock.core.project_yaml_sha import (
+        compute_project_yaml_sha,
+        yaml_drift_status,
+    )
+    pinned_sha = getattr(ws, "pinned_yaml_sha256", "") or ""
+    current_sha = compute_project_yaml_sha(ws.project)
+    drift = yaml_drift_status(pinned_sha, current_sha)
+
     return {
         "name": ws.name,
         "id": ws.id,
@@ -301,6 +314,9 @@ def _describe_desk(registry: Registry, ws) -> dict:
         "resources_hard":              resources_hard,
         "secrets_count": secrets_count,
         "project_yaml_mtime": yaml_mtime,
+        "pinned_yaml_sha256": pinned_sha[:12] if pinned_sha else None,
+        "current_yaml_sha256": current_sha[:12] if current_sha else None,
+        "yaml_drift": drift,
     }
 
 

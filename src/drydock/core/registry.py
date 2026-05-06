@@ -62,6 +62,12 @@ V2_WORKSPACE_COLUMNS = (
     # Phase A hard resource ceilings (cpu_max, memory_max, pids_max).
     # JSON dict; empty {} = no cgroup ceiling. See resource-ceilings.md.
     ("resources_hard", "TEXT DEFAULT '{}'"),
+    # Phase 0 of project-dock-ontology.md: SHA-256 of the project YAML
+    # at the moment this Drydock's policy was last pinned (create or
+    # reload). Compared against the current YAML's SHA in `ws host audit`
+    # to surface silent drift between the YAML on disk and the registry's
+    # pinned snapshot. Empty string = unknown (e.g., legacy row).
+    ("pinned_yaml_sha256", "TEXT DEFAULT ''"),
 )
 
 V2_TABLES = """

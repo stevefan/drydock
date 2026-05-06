@@ -433,6 +433,18 @@ def _format_audit_human(audit: dict) -> list[str]:
             if rh:
                 rh_bits = [f"{k}={v}" for k, v in rh.items()]
                 lines.append(f"        ceilings: {', '.join(rh_bits)}")
+            # Phase 0: surface YAML drift between pinned and current.
+            drift = desk.get("yaml_drift")
+            if drift in ("drifted", "yaml_missing"):
+                pinned = desk.get("pinned_yaml_sha256") or "?"
+                current = desk.get("current_yaml_sha256") or "missing"
+                marker = "⚠" if drift == "drifted" else "✗"
+                msg = (
+                    f"YAML EDITED since pin (pinned={pinned}, current={current}) — run `ws project reload {desk['name']}`"
+                    if drift == "drifted"
+                    else f"YAML FILE MISSING (pinned={pinned}) — restore or destroy this drydock"
+                )
+                lines.append(f"        [{marker}] yaml drift: {msg}")
     lines.append("")
 
     # ---- leases ----
