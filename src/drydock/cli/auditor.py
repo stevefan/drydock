@@ -135,6 +135,70 @@ def auditor_metrics(ctx, dock):
     out.success(payload, human_lines=_format_dock_summary(payload))
 
 
+@auditor.command("watch-once")
+@click.option("--no-log", is_flag=True, help="Don't append to watch_log.jsonl")
+@click.option("--no-snapshot", is_flag=True,
+              help="Don't persist the snapshot (still uses it for the LLM call)")
+@click.pass_context
+def auditor_watch_once(ctx, no_log, no_snapshot):
+    """Run one watch-loop tick: snapshot, LLM classify, record verdict.
+
+    Phase PA1 — single-tick classification by a cheap-class LLM (Haiku).
+    Decides routine / anomaly_suspected / unsure. Does not take action;
+    does not escalate to principal. Output is the input to the (later)
+    deep-analysis tier.
+
+    Requires anthropic API key at ~/.drydock/daemon-secrets/anthropic_api_key.
+    Without it, returns an error verdict; deadman switch will fire if
+    repeated calls fail (heartbeat won't update on error).
+    """
+    out = ctx.obj["output"]
+    registry = ctx.obj["registry"]
+    from drydock.core.auditor.watch import watch_once
+
+    verdict = watch_once(
+        registry=registry,
+        write_to_log=not no_log,
+        write_snapshot_to_disk=not no_snapshot,
+    )
+    payload = verdict.to_dict()
+    human = [
+        f"verdict: {verdict.verdict}",
+        f"  reason: {verdict.reason or '(none)'}",
+    ]
+    if verdict.drydocks_of_concern:
+        human.append(f"  drydocks_of_concern: {', '.join(verdict.drydocks_of_concern)}")
+    if verdict.input_tokens or verdict.output_tokens:
+        human.append(f"  tokens: in={verdict.input_tokens} out={verdict.output_tokens}")
+    if verdict.error:
+        human.append(f"  ⚠ error: {verdict.error}")
+    out.success(payload, human_lines=human)
+
+
+@auditor.command("watch-log")
+@click.option("--limit", default=20, show_default=True,
+              help="Show only the most recent N verdicts.")
+@click.pass_context
+def auditor_watch_log(ctx, limit):
+    """Show recent watch-loop verdicts."""
+    out = ctx.obj["output"]
+    from drydock.core.auditor.watch import read_watch_log
+    verdicts = read_watch_log(limit=limit)
+    payload = {"count": len(verdicts), "verdicts": verdicts}
+    if not verdicts:
+        out.success(payload, human_lines=["(no watch verdicts logged yet — run `ws auditor watch-once`)"])
+        return
+    human = [f"{len(verdicts)} verdict(s):", ""]
+    for v in verdicts:
+        marker = {"routine": "·", "anomaly_suspected": "⚠",
+                  "unsure": "?", "error": "✗"}.get(v.get("verdict"), "?")
+        human.append(
+            f"  [{marker}] {v.get('tick_at', '?')[:19]}  "
+            f"{v.get('verdict', '?'):<18} {v.get('reason', '')[:80]}"
+        )
+    out.success(payload, human_lines=human)
+
+
 @auditor.command("prune")
 @click.option("--keep", required=True, type=int,
               help="Number of most-recent snapshots to keep.")

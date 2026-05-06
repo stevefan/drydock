@@ -27,12 +27,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-HEARTBEAT_PATH = Path.home() / ".drydock" / "auditor" / "heartbeat"
-
-
 def heartbeat_path() -> Path:
-    """Returns the heartbeat file path. Helper for testability."""
-    return HEARTBEAT_PATH
+    """Returns the heartbeat file path. Resolved lazily so tests can
+    monkeypatch HOME after import."""
+    return Path.home() / ".drydock" / "auditor" / "heartbeat"
+
+
+# Backwards-compat alias for code that imported the constant. NEW code
+# should call heartbeat_path() to get a fresh resolution.
+HEARTBEAT_PATH = heartbeat_path()
 
 
 def touch(path: Path | None = None) -> None:
@@ -40,14 +43,14 @@ def touch(path: Path | None = None) -> None:
 
     Called by the Auditor's watch loop on every cycle. Idempotent.
     """
-    p = path or HEARTBEAT_PATH
+    p = path or heartbeat_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.touch()
 
 
 def last_heartbeat(path: Path | None = None) -> datetime | None:
     """Return the heartbeat file's last-modified time, or None if absent."""
-    p = path or HEARTBEAT_PATH
+    p = path or heartbeat_path()
     if not p.exists():
         return None
     return datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
@@ -72,7 +75,8 @@ def is_stale(threshold_seconds: int, path: Path | None = None) -> bool:
     matters for alerting behavior: don't wake the principal because they
     haven't built the Auditor yet.
     """
-    last = last_heartbeat(path)
+    p = path or heartbeat_path()
+    last = last_heartbeat(p)
     if last is None:
         return False  # Never seen a heartbeat → no Auditor to monitor → silent
     age = (datetime.now(timezone.utc) - last).total_seconds()
