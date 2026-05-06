@@ -73,6 +73,47 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Phase A1 (conservative): every capability request creates a side-effect
+# amendment record so the principal can review the audit trail via
+# `ws amendment list`. Successful grants → status='auto_approved'.
+# Policy-failures (narrowness, capability-not-granted) → status='escalated'.
+# Infrastructure failures (backend down, materialization OS error) do
+# NOT emit amendments — those are operational issues, not policy decisions.
+#
+# This is a side-effect only — the caller's response shape is unchanged.
+# Phase A1-full (envelope-as-request, callers get amendment_id back) is
+# a deferred follow-up; Phase A1-conservative gives the principal
+# visibility without breaking any caller.
+def _emit_capability_amendment(
+    registry: Registry,
+    *,
+    kind: str,
+    request: dict,
+    caller_desk_id: str,
+    status: str,
+    reason: str | None = None,
+) -> None:
+    """Side-effect: record a capability-request amendment. Never raises."""
+    try:
+        registry.create_amendment(
+            kind=kind,
+            request=request,
+            proposed_by_type="dockworker",
+            proposed_by_id=caller_desk_id,
+            drydock_id=caller_desk_id,
+            reason=reason,
+            status=status,
+        )
+    except Exception:
+        # Amendment recording is observability — must not crash the
+        # capability handler. Log but don't escalate.
+        logger.exception(
+            "wsd: failed to emit capability amendment "
+            "(caller=%s kind=%s status=%s) — capability path continues",
+            caller_desk_id, kind, status,
+        )
+
+
 def _policy_list(policy_row: dict, key: str) -> list:
     """Pull a JSON-encoded list out of a desk_policy row, defaulting to [].
 
@@ -226,6 +267,12 @@ def _handle_network_reach_request(
                 "port_not_entitled":
                     f"Add port {spec['port']} to network_reach_ports (default allowlist is [80, 443])",
             }
+            _emit_capability_amendment(
+                registry, kind="network_reach",
+                request={"domain": spec["domain"], "port": spec["port"]},
+                caller_desk_id=caller_desk_id, status="escalated",
+                reason=f"narrowness_violated: {reason}",
+            )
             raise _RpcError(
                 code=-32006, message="narrowness_violated",
                 data={**audit_detail, "fix": fix_map.get(reason, "Tighten/widen the Dock's network_reach policy")},
@@ -281,6 +328,12 @@ def _handle_network_reach_request(
             issuer="wsd",
         )
         registry.insert_lease(lease)
+        _emit_capability_amendment(
+            registry, kind="network_reach",
+            request={"domain": spec["domain"], "port": spec["port"]},
+            caller_desk_id=caller_desk_id, status="auto_approved",
+            reason="within_policy" + (" (wildcard grant)" if is_wildcard_grant else ""),
+        )
         logger.info(
             "wsd: NETWORK_REACH lease issued lease_id=%s desk_id=%s domain=%s port=%s wildcard=%s",
             lease.lease_id, caller_desk_id, spec["domain"], spec["port"], is_wildcard_grant,
@@ -358,6 +411,13 @@ def _handle_secret_request(
 
         entitlements = set(_policy_list(policy_row, "delegatable_secrets"))
         if spec["secret_name"] not in entitlements:
+            _emit_capability_amendment(
+                registry, kind="secret_grant",
+                request={"secret_name": spec["secret_name"],
+                         "source_desk_id": spec.get("source_desk_id")},
+                caller_desk_id=caller_desk_id, status="escalated",
+                reason="narrowness_violated: secret_not_entitled",
+            )
             raise _RpcError(
                 code=-32006, message="narrowness_violated",
                 data={
@@ -452,6 +512,13 @@ def _handle_secret_request(
             issuer="wsd",
         )
         registry.insert_lease(lease)
+        _emit_capability_amendment(
+            registry, kind="secret_grant",
+            request={"secret_name": spec["secret_name"],
+                     "source_desk_id": source_desk_id},
+            caller_desk_id=caller_desk_id, status="auto_approved",
+            reason="within_policy",
+        )
         logger.info(
             "wsd: capability lease issued lease_id=%s desk_id=%s secret=%s",
             lease.lease_id, caller_desk_id, spec["secret_name"],
@@ -543,6 +610,13 @@ def _handle_storage_request(
             {"bucket": spec["bucket"], "prefix": spec["prefix"], "mode": spec["mode"]},
             granted_scopes,
         ):
+            _emit_capability_amendment(
+                registry, kind="storage_grant",
+                request={"bucket": spec["bucket"], "prefix": spec["prefix"],
+                         "mode": spec["mode"]},
+                caller_desk_id=caller_desk_id, status="escalated",
+                reason="narrowness_violated: storage_scope_not_entitled",
+            )
             raise _RpcError(
                 code=-32006, message="narrowness_violated",
                 data={
@@ -602,6 +676,13 @@ def _handle_storage_request(
             issuer="wsd",
         )
         registry.insert_lease(lease)
+        _emit_capability_amendment(
+            registry, kind="storage_grant",
+            request={"bucket": spec["bucket"], "prefix": spec["prefix"],
+                     "mode": spec["mode"]},
+            caller_desk_id=caller_desk_id, status="auto_approved",
+            reason="within_policy",
+        )
         logger.info(
             "wsd: storage lease issued lease_id=%s desk_id=%s bucket=%s prefix=%s mode=%s",
             lease.lease_id, caller_desk_id, spec["bucket"], spec["prefix"], spec["mode"],
@@ -675,6 +756,12 @@ def _handle_provision_request(
 
         granted = _policy_list(policy_row, "delegatable_provision_scopes")
         if not matches_provision_actions(spec["actions"], granted):
+            _emit_capability_amendment(
+                registry, kind="provision_grant",
+                request={"actions": list(spec["actions"])},
+                caller_desk_id=caller_desk_id, status="escalated",
+                reason="narrowness_violated: provision_actions_not_entitled",
+            )
             raise _RpcError(
                 code=-32006, message="narrowness_violated",
                 data={
@@ -725,6 +812,12 @@ def _handle_provision_request(
             issuer="wsd",
         )
         registry.insert_lease(lease)
+        _emit_capability_amendment(
+            registry, kind="provision_grant",
+            request={"actions": list(spec["actions"])},
+            caller_desk_id=caller_desk_id, status="auto_approved",
+            reason="within_policy",
+        )
         logger.info(
             "wsd: provision lease issued lease_id=%s desk_id=%s actions=%s",
             lease.lease_id, caller_desk_id, spec["actions"],

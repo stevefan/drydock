@@ -834,3 +834,64 @@ class TestValidateNetworkReachScope:
     def test_accepts_subdomain_concrete_domain(self):
         out = self._validate({"domain": "api.github.com", "port": 80})
         assert out == {"type": "NETWORK_REACH", "domain": "api.github.com", "port": 80}
+
+
+# Phase A1 (conservative): every capability request creates a side-effect
+# amendment record. Successful grants → status='auto_approved'. Policy
+# failures (narrowness violations) → status='escalated'. Test the load-
+# bearing properties:
+# - Amendment created on success path; right kind + status + drydock_id
+# - Amendment created on narrowness violation; status='escalated'
+# - Amendment-recording failure does NOT crash the capability handler
+class TestAmendmentSideEffects:
+    def test_successful_secret_creates_auto_approved_amendment(self, env):
+        request_capability(
+            _params(secret="anthropic_api_key"), "rid", env["desk_id"],
+            registry_path=env["db"], secrets_root=env["secrets_root"],
+        )
+        amendments = env["registry"].list_amendments()
+        # At least one amendment recorded for the success
+        assert len(amendments) >= 1
+        match = [a for a in amendments
+                 if a["kind"] == "secret_grant" and a["status"] == "auto_approved"]
+        assert len(match) == 1
+        assert match[0]["drydock_id"] == env["desk_id"]
+        assert match[0]["request"]["secret_name"] == "anthropic_api_key"
+
+    def test_narrowness_violation_creates_escalated_amendment(self, env):
+        # Request a secret NOT in delegatable_secrets; should escalate
+        with pytest.raises(_RpcError) as exc:
+            request_capability(
+                _params(secret="not_in_entitlements"), "rid", env["desk_id"],
+                registry_path=env["db"], secrets_root=env["secrets_root"],
+            )
+        assert exc.value.message == "narrowness_violated"
+
+        amendments = env["registry"].list_amendments(status="escalated")
+        match = [a for a in amendments if a["kind"] == "secret_grant"]
+        assert len(match) == 1
+        assert match[0]["drydock_id"] == env["desk_id"]
+        assert match[0]["request"]["secret_name"] == "not_in_entitlements"
+        assert "narrowness_violated" in (match[0]["reason"] or "")
+
+    def test_amendment_failure_does_not_break_capability_handler(
+        self, env, monkeypatch,
+    ):
+        # If amendment recording raises, capability handler must still
+        # succeed (or fail) per its own logic. Tests the never-crash
+        # contract from _emit_capability_amendment's docstring.
+        from drydock.wsd import capability_handlers as ch
+
+        original = ch.Registry.create_amendment
+
+        def boom(self, **kwargs):
+            raise RuntimeError("amendment table corrupted, oh no")
+
+        monkeypatch.setattr(ch.Registry, "create_amendment", boom)
+        # Capability handler should still succeed despite amendment failure
+        result = request_capability(
+            _params(secret="anthropic_api_key"), "rid", env["desk_id"],
+            registry_path=env["db"], secrets_root=env["secrets_root"],
+        )
+        assert result["type"] == "SECRET"
+        assert result["lease_id"].startswith("ls_")
