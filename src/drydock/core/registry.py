@@ -68,7 +68,34 @@ V2_WORKSPACE_COLUMNS = (
     # to surface silent drift between the YAML on disk and the registry's
     # pinned snapshot. Empty string = unknown (e.g., legacy row).
     ("pinned_yaml_sha256", "TEXT DEFAULT ''"),
+    # Phase Y0 of yard.md: optional FK to yards.id. NULL = standalone
+    # Drydock (not in any Yard). Member-of-Yard for shared budget /
+    # secrets / network is a Phase Y1+ feature; this column just
+    # records membership.
+    ("yard_id", "TEXT DEFAULT NULL"),
 )
+
+# Yards (Phase Y0): grouping of related Drydocks with shared substrate.
+# The `config` JSON carries shared-substrate declarations (shared_secrets,
+# shared_budget, internal_network). Empty {} for Phase Y0; populated as
+# Y1-Y4 land. See docs/design/yard.md.
+V4_TABLES = """
+CREATE TABLE IF NOT EXISTS yards (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    repo_path       TEXT NULL,
+    config          TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_yard_id
+    ON workspaces (yard_id);
+"""
+
+
+def _migrate_to_v4(conn: sqlite3.Connection) -> None:
+    conn.executescript(V4_TABLES)
 
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
@@ -159,6 +186,7 @@ class Registry:
         self._conn.executescript(SCHEMA)
         _migrate_to_v2(self._conn)
         _migrate_to_v3(self._conn)
+        _migrate_to_v4(self._conn)
         self._conn.commit()
 
     def close(self):
@@ -576,6 +604,93 @@ class Registry:
         if not isinstance(mounts, list):
             return []
         return [value for value in mounts if isinstance(value, str)]
+
+    # ----- Yards (Phase Y0 of yard.md) -----
+
+    def create_yard(
+        self, name: str, *, repo_path: str | None = None, config: dict | None = None,
+    ) -> dict:
+        """Register a new Yard. Idempotent on (name); raises on duplicate."""
+        existing = self.get_yard(name)
+        if existing:
+            raise WsError(
+                f"Yard '{name}' already exists",
+                fix=f"Use a different name, or destroy it first: ws yard destroy {name}",
+            )
+        slug = name.replace("-", "_").replace(" ", "_")
+        yard_id = f"yd_{slug}"
+        now = datetime.now(timezone.utc).isoformat()
+        cfg_json = json.dumps(config or {})
+        self._conn.execute(
+            """INSERT INTO yards (id, name, repo_path, config, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (yard_id, name, repo_path, cfg_json, now, now),
+        )
+        self._conn.commit()
+        return {
+            "id": yard_id, "name": name, "repo_path": repo_path,
+            "config": config or {}, "created_at": now, "updated_at": now,
+        }
+
+    def get_yard(self, name: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM yards WHERE name = ?", (name,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["config"] = json.loads(d["config"])
+        return d
+
+    def get_yard_by_id(self, yard_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM yards WHERE id = ?", (yard_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["config"] = json.loads(d["config"])
+        return d
+
+    def list_yards(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM yards ORDER BY created_at",
+        ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            d["config"] = json.loads(d["config"])
+            out.append(d)
+        return out
+
+    def list_yard_members(self, yard_id: str) -> list[Workspace]:
+        rows = self._conn.execute(
+            "SELECT * FROM workspaces WHERE yard_id = ? ORDER BY name",
+            (yard_id,),
+        ).fetchall()
+        return [self._row_to_workspace(row) for row in rows]
+
+    def destroy_yard(self, name: str, *, with_members: bool = False) -> int:
+        """Remove a Yard. Refuses if members exist unless with_members=True
+        (in which case sets their yard_id to NULL — does NOT destroy the
+        member Drydocks themselves; that's a separate destructive op).
+        Returns the number of members detached. Raises if Yard not found."""
+        yard = self.get_yard(name)
+        if yard is None:
+            raise WsError(f"Yard '{name}' not found", fix="Check `ws yard list`")
+        members = self.list_yard_members(yard["id"])
+        if members and not with_members:
+            raise WsError(
+                f"Yard '{name}' has {len(members)} member drydock(s); refusing to destroy",
+                fix=f"Re-run with --with-members to detach them, or remove members first",
+            )
+        for m in members:
+            self._conn.execute(
+                "UPDATE workspaces SET yard_id = NULL WHERE id = ?", (m.id,),
+            )
+        self._conn.execute("DELETE FROM yards WHERE id = ?", (yard["id"],))
+        self._conn.commit()
+        return len(members)
 
     def _row_to_workspace(self, row: sqlite3.Row) -> Workspace:
         d = dict(row)

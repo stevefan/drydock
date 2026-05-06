@@ -77,6 +77,8 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["network_reach_ports"] = proj_cfg.network_reach_ports
     if proj_cfg.resources_hard:
         params["resources_hard"] = proj_cfg.resources_hard
+    if proj_cfg.yard:
+        params["yard"] = proj_cfg.yard
     if proj_cfg.extra_env:
         params["extra_env"] = proj_cfg.extra_env
     if proj_cfg.storage_mounts:

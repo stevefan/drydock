@@ -426,6 +426,16 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
                 data={"field": "resources_hard", "reason": str(exc)},
             )
 
+    # Phase Y0 (yard.md): optional yard membership. Validated string;
+    # existence-check happens at create time (so the error has the
+    # right "register yard first" fix hint, with access to the registry).
+    yard_name = params.get("yard")
+    if yard_name is not None and not isinstance(yard_name, str):
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "yard", "reason": "must be a string or null"},
+        )
+
     workspace_subdir = params.get("workspace_subdir") or ""
     if not isinstance(workspace_subdir, str):
         raise _RpcError(
@@ -464,6 +474,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "delegatable_network_reach": delegatable_network_reach,
         "network_reach_ports": network_reach_ports,
         "resources_hard": resources_hard_raw,
+        "yard": yard_name,
     }
 
 
@@ -1021,6 +1032,19 @@ def _perform_create(
 
     if pinned_yaml_sha256:
         ws = registry.update_workspace(ws.name, pinned_yaml_sha256=pinned_yaml_sha256)
+
+    # Phase Y0: opt the new Drydock into a Yard if the Project declared one.
+    # Yard must already exist (registered via `ws yard create`); otherwise
+    # raise so the user sees a clear remediation.
+    yard_name = spec.get("yard")
+    if yard_name:
+        yard_row = registry.get_yard(str(yard_name))
+        if yard_row is None:
+            raise WsError(
+                f"Project declares yard '{yard_name}' but no such Yard is registered",
+                fix=f"Register the Yard first: ws yard create {yard_name}",
+            )
+        ws = registry.update_workspace(ws.name, yard_id=yard_row["id"])
 
     checkout_path = create_checkout(ws)
     ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))

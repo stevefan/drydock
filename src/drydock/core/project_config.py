@@ -34,6 +34,7 @@ KNOWN_KEYS = {
     "resources_hard",
     "storage_mounts",
     "deskwatch",
+    "yard",
 }
 
 
@@ -81,6 +82,10 @@ class ProjectConfig:
     # ceiling at this layer (substrate default applies). Validated by
     # core.resource_ceilings.HardCeilings.from_dict.
     resources_hard: dict = field(default_factory=dict)
+    # Phase Y0 (yard.md): optional Yard membership. The Yard must exist
+    # at create time (registered via `ws yard create`); otherwise
+    # `ws create` errors with a fix hint. None / "" = standalone Drydock.
+    yard: str | None = None
     # Declarative S3 mounts; expand_storage_mounts fills in the capability,
     # scope, and firewall entries each one implies. See storage-mount.md.
     storage_mounts: list[dict] = field(default_factory=list)
@@ -161,6 +166,7 @@ def load_project_config(
         delegatable_network_reach=raw.get("delegatable_network_reach", []),
         network_reach_ports=raw.get("network_reach_ports", []),
         resources_hard=raw.get("resources_hard") or {},
+        yard=raw.get("yard") or None,
         storage_mounts=raw.get("storage_mounts", []),
         deskwatch=raw.get("deskwatch") or {},
     )

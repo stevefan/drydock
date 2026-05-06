@@ -26,6 +26,11 @@ class Workspace:
     # at the moment this Drydock's policy was last pinned (create or
     # `ws project reload`). Empty string = never pinned (legacy row).
     pinned_yaml_sha256: str = ""
+    # Phase Y0 (yard.md): optional Yard membership. None = standalone.
+    # FK to yards.id; not enforced at the SQLite level (SQLite FKs need
+    # PRAGMA foreign_keys=ON which we don't currently set), but enforced
+    # in code by checking yard existence at create.
+    yard_id: str | None = None
 
     def __post_init__(self):
         if not self.id:
