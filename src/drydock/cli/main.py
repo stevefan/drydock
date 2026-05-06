@@ -51,6 +51,7 @@ from drydock.cli.deskwatch import deskwatch, deskwatch_events, deskwatch_record 
 from drydock.cli.harbors import harbors  # noqa: E402
 from drydock.cli.yard import yard  # noqa: E402
 from drydock.cli.auditor import auditor  # noqa: E402
+from drydock.cli.amendment import amendment  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(upgrade)
@@ -77,3 +78,4 @@ cli.add_command(deskwatch_events, name="deskwatch-events")
 cli.add_command(harbors)
 cli.add_command(yard)
 cli.add_command(auditor)
+cli.add_command(amendment)

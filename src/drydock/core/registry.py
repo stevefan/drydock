@@ -97,6 +97,44 @@ CREATE INDEX IF NOT EXISTS idx_workspaces_yard_id
 def _migrate_to_v4(conn: sqlite3.Connection) -> None:
     conn.executescript(V4_TABLES)
 
+
+# Amendments (Phase A0 of amendment-contract.md): structured proposals
+# for infrastructure changes. Three classes: principal-direct (auto-approve),
+# Dockworker-within-policy (Authority auto-applies), Dockworker-novel
+# (Auditor escalates to principal). A0 is just the schema + CRUD; A1
+# adds the auto-approval gate by hooking capability handlers.
+V5_TABLES = """
+CREATE TABLE IF NOT EXISTS amendments (
+    id                  TEXT PRIMARY KEY,
+    proposed_by_type    TEXT NOT NULL CHECK (proposed_by_type IN ('principal', 'dockworker')),
+    proposed_by_id      TEXT NOT NULL,
+    proposed_at         TEXT NOT NULL,
+    yard_id             TEXT NULL,
+    drydock_id          TEXT NULL,
+    kind                TEXT NOT NULL,
+    request_json        TEXT NOT NULL,
+    reason              TEXT NULL,
+    tos_notes           TEXT NULL,
+    status              TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'auto_approved', 'escalated',
+                                          'approved', 'denied', 'applied', 'expired')),
+    reviewed_by         TEXT NULL,
+    reviewed_at         TEXT NULL,
+    review_note         TEXT NULL,
+    applied_at          TEXT NULL,
+    expires_at          TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_amendments_status
+    ON amendments (status, proposed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_amendments_drydock
+    ON amendments (drydock_id, proposed_at DESC);
+"""
+
+
+def _migrate_to_v5(conn: sqlite3.Connection) -> None:
+    conn.executescript(V5_TABLES)
+
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
     lease_id            TEXT PRIMARY KEY,
@@ -187,6 +225,7 @@ class Registry:
         _migrate_to_v2(self._conn)
         _migrate_to_v3(self._conn)
         _migrate_to_v4(self._conn)
+        _migrate_to_v5(self._conn)
         self._conn.commit()
 
     def close(self):
@@ -691,6 +730,134 @@ class Registry:
         self._conn.execute("DELETE FROM yards WHERE id = ?", (yard["id"],))
         self._conn.commit()
         return len(members)
+
+    # ----- Amendments (Phase A0 of amendment-contract.md) -----
+
+    def create_amendment(
+        self,
+        *,
+        kind: str,
+        request: dict,
+        proposed_by_type: str,
+        proposed_by_id: str,
+        drydock_id: str | None = None,
+        yard_id: str | None = None,
+        reason: str | None = None,
+        tos_notes: str | None = None,
+        expires_at: str | None = None,
+        status: str = "pending",
+    ) -> dict:
+        """Insert a new amendment. Returns the created record (incl. id).
+
+        ID format: am_<8-char-hex> (random) for V0; could become content-
+        addressable hash later if dedup matters.
+        """
+        import uuid
+        amendment_id = f"am_{uuid.uuid4().hex[:8]}"
+        proposed_at = datetime.now(timezone.utc).isoformat()
+        request_json = json.dumps(request)
+        self._conn.execute(
+            """INSERT INTO amendments
+               (id, proposed_by_type, proposed_by_id, proposed_at,
+                yard_id, drydock_id, kind, request_json, reason,
+                tos_notes, status, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (amendment_id, proposed_by_type, proposed_by_id, proposed_at,
+             yard_id, drydock_id, kind, request_json, reason,
+             tos_notes, status, expires_at),
+        )
+        self._conn.commit()
+        return self.get_amendment(amendment_id)
+
+    def get_amendment(self, amendment_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM amendments WHERE id = ?", (amendment_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["request"] = json.loads(d.pop("request_json"))
+        return d
+
+    def list_amendments(
+        self,
+        *,
+        status: str | None = None,
+        drydock_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """List amendments, optionally filtered. Newest first."""
+        clauses = []
+        params: list = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if drydock_id:
+            clauses.append("drydock_id = ?")
+            params.append(drydock_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        rows = self._conn.execute(
+            f"SELECT * FROM amendments {where} "
+            f"ORDER BY proposed_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            d["request"] = json.loads(d.pop("request_json"))
+            out.append(d)
+        return out
+
+    def update_amendment_status(
+        self,
+        amendment_id: str,
+        *,
+        status: str,
+        reviewed_by: str | None = None,
+        review_note: str | None = None,
+        applied_at: str | None = None,
+    ) -> dict:
+        """Update amendment status + review fields. Returns updated record."""
+        now = datetime.now(timezone.utc).isoformat()
+        # Set reviewed_at if reviewed_by is provided AND it's not yet set
+        existing = self.get_amendment(amendment_id)
+        if existing is None:
+            raise WsError(f"Amendment {amendment_id} not found",
+                          fix="Check `ws amendment list` for valid IDs")
+        reviewed_at = existing.get("reviewed_at")
+        if reviewed_by and not reviewed_at:
+            reviewed_at = now
+        self._conn.execute(
+            """UPDATE amendments
+               SET status = ?,
+                   reviewed_by = COALESCE(?, reviewed_by),
+                   reviewed_at = COALESCE(?, reviewed_at),
+                   review_note = COALESCE(?, review_note),
+                   applied_at = COALESCE(?, applied_at)
+               WHERE id = ?""",
+            (status, reviewed_by, reviewed_at, review_note, applied_at,
+             amendment_id),
+        )
+        self._conn.commit()
+        return self.get_amendment(amendment_id)
+
+    def expire_old_pending_amendments(
+        self, *, now: datetime | None = None,
+    ) -> int:
+        """Mark expired any pending amendments past their expires_at.
+        Returns count expired. Idempotent."""
+        cutoff = (now or datetime.now(timezone.utc)).isoformat()
+        cur = self._conn.execute(
+            """UPDATE amendments
+               SET status = 'expired'
+               WHERE status IN ('pending', 'escalated')
+                 AND expires_at IS NOT NULL
+                 AND expires_at < ?""",
+            (cutoff,),
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     def _row_to_workspace(self, row: sqlite3.Row) -> Workspace:
         d = dict(row)
