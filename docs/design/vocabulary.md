@@ -172,6 +172,20 @@ Three buckets of action, each with a different authority shape:
 
 The principal is the manager. A formal "Harbormaster" manager role is a deferred future addition, not a V3 requirement.
 
+### Principal-protective friction — Forms A/B/C
+
+Even Bucket 3 (principal-only) actions can carry friction the principal pre-commits to. This is NOT the system overriding the principal — it's the system making principal-mistakes deliberate rather than impossible. Three forms:
+
+- **Form A — Informational note (light, never-blocking).** Auditor adds a one-line context to the principal's intended action ("⚠️ auction-crawl has 50GB unbacked state; you mentioned wanting to preserve it 2 days ago. Proceed?"). Principal can ignore, query, or confirm. Cost: one screen of text. Value: did I notice?
+- **Form B — Typed confirmation (declared, pre-committed).** Principal pre-commits in standing policy: "any destroy command requires typing the Dock name to confirm." AWS S3 bucket-deletion pattern. Bypassable per-session ("incident mode for the next 30min, skip these").
+- **Form C — Mandatory cooldown (declared, highest-stakes).** Principal pre-commits: "any production database deletion has a 60s cooldown; reply CANCEL to abort." The only way to skip the cooldown is to update the standing policy first (which has its own friction). The "second-key" pattern from launch-authorization systems.
+
+The rule: **friction makes principal-mistakes deliberate, not impossible.** Veto is never available — Form A bypasses with one word, Form B bypasses by typing the confirmation, Form C waits out the cooldown but still proceeds. The principal can always do what they want; they just have to look it in the eye first.
+
+Anti-paternalism guards: defaults light (most actions get no friction), self-tuning (Form A notes that get bypassed 100% should fire less often), per-session opt-out (incident mode), and never false confidence ("I checked, looks good" is forbidden — Auditor only says "here's what I noticed").
+
+See [principal-friction.md](principal-friction.md) for the full model.
+
 ### DryDock owns the harness; Ships own their isolation
 - Network policy enforced at the DryDock harness (proxy, NETWORK_REACH grants). One change at the harness level affects all Ships.
 - Each Ship is its own security boundary internally. Compromised Ship doesn't see siblings' state.
