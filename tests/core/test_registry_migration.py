@@ -5,7 +5,7 @@ import pytest
 from drydock.core.registry import Registry
 
 V1_WORKSPACES_SCHEMA = """
-CREATE TABLE workspaces (
+CREATE TABLE drydocks (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL UNIQUE,
     project         TEXT NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE workspaces (
 """
 
 EXPECTED_V2_COLUMNS = {
-    "parent_desk_id": "NULL",
+    "parent_drydock_id": "NULL",
     "delegatable_firewall_domains": "'[]'",
     "delegatable_secrets": "'[]'",
     "capabilities": "'[]'",
@@ -47,10 +47,10 @@ def _create_v1_registry(db_path):
     return conn
 
 
-def _workspace_columns(conn):
+def _drydock_columns(conn):
     return {
         row["name"]: row["dflt_value"]
-        for row in conn.execute("PRAGMA table_info('workspaces')").fetchall()
+        for row in conn.execute("PRAGMA table_info('drydocks')").fetchall()
     }
 
 
@@ -70,14 +70,14 @@ def test_registry_migrates_v1_schema_and_preserves_existing_rows(tmp_path):
     conn = _create_v1_registry(db_path)
     conn.execute(
         """
-        INSERT INTO workspaces
+        INSERT INTO drydocks
             (id, name, project, repo_path, worktree_path, branch, base_ref,
              state, container_id, workspace_subdir, image, owner,
              created_at, updated_at, config)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            "ws_legacy",
+            "dock_legacy",
             "legacy",
             "proj",
             "/srv/code/proj",
@@ -100,15 +100,15 @@ def test_registry_migrates_v1_schema_and_preserves_existing_rows(tmp_path):
     registry = Registry(db_path=db_path)
 
     migrated_conn = _connect(db_path)
-    columns = _workspace_columns(migrated_conn)
+    columns = _drydock_columns(migrated_conn)
     for column_name, default_value in EXPECTED_V2_COLUMNS.items():
         assert columns[column_name] == default_value
     assert EXPECTED_V2_TABLES.issubset(_user_tables(migrated_conn))
 
     row = migrated_conn.execute(
-        "SELECT * FROM workspaces WHERE name = ?", ("legacy",)
+        "SELECT * FROM drydocks WHERE name = ?", ("legacy",)
     ).fetchone()
-    assert row["id"] == "ws_legacy"
+    assert row["id"] == "dock_legacy"
     assert row["project"] == "proj"
     assert row["repo_path"] == "/srv/code/proj"
     assert row["worktree_path"] == "/tmp/worktree"
@@ -121,14 +121,14 @@ def test_registry_migrates_v1_schema_and_preserves_existing_rows(tmp_path):
     assert row["created_at"] == "2026-04-14T00:00:00+00:00"
     assert row["updated_at"] == "2026-04-14T01:00:00+00:00"
     assert row["config"] == '{"k":"v"}'
-    assert row["parent_desk_id"] is None
+    assert row["parent_drydock_id"] is None
     assert row["delegatable_firewall_domains"] == "[]"
     assert row["delegatable_secrets"] == "[]"
     assert row["capabilities"] == "[]"
 
-    fetched = registry.get_workspace("legacy")
+    fetched = registry.get_drydock("legacy")
     assert fetched is not None
-    assert fetched.id == "ws_legacy"
+    assert fetched.id == "dock_legacy"
     assert fetched.project == "proj"
     assert fetched.state == "running"
 
@@ -145,7 +145,7 @@ def test_registry_migration_is_idempotent_on_reopen(tmp_path):
     registry.close()
 
     first_conn = _connect(db_path)
-    first_columns = _workspace_columns(first_conn)
+    first_columns = _drydock_columns(first_conn)
     first_tables = _user_tables(first_conn)
     first_conn.close()
 
@@ -153,7 +153,7 @@ def test_registry_migration_is_idempotent_on_reopen(tmp_path):
     registry.close()
 
     second_conn = _connect(db_path)
-    second_columns = _workspace_columns(second_conn)
+    second_columns = _drydock_columns(second_conn)
     second_tables = _user_tables(second_conn)
     second_conn.close()
 
@@ -169,7 +169,7 @@ def test_registry_creates_fresh_db_with_v2_schema(tmp_path):
     registry.close()
 
     conn = _connect(db_path)
-    columns = _workspace_columns(conn)
+    columns = _drydock_columns(conn)
     for column_name, default_value in EXPECTED_V2_COLUMNS.items():
         assert columns[column_name] == default_value
     assert EXPECTED_V2_TABLES.issubset(_user_tables(conn))
@@ -185,7 +185,7 @@ def test_v2_tables_accept_valid_rows_and_reject_invalid_constraints(tmp_path):
     conn.execute(
         """
         INSERT INTO leases
-            (lease_id, desk_id, type, scope, issued_at, expiry, issuer, revoked, revocation_reason)
+            (lease_id, drydock_id, type, scope, issued_at, expiry, issuer, revoked, revocation_reason)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
@@ -195,7 +195,7 @@ def test_v2_tables_accept_valid_rows_and_reject_invalid_constraints(tmp_path):
             '{"secret_name":"api_key"}',
             "2026-04-14T00:00:00+00:00",
             None,
-            "wsd",
+            "daemon",
             0,
             None,
         ),
@@ -203,7 +203,7 @@ def test_v2_tables_accept_valid_rows_and_reject_invalid_constraints(tmp_path):
     conn.execute(
         """
         INSERT INTO tokens
-            (desk_id, token_sha256, issued_at, rotated_at)
+            (drydock_id, token_sha256, issued_at, rotated_at)
         VALUES (?, ?, ?, ?)
         """,
         ("desk-1", "abc123", "2026-04-14T00:00:00+00:00", None),
@@ -230,7 +230,7 @@ def test_v2_tables_accept_valid_rows_and_reject_invalid_constraints(tmp_path):
         conn.execute(
             """
             INSERT INTO leases
-                (lease_id, desk_id, type, scope, issued_at, expiry, issuer, revoked, revocation_reason)
+                (lease_id, drydock_id, type, scope, issued_at, expiry, issuer, revoked, revocation_reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -240,7 +240,7 @@ def test_v2_tables_accept_valid_rows_and_reject_invalid_constraints(tmp_path):
                 '{"secret_name":"other"}',
                 "2026-04-14T00:00:00+00:00",
                 None,
-                "wsd",
+                "daemon",
                 0,
                 None,
             ),
@@ -250,7 +250,7 @@ def test_v2_tables_accept_valid_rows_and_reject_invalid_constraints(tmp_path):
         conn.execute(
             """
             INSERT INTO tokens
-                (desk_id, token_sha256, issued_at, rotated_at)
+                (drydock_id, token_sha256, issued_at, rotated_at)
             VALUES (?, ?, ?, ?)
             """,
             ("desk-1", "def456", "2026-04-14T00:05:00+00:00", None),

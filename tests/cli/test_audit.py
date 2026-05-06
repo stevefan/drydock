@@ -22,20 +22,20 @@ class TestAuditCli:
     def test_routes_to_daemon_with_filter_params(self, mock_call):
         mock_call.return_value = {
             "events": [
-                {"ts": "2026-04-16T10:00:00+00:00", "event": "desk.created",
-                 "principal": "ws_a", "method": "CreateDesk",
-                 "result": "ok", "details": {"desk_id": "ws_a"}},
+                {"ts": "2026-04-16T10:00:00+00:00", "event": "drydock.created",
+                 "principal": "dock_a", "method": "CreateDesk",
+                 "result": "ok", "details": {"drydock_id": "dock_a"}},
             ],
             "next_before_ts": None,
         }
-        result = _invoke(["--limit", "5", "--event", "desk.created", "--principal", "ws_a"])
+        result = _invoke(["--limit", "5", "--event", "drydock.created", "--principal", "dock_a"])
         assert result.exit_code == 0
         called_with = mock_call.call_args.args
         assert called_with[0] == "GetAudit"
         params = called_with[1]
         assert params["limit"] == 5
-        assert params["event"] == "desk.created"
-        assert params["principal"] == "ws_a"
+        assert params["event"] == "drydock.created"
+        assert params["principal"] == "dock_a"
 
     @patch("drydock.cli.audit.call_daemon")
     def test_omits_unset_filters_from_params(self, mock_call):
@@ -50,7 +50,7 @@ class TestAuditCli:
     def test_falls_back_to_direct_read_when_daemon_unavailable(
         self, mock_call, tmp_path, monkeypatch
     ):
-        from drydock.cli._wsd_client import DaemonUnavailable
+        from drydock.cli._daemon_client import DaemonUnavailable
         from drydock.core import audit as audit_module
 
         mock_call.side_effect = DaemonUnavailable("socket_missing")
@@ -59,12 +59,12 @@ class TestAuditCli:
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(json.dumps({
             "ts": "2026-04-16T10:00:00+00:00",
-            "event": "desk.created",
-            "principal": "ws_a",
+            "event": "drydock.created",
+            "principal": "dock_a",
             "request_id": None,
             "method": "CreateDesk",
             "result": "ok",
-            "details": {"desk_id": "ws_a"},
+            "details": {"drydock_id": "dock_a"},
         }) + "\n")
         monkeypatch.setattr(audit_module, "DEFAULT_LOG_PATH", log)
 
@@ -72,7 +72,7 @@ class TestAuditCli:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert len(data["events"]) == 1
-        assert data["events"][0]["event"] == "desk.created"
+        assert data["events"][0]["event"] == "drydock.created"
 
     @patch("drydock.cli.audit.call_daemon")
     def test_passes_through_pagination_cursor(self, mock_call):

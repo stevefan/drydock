@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from drydock.cli.upgrade import upgrade
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 from drydock.output.formatter import Output
 
 
@@ -40,14 +40,14 @@ def env(tmp_path):
     repo = _init_project_repo(tmp_path, "v1.0.5")
     db_path = tmp_path / "registry.db"
     registry = Registry(db_path=db_path)
-    ws = Workspace(
+    ws = Drydock(
         name="myws",
         project="myproj",
         repo_path=str(repo),
         branch="ws/myws",
         base_ref="HEAD",
     )
-    registry.create_workspace(ws)
+    registry.create_drydock(ws)
     out = Output(force_json=True)
     return {"registry": registry, "repo": repo, "out": out, "ws": ws}
 
@@ -62,7 +62,7 @@ def _invoke(env, *args):
 
 
 class TestUpgrade:
-    def test_workspace_not_found(self, env):
+    def test_drydock_not_found(self, env):
         result = _invoke(env, "nonexistent", "--to", "v1.0.7")
         assert result.exit_code == 1
         assert "not found" in (result.output + (result.stderr_bytes or b"").decode()).lower()
@@ -74,7 +74,7 @@ class TestUpgrade:
         assert "--to" in combined
 
     def test_dockerfile_missing(self, env, tmp_path):
-        env["registry"].update_workspace("myws", repo_path=str(tmp_path / "nope"))
+        env["registry"].update_drydock("myws", repo_path=str(tmp_path / "nope"))
         result = _invoke(env, "myws", "--to", "v1.0.7")
         assert result.exit_code == 1
         combined = result.output + (result.stderr_bytes or b"").decode()
@@ -109,7 +109,7 @@ class TestUpgrade:
         # First call (DestroyDesk) -> {}, second (CreateDesk) -> result dict
         mock_call.side_effect = [
             {},
-            {"name": "myws", "container_id": "newcid", "desk_id": "d1",
+            {"name": "myws", "container_id": "newcid", "drydock_id": "d1",
              "project": "myproj", "branch": "ws/myws", "state": "running"},
         ]
 

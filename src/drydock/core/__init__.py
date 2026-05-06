@@ -1,4 +1,4 @@
-"""Drydock core — workspace model, registry, and orchestration primitives."""
+"""Drydock core — drydock model, registry, and orchestration primitives."""
 
 import logging
 import os

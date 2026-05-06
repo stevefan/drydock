@@ -131,7 +131,7 @@ def build_user_context(
     )
     audit_lines = []
     for d in (watch_verdict.drydocks_of_concern or []):
-        # Resolve dock name → desk_id
+        # Resolve dock name → drydock_id
         dock_id = None
         for d_data in snapshot.drydocks:
             if d_data["name"] == d:

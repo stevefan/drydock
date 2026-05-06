@@ -1,6 +1,6 @@
-"""wsd.toml configuration loader (Slice 3d + V4 Phase 1).
+"""daemon.toml configuration loader (Slice 3d + V4 Phase 1).
 
-Per docs/v2-design-protocol.md §6 the daemon reads `~/.drydock/wsd.toml`
+Per docs/v2-design-protocol.md §6 the daemon reads `~/.drydock/daemon.toml`
 at startup. Sections:
 
     [secrets]
@@ -32,7 +32,7 @@ from pathlib import Path
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover — package metadata pins requires-python >= 3.11
-    raise RuntimeError("wsd requires Python 3.11+ for tomllib")
+    raise RuntimeError("daemon requires Python 3.11+ for tomllib")
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ DEFAULT_STORAGE_SESSION_DURATION = 14400
 
 
 class ConfigError(ValueError):
-    """Raised for malformed or rejected wsd.toml content."""
+    """Raised for malformed or rejected daemon.toml content."""
 
 
 @dataclass(frozen=True)
@@ -59,7 +59,7 @@ class WsdConfig:
 
 
 def load_wsd_config(path: Path) -> WsdConfig:
-    """Load wsd.toml. Returns defaults if the file is absent.
+    """Load daemon.toml. Returns defaults if the file is absent.
 
     Raises ConfigError for:
     - malformed TOML

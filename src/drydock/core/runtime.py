@@ -1,11 +1,11 @@
-"""Workspace domain model."""
+"""Drydock domain model."""
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 
 @dataclass
-class Workspace:
+class Drydock:
     name: str
     project: str
     repo_path: str
@@ -38,7 +38,7 @@ class Workspace:
             # sufficient identifier on its own. Project is metadata, not part
             # of the id.
             name_slug = self.name.replace("-", "_").replace(" ", "_")
-            self.id = f"ws_{name_slug}"
+            self.id = f"dock_{name_slug}"
         now = datetime.now(timezone.utc).isoformat()
         if not self.created_at:
             self.created_at = now

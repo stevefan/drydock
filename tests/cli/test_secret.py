@@ -8,18 +8,18 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from drydock.cli.secret import secret
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 from drydock.output.formatter import Output
 
 
 def _registry(ws=None):
     r = MagicMock()
-    r.get_workspace.return_value = ws
+    r.get_drydock.return_value = ws
     return r
 
 
 def _make_ws():
-    return Workspace(name="test-ws", project="proj", repo_path="/tmp/repo")
+    return Drydock(name="test-ws", project="proj", repo_path="/tmp/repo")
 
 
 def _invoke(subcmd_args, registry=None, input=None):
@@ -41,7 +41,7 @@ class TestSet:
 
         assert result.exit_code == 0
         data = json.loads(result.output)
-        secret_path = tmp_path / "ws_test_ws" / "API_KEY"
+        secret_path = tmp_path / "dock_test_ws" / "API_KEY"
         assert secret_path.read_text() == "s3cret"
         assert stat.S_IMODE(secret_path.stat().st_mode) == 0o400
         assert data["bytes"] == 6
@@ -53,17 +53,17 @@ class TestSet:
         with patch("drydock.cli.secret._secrets_root", return_value=tmp_path):
             _invoke(["set", "test-ws", "K"], registry=reg, input="v")
 
-        parent = tmp_path / "ws_test_ws"
+        parent = tmp_path / "dock_test_ws"
         assert stat.S_IMODE(parent.stat().st_mode) == 0o700
 
-    def test_warns_when_workspace_not_in_registry(self, tmp_path):
+    def test_warns_when_drydock_not_in_registry(self, tmp_path):
         reg = _registry(None)
         with patch("drydock.cli.secret._secrets_root", return_value=tmp_path):
             result = _invoke(["set", "new-ws", "K"], registry=reg, input="v")
 
         assert result.exit_code == 0
         assert "warning" in result.stderr or "warning" in (result.output + (result.stderr or ""))
-        assert (tmp_path / "ws_new_ws" / "K").exists()
+        assert (tmp_path / "dock_new_ws" / "K").exists()
 
     def test_empty_stdin_is_error(self, tmp_path):
         reg = _registry(_make_ws())
@@ -72,10 +72,10 @@ class TestSet:
 
         assert result.exit_code == 1
 
-    # Regression: workspace names flow into ssh/rsync remote-command strings on
+    # Regression: drydock names flow into ssh/rsync remote-command strings on
     # push. Before validation, a name like "foo;touch /tmp/pwned" would derive a
-    # ws_id carrying shell metachars and execute on the remote host.
-    def test_unsafe_workspace_name_rejected(self, tmp_path):
+    # dock_id carrying shell metachars and execute on the remote host.
+    def test_unsafe_drydock_name_rejected(self, tmp_path):
         reg = _registry(None)  # unregistered → slug-derivation path
         with patch("drydock.cli.secret._secrets_root", return_value=tmp_path):
             result = _invoke(["set", "foo;touch /tmp/pwn", "K"], registry=reg, input="v")
@@ -101,7 +101,7 @@ class TestSet:
 
 class TestList:
     def test_returns_names_and_metadata(self, tmp_path):
-        secret_dir = tmp_path / "ws_test_ws"
+        secret_dir = tmp_path / "dock_test_ws"
         secret_dir.mkdir(parents=True)
         f = secret_dir / "DB_PASS"
         f.write_text("hidden")
@@ -132,7 +132,7 @@ class TestList:
 
 class TestRm:
     def test_removes_file(self, tmp_path):
-        secret_dir = tmp_path / "ws_test_ws"
+        secret_dir = tmp_path / "dock_test_ws"
         secret_dir.mkdir(parents=True)
         (secret_dir / "TOKEN").write_text("x")
 
@@ -157,7 +157,7 @@ class TestRm:
 
 class TestPush:
     def test_dry_run_does_not_execute(self, tmp_path):
-        secret_dir = tmp_path / "ws_test_ws"
+        secret_dir = tmp_path / "dock_test_ws"
         secret_dir.mkdir(parents=True)
         (secret_dir / "K").write_text("v")
 

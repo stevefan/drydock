@@ -19,8 +19,8 @@ def _init_repo(path: Path, *, with_devcontainer: bool = True) -> None:
     subprocess.run(["git", "commit", "-m", "initial"], cwd=path, capture_output=True, check=True)
 
 
-def _create_desk(wsd, repo: Path, name: str, request_id: str) -> dict:
-    response = wsd.call_rpc(
+def _create_desk(daemon, repo: Path, name: str, request_id: str) -> dict:
+    response = daemon.call_rpc(
         "CreateDesk",
         params={"project": "proj", "name": name, "repo_path": str(repo)},
         request_id=request_id,
@@ -30,13 +30,13 @@ def _create_desk(wsd, repo: Path, name: str, request_id: str) -> dict:
 
 # Contract: ListDesks returns desks that were created via CreateDesk.
 # Fails if registry reads are wired incorrectly or serialization drifts.
-def test_list_desks_returns_created_desks(wsd):
-    repo = wsd.home / "repo"
+def test_list_desks_returns_created_desks(daemon):
+    repo = daemon.home / "repo"
     _init_repo(repo)
-    _create_desk(wsd, repo, "desk-a", "req-a")
-    _create_desk(wsd, repo, "desk-b", "req-b")
+    _create_desk(daemon, repo, "desk-a", "req-a")
+    _create_desk(daemon, repo, "desk-b", "req-b")
 
-    response = wsd.call_rpc("ListDesks", request_id="req-list")
+    response = daemon.call_rpc("ListDesks", request_id="req-list")
     result = response["result"]
 
     assert "desks" in result
@@ -46,21 +46,21 @@ def test_list_desks_returns_created_desks(wsd):
 
 
 # Contract: ListChildren returns only children of the specified parent,
-# not all desks. Fails if parent_desk_id filtering is broken.
-def test_list_children_returns_only_children(wsd):
-    repo = wsd.home / "repo"
+# not all desks. Fails if parent_drydock_id filtering is broken.
+def test_list_children_returns_only_children(daemon):
+    repo = daemon.home / "repo"
     _init_repo(repo)
 
     # Create a parent desk and get its token for auth
-    parent = _create_desk(wsd, repo, "parent-desk", "req-parent")
-    parent_id = parent["desk_id"]
+    parent = _create_desk(daemon, repo, "parent-desk", "req-parent")
+    parent_id = parent["drydock_id"]
 
     # Read the token from the secrets dir
-    token_path = wsd.secrets_root / parent_id / "drydock-token"
+    token_path = daemon.secrets_root / parent_id / "drydock-token"
     token = token_path.read_text()
 
     # Spawn a child via SpawnChild (authenticated)
-    child_resp = wsd.call_rpc(
+    child_resp = daemon.call_rpc(
         "SpawnChild",
         params={"project": "proj", "name": "child-desk", "repo_path": str(repo)},
         request_id="req-child",
@@ -69,10 +69,10 @@ def test_list_children_returns_only_children(wsd):
     assert "result" in child_resp
 
     # Create an unrelated desk (not a child of parent)
-    _create_desk(wsd, repo, "unrelated-desk", "req-unrelated")
+    _create_desk(daemon, repo, "unrelated-desk", "req-unrelated")
 
     # ListChildren with explicit parent_id
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "ListChildren",
         params={"parent_id": parent_id},
         request_id="req-list-children",
@@ -86,14 +86,14 @@ def test_list_children_returns_only_children(wsd):
     assert "unrelated-desk" not in child_names
 
 
-# Contract: InspectDesk returns the full workspace dict for an existing desk.
+# Contract: InspectDesk returns the full drydock dict for an existing desk.
 # Fails if to_dict() wiring or lookup logic drifts.
-def test_inspect_desk_returns_full_dict(wsd):
-    repo = wsd.home / "repo"
+def test_inspect_desk_returns_full_dict(daemon):
+    repo = daemon.home / "repo"
     _init_repo(repo)
-    created = _create_desk(wsd, repo, "desk-inspect", "req-inspect-create")
+    created = _create_desk(daemon, repo, "desk-inspect", "req-inspect-create")
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "InspectDesk",
         params={"name": "desk-inspect"},
         request_id="req-inspect",
@@ -102,7 +102,7 @@ def test_inspect_desk_returns_full_dict(wsd):
 
     assert result["name"] == "desk-inspect"
     assert result["project"] == "proj"
-    assert result["id"] == created["desk_id"]
+    assert result["id"] == created["drydock_id"]
     # to_dict() includes these structural fields
     assert "state" in result
     assert "config" in result
@@ -110,8 +110,8 @@ def test_inspect_desk_returns_full_dict(wsd):
 
 # Contract: InspectDesk returns desk_not_found for a missing desk.
 # Fails if the error code or shape drifts from the protocol.
-def test_inspect_desk_not_found(wsd):
-    response = wsd.call_rpc(
+def test_inspect_desk_not_found(daemon):
+    response = daemon.call_rpc(
         "InspectDesk",
         params={"name": "no-such-desk"},
         request_id="req-missing",
@@ -121,19 +121,19 @@ def test_inspect_desk_not_found(wsd):
 
 
 # Contract: StopDesk on a running desk returns state=suspended.
-# Uses the wsd fixture which runs in dry_run mode (no real container stop).
-def test_stop_desk_returns_suspended(wsd):
-    repo = wsd.home / "repo"
+# Uses the drydock daemon fixture which runs in dry_run mode (no real container stop).
+def test_stop_desk_returns_suspended(daemon):
+    repo = daemon.home / "repo"
     _init_repo(repo)
-    created = _create_desk(wsd, repo, "desk-stop", "req-stop-create")
+    created = _create_desk(daemon, repo, "desk-stop", "req-stop-create")
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "StopDesk",
         params={"name": "desk-stop"},
         request_id="req-stop",
     )
     result = response["result"]
 
-    assert result["desk_id"] == created["desk_id"]
+    assert result["drydock_id"] == created["drydock_id"]
     assert result["name"] == "desk-stop"
     assert result["state"] == "suspended"

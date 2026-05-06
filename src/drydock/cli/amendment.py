@@ -50,7 +50,7 @@ def amendment_list(ctx, status, dock, limit):
     registry = ctx.obj["registry"]
     drydock_id = None
     if dock:
-        ws = registry.get_workspace(dock)
+        ws = registry.get_drydock(dock)
         if ws is None:
             out.error(WsError(
                 f"Drydock '{dock}' not found",
@@ -136,13 +136,13 @@ def amendment_file(ctx, kind, request_json, as_principal, as_dock, reason,
     drydock_id = None
     yard_id = None
     if dock:
-        ws = registry.get_workspace(dock)
+        ws = registry.get_drydock(dock)
         if ws is None:
             out.error(WsError(f"Drydock '{dock}' not found", fix="Check `ws list`"))
             return
         drydock_id = ws.id
     elif as_dock:
-        ws = registry.get_workspace(as_dock)
+        ws = registry.get_drydock(as_dock)
         if ws is None:
             out.error(WsError(f"Drydock '{as_dock}' not found", fix="Check `ws list`"))
             return
@@ -161,7 +161,7 @@ def amendment_file(ctx, kind, request_json, as_principal, as_dock, reason,
         # Principal-authored amendments default to 'approved' (no review gate)
         initial_status = "approved" if as_principal else "pending"
     else:
-        ws = registry.get_workspace(as_dock)
+        ws = registry.get_drydock(as_dock)
         proposed_by_type = "dockworker"
         proposed_by_id = ws.id
         initial_status = "pending"  # Per A0: no auto-approval yet

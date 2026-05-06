@@ -2,13 +2,13 @@
 
 V1 channel is plain SSH: each probe shells out to ``ssh <target> 'ws ... --json'``
 on the remote Harbor. This reuses existing SSH-key topology (already proven by
-``scripts/mac/claude-refresh.sh``) and avoids extending ``wsd`` with a
+``scripts/mac/claude-refresh.sh``) and avoids extending ``drydock daemon`` with a
 tailnet-facing listener for the first cut. Upgrade path: tailnet-served HTTPS
-to the wsd Unix socket once per-call SSH overhead actually hurts.
+to the drydock daemon Unix socket once per-call SSH overhead actually hurts.
 
 Probe set (V1):
 
-* ``daemon`` — ``ws daemon status`` round-trip; verifies wsd is responsive.
+* ``daemon`` — ``drydock daemon status`` round-trip; verifies the daemon is responsive.
 * ``desks`` — ``ws list``; rolls up state per declared peer-desk.
 * ``deskwatch`` — ``ws deskwatch <desk>``; per-Dock workload health.
 * ``cc_liveness`` — ``ws exec <desk> -- timeout 30 claude -p ":"``; the
@@ -144,7 +144,7 @@ def _run_ssh(target: str, remote_cmd: str, timeout: int) -> tuple[int, str, str]
 def probe_daemon(peer: PeerSpec) -> ProbeResult:
     t0 = time.monotonic()
     code, stdout, stderr = _run_ssh(
-        peer.ssh_target, "ws daemon status --json", SSH_TIMEOUT_DEFAULT,
+        peer.ssh_target, "drydock daemon status --json", SSH_TIMEOUT_DEFAULT,
     )
     elapsed = int((time.monotonic() - t0) * 1000)
     if code == 124 or code == 255:
@@ -165,7 +165,7 @@ def probe_daemon(peer: PeerSpec) -> ProbeResult:
     except json.JSONDecodeError:
         return ProbeResult(
             peer=peer.host, desk=None, kind="daemon",
-            status="failed", detail="non-JSON response from ws daemon status",
+            status="failed", detail="non-JSON response from drydock daemon status",
             elapsed_ms=elapsed,
         )
     return ProbeResult(
@@ -196,7 +196,7 @@ def probe_desks(peer: PeerSpec) -> ProbeResult:
             status="failed", detail="non-JSON response from ws list",
             elapsed_ms=elapsed,
         )
-    desks = data if isinstance(data, list) else data.get("workspaces", [])
+    desks = data if isinstance(data, list) else data.get("drydocks", [])
     return ProbeResult(
         peer=peer.host, desk=None, kind="desks",
         status="ok", detail=f"{len(desks)} desk(s)",

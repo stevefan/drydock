@@ -32,7 +32,7 @@ from drydock.core.auditor.watch import (
     watch_once,
 )
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 
 @pytest.fixture
@@ -51,8 +51,8 @@ def isolated_home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _ws(name: str) -> Workspace:
-    return Workspace(
+def _ws(name: str) -> Drydock:
+    return Drydock(
         name=name, project=name, repo_path="/tmp/r",
         worktree_path=f"/tmp/{name}", branch=f"ws/{name}",
         state="running", container_id=f"cid_{name}",
@@ -116,7 +116,7 @@ class TestParseVerdict:
 
 class TestFormatSnapshot:
     def test_produces_valid_json(self, registry):
-        registry.create_workspace(_ws("a"))
+        registry.create_drydock(_ws("a"))
         from drydock.core.auditor.measurement import snapshot_harbor
         snap = snapshot_harbor(registry, hostname="test")
         result = format_snapshot_for_llm(snap)
@@ -141,7 +141,7 @@ class TestWatchOnce:
         assert verdict.output_tokens == 20
 
     def test_anomaly_verdict_path(self, registry, isolated_home):
-        registry.create_workspace(_ws("auction-crawl"))
+        registry.create_drydock(_ws("auction-crawl"))
         client = MockLLMClient(responses=[LLMResponse(
             text='{"verdict": "anomaly_suspected", "reason": "egress 8x", "drydocks_of_concern": ["auction-crawl"]}',
         )])

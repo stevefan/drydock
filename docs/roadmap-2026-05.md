@@ -14,7 +14,7 @@ The headline observation: V3 conceptual landing is *substantial* and the impleme
 |---|---|---|
 | Phase 0 — `pinned_yaml_sha256` drift visibility | ✓ shipped | `2c06b6f` |
 | Yard primitive (Phase Y0) | ✓ shipped | `36ef1a5` |
-| PA0 measurement layer + `ws auditor snapshot` | ✓ shipped | `184fd56` |
+| PA0 measurement layer + `drydock auditor snapshot` | ✓ shipped | `184fd56` |
 | Deadman switch + heartbeat + host-side telegram | ✓ shipped | `b3721b5` |
 | PA1 watch_once + LLM client + watch.md prompt | ✓ shipped | `1e996fc` |
 | PA1 daemon wrapper with adaptive cadence | ✓ shipped | `ecf8b7f` |
@@ -63,11 +63,11 @@ Test count: started session at 590, now 773 (+183). All green.
 **Why now:** these are the smallest things shipped most recently; whatever they reveal in real use should inform the next design conversations. If the drift display is confusing or the Yard primitive feels wrong-shaped, better to know now than after we build more on top.
 
 **What to do, concretely:**
-- Pull latest on Hetzner; reinstall pipx; restart wsd
-- Run `ws host audit` and see the drift surface against current Hetzner state (probably some Drydocks will show drift since YAMLs may have been edited)
-- Try `ws yard create microfoundry --repo /root/src/microfoundry`
+- Pull latest on Hetzner; reinstall pipx; restart daemon
+- Run `drydock host audit` and see the drift surface against current Hetzner state (probably some Drydocks will show drift since YAMLs may have been edited)
+- Try `drydock yard create microfoundry --repo /root/src/microfoundry`
 - Try editing a Project YAML to add `yard: microfoundry` and see what happens
-- Try `ws project reload` on a drifted Dock; verify the SHA re-pins
+- Try `drydock project reload` on a drifted Dock; verify the SHA re-pins
 
 **What this might surface:**
 - Drift display is too noisy (several legacy Docks always-drift) → maybe filter by recency, or auto-pin once on startup for legacy rows
@@ -85,15 +85,11 @@ Test count: started session at 590, now 773 (+183). All green.
 
 These are things where the design is settled enough to build; they just need turn-time.
 
-### 2.1 Mechanical V3 vocabulary sweep across remaining design docs
+### 2.1 Mechanical V3 vocabulary sweep across remaining design docs ✓ DONE 2026-05-06
 
-**What:** the design docs that haven't been touched since the V3 reframe still use older vocabulary in places. `network-reach.md`, `resource-ceilings.md`, `narrowness.md`, `capability-broker.md`, `harbor-monitor.md`, `employee-worker.md` need updates: replace "Harbormaster does X" prose with "Authority does X" or "Auditor does X" depending on action class, replace "fleet" usages, ensure "container = security boundary, DryDock = harness" framing is consistent.
+**What was done:** Authority/Auditor split applied across `resource-ceilings.md`, `harbor-authority.md`, `vocabulary.md`, `auth-broker.md`, `project-dock-ontology.md`, `port-auditor.md`, `yard.md`, `employee-worker.md`. The umbrella position paper `principal-harbormaster-governance.md` was retired to `docs/design/archive/` since the V3 split made it incoherent — the per-feature docs now stand on their own. Code-comment cleanup in `src/drydock/core/resource_ceilings.py`. Stale "fleet" usages in vision.md, harbor-monitor.md, employee-worker.md updated to "archipelago." Remaining "Harbormaster" references in vocabulary.md/yard.md/port-auditor.md are intentional — they refer to the deferred manager role.
 
-**Why on the list:** prose coherence matters for future doc work. Future-me reading `resource-ceilings.md` shouldn't have to mentally translate "Harbormaster" → "Authority/Auditor" every paragraph.
-
-**Size:** ~half a turn of mechanical work against vocabulary.md as the anchor.
-
-**My recommended position:** do this before any new design doc, so the new doc references a coherent corpus. Could batch with the Auditor LLM doc since they touch overlapping files.
+`narrowness.md`, `capability-broker.md`, `network-reach.md` were already clean — no Harbormaster references when checked.
 
 ---
 
@@ -117,7 +113,7 @@ These are things where the design is settled enough to build; they just need tur
 
 ### 2.3 Amendment contract Phase A0 (schema + envelope)
 
-**What:** the `amendments` table + the basic CRUD. No auto-approval logic yet — every amendment goes to `pending` and requires manual `ws amendment approve`. Proves the schema and audit shape before building the auto-gate.
+**What:** the `amendments` table + the basic CRUD. No auto-approval logic yet — every amendment goes to `pending` and requires manual `drydock amendment approve`. Proves the schema and audit shape before building the auto-gate.
 
 **Why on the list:** generalizing the EGRESS_GRANTS prototype unblocks the IaC + agent-as-proposer pattern. Foundation for everything multi-author-IaC-shaped.
 
@@ -176,7 +172,7 @@ These are things where the design is settled enough to build; they just need tur
 - **Agent handoff.** The "auction-crawl agent" today is just a sub-context of Steven's collab Claude; how does it become its own Dockworker with its own session continuity?
 - **Inter-service comm setup.** microfoundry consumers need to know auction-crawl moved; tailnet hostnames + NETWORK_REACH declarations need updating.
 
-**Size:** medium operational work, possibly with new tooling (`ws extract <service-name> --from <source-dock> --to <new-dock-name>`?) if it needs to be repeatable.
+**Size:** medium operational work, possibly with new tooling (`drydock extract <service-name> --from <source-dock> --to <new-dock-name>`?) if it needs to be repeatable.
 
 **My recommended position:** wait until Steven actively wants to do this for one specific service (probably auction-crawl). Design from the concrete case rather than abstractly. Likely conversation: "OK I'm ready to extract auction-crawl, walk me through it" → that's when we figure out the pattern, possibly tool it.
 
@@ -203,7 +199,7 @@ These are things where the design is settled enough to build; they just need tur
 
 ### 4.2 Cross-Harbor coordination (peer RPC, archipelago-level operations)
 
-**What:** drydock today is mostly Harbor-local. The `ws harbors status` SSH-channel is the only cross-Harbor surface. Real archipelago-level operations (move a Drydock between Harbors, run an Auditor that sees across Harbors, sync Project YAMLs across Harbors) need more.
+**What:** drydock today is mostly Harbor-local. The `drydock harbors status` SSH-channel is the only cross-Harbor surface. Real archipelago-level operations (move a Drydock between Harbors, run an Auditor that sees across Harbors, sync Project YAMLs across Harbors) need more.
 
 **Why this is Tier 4:** Steven has 2 Harbors today. Cross-Harbor coordination is a 5+ Harbor problem. The Tailscale + SSH channel is fine for now.
 

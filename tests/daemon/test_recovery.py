@@ -1,4 +1,4 @@
-"""Crash recovery tests for `wsd` startup reconciliation."""
+"""Crash recovery tests for `drydock daemon` startup reconciliation."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
-from drydock.wsd.recovery import RecoveryReport, recover_in_progress
+from drydock.core.runtime import Drydock
+from drydock.daemon.recovery import RecoveryReport, recover_in_progress
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -65,17 +65,17 @@ def _task_row(db_path: Path, request_id: str) -> sqlite3.Row:
     return row
 
 
-def _workspace_row(db_path: Path, name: str) -> sqlite3.Row | None:
+def _drydock_row(db_path: Path, name: str) -> sqlite3.Row | None:
     conn = _connect(db_path)
     row = conn.execute(
-        "SELECT * FROM workspaces WHERE name = ?",
+        "SELECT * FROM drydocks WHERE name = ?",
         (name,),
     ).fetchone()
     conn.close()
     return row
 
 
-def _make_workspace(
+def _make_drydock(
     registry_path: Path,
     *,
     name: str,
@@ -83,11 +83,11 @@ def _make_workspace(
     state: str = "defined",
     container_id: str = "",
     worktree_path: str = "",
-) -> Workspace:
+) -> Drydock:
     registry = Registry(db_path=registry_path)
     try:
-        ws = registry.create_workspace(
-            Workspace(
+        ws = registry.create_drydock(
+            Drydock(
                 name=name,
                 project=project,
                 repo_path=f"/repos/{project}",
@@ -110,11 +110,11 @@ def _wait_for_socket(path: Path, proc: subprocess.Popen, timeout: float = 5.0) -
         if proc.poll() is not None:
             _, stderr = proc.communicate(timeout=1)
             raise RuntimeError(
-                f"wsd exited before socket appeared (rc={proc.returncode}); "
+                f"daemon exited before socket appeared (rc={proc.returncode}); "
                 f"stderr: {stderr.decode('utf-8', errors='replace')}"
             )
         time.sleep(0.02)
-    raise TimeoutError(f"wsd socket {path} did not appear within {timeout}s")
+    raise TimeoutError(f"daemon socket {path} did not appear within {timeout}s")
 
 
 def _call_rpc(socket_path: Path, payload: dict[str, object], timeout: float = 5.0) -> dict[str, object]:
@@ -134,14 +134,14 @@ def _call_rpc(socket_path: Path, payload: dict[str, object], timeout: float = 5.
         sock.close()
 
 
-def test_recovery_completes_in_progress_with_running_workspace(tmp_path):
+def test_recovery_completes_in_progress_with_running_drydock(tmp_path):
     registry_path = tmp_path / "registry.db"
-    ws = _make_workspace(
+    ws = _make_drydock(
         registry_path,
         name="desk-ok",
         state="running",
         container_id="ctr-abc",
-        worktree_path=str(tmp_path / "worktrees" / "ws_desk_ok"),
+        worktree_path=str(tmp_path / "worktrees" / "dock_desk_ok"),
     )
     _insert_task(
         registry_path,
@@ -156,12 +156,12 @@ def test_recovery_completes_in_progress_with_running_workspace(tmp_path):
     task = _task_row(registry_path, "r1")
     assert task["status"] == "completed"
     outcome = json.loads(task["outcome_json"])
-    assert outcome["desk_id"] == ws.id
+    assert outcome["drydock_id"] == ws.id
     assert outcome["container_id"] == "ctr-abc"
     assert outcome["state"] == "running"
 
 
-def test_recovery_rolls_back_in_progress_without_workspace(tmp_path):
+def test_recovery_rolls_back_in_progress_without_drydock(tmp_path):
     registry_path = tmp_path / "registry.db"
     Registry(db_path=registry_path).close()
     _insert_task(
@@ -181,13 +181,13 @@ def test_recovery_rolls_back_in_progress_without_workspace(tmp_path):
     assert outcome["message"] == "crashed_during_create"
 
 
-def test_recovery_rolls_back_partial_workspace(tmp_path):
+def test_recovery_rolls_back_partial_drydock(tmp_path):
     registry_path = tmp_path / "registry.db"
-    worktree_path = tmp_path / "worktrees" / "ws_partial"
+    worktree_path = tmp_path / "worktrees" / "dock_partial"
     worktree_path.mkdir(parents=True)
     (worktree_path / "marker.txt").write_text("partial")
 
-    _make_workspace(
+    _make_drydock(
         registry_path,
         name="partial",
         state="provisioning",
@@ -203,7 +203,7 @@ def test_recovery_rolls_back_partial_workspace(tmp_path):
     report = recover_in_progress(registry_path)
 
     assert report == RecoveryReport(completed=0, rolled_back=1, unknown_method=0)
-    assert _workspace_row(registry_path, "partial") is None
+    assert _drydock_row(registry_path, "partial") is None
     assert not worktree_path.exists()
     task = _task_row(registry_path, "r1")
     assert task["status"] == "failed"
@@ -211,14 +211,14 @@ def test_recovery_rolls_back_partial_workspace(tmp_path):
 
 def test_recovery_rolls_back_partial_spawn_child(tmp_path):
     registry_path = tmp_path / "registry.db"
-    worktree_path = tmp_path / "worktrees" / "ws_child_partial"
+    worktree_path = tmp_path / "worktrees" / "dock_child_partial"
     worktree_path.mkdir(parents=True)
     (worktree_path / "marker.txt").write_text("partial")
 
     registry = Registry(db_path=registry_path)
     try:
-        registry.create_workspace(
-            Workspace(
+        registry.create_drydock(
+            Drydock(
                 name="child-partial",
                 project="proj",
                 repo_path="/repos/proj",
@@ -227,7 +227,7 @@ def test_recovery_rolls_back_partial_spawn_child(tmp_path):
                 worktree_path=str(worktree_path),
             )
         )
-        registry.update_workspace("child-partial", parent_desk_id="ws_parent")
+        registry.update_drydock("child-partial", parent_drydock_id="dock_parent")
     finally:
         registry.close()
     _insert_task(
@@ -240,7 +240,7 @@ def test_recovery_rolls_back_partial_spawn_child(tmp_path):
     report = recover_in_progress(registry_path)
 
     assert report == RecoveryReport(completed=0, rolled_back=1, unknown_method=0)
-    assert _workspace_row(registry_path, "child-partial") is None
+    assert _drydock_row(registry_path, "child-partial") is None
     assert not worktree_path.exists()
     task = _task_row(registry_path, "r-spawn")
     outcome = json.loads(task["outcome_json"])
@@ -250,12 +250,12 @@ def test_recovery_rolls_back_partial_spawn_child(tmp_path):
 
 def test_recovery_is_idempotent(tmp_path):
     registry_path = tmp_path / "registry.db"
-    _make_workspace(
+    _make_drydock(
         registry_path,
         name="desk-idem",
         state="running",
         container_id="ctr-abc",
-        worktree_path=str(tmp_path / "worktrees" / "ws_desk_idem"),
+        worktree_path=str(tmp_path / "worktrees" / "dock_desk_idem"),
     )
     _insert_task(
         registry_path,
@@ -274,12 +274,12 @@ def test_recovery_is_idempotent(tmp_path):
 
 def test_recovery_handles_unknown_method(tmp_path):
     registry_path = tmp_path / "registry.db"
-    _make_workspace(
+    _make_drydock(
         registry_path,
         name="untouched",
         state="running",
         container_id="ctr-keep",
-        worktree_path=str(tmp_path / "worktrees" / "ws_untouched"),
+        worktree_path=str(tmp_path / "worktrees" / "dock_untouched"),
     )
     _insert_task(
         registry_path,
@@ -296,25 +296,25 @@ def test_recovery_handles_unknown_method(tmp_path):
     assert task["status"] == "failed"
     assert outcome["message"] == "unknown_method_during_recovery"
     assert outcome["data"]["method"] == "SomeFutureMethod"
-    assert _workspace_row(registry_path, "untouched") is not None
+    assert _drydock_row(registry_path, "untouched") is not None
 
 
 def test_recovery_completes_in_progress_destroy(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     registry_path = tmp_path / "registry.db"
-    worktree_path = tmp_path / "worktrees" / "ws_destroy_me"
+    worktree_path = tmp_path / "worktrees" / "dock_destroy_me"
     worktree_path.mkdir(parents=True)
-    overlay_path = tmp_path / ".drydock" / "overlays" / "ws_destroy_me.devcontainer.json"
+    overlay_path = tmp_path / ".drydock" / "overlays" / "dock_destroy_me.devcontainer.json"
     overlay_path.parent.mkdir(parents=True, exist_ok=True)
     overlay_path.write_text("{}")
-    secrets_dir = tmp_path / ".drydock" / "secrets" / "ws_destroy_me"
+    secrets_dir = tmp_path / ".drydock" / "secrets" / "dock_destroy_me"
     secrets_dir.mkdir(parents=True, exist_ok=True)
     (secrets_dir / "drydock-token").write_text("secret")
 
     registry = Registry(db_path=registry_path)
     try:
-        registry.create_workspace(
-            Workspace(
+        registry.create_drydock(
+            Drydock(
                 name="destroy-me",
                 project="proj",
                 repo_path="/repos/proj",
@@ -325,7 +325,7 @@ def test_recovery_completes_in_progress_destroy(tmp_path, monkeypatch):
             )
         )
         registry.insert_token(
-            desk_id="ws_destroy_me",
+            drydock_id="dock_destroy_me",
             token_sha256="deadbeef",
             issued_at=datetime.now(timezone.utc),
         )
@@ -342,7 +342,7 @@ def test_recovery_completes_in_progress_destroy(tmp_path, monkeypatch):
     report = recover_in_progress(registry_path)
 
     assert report == RecoveryReport(completed=1, rolled_back=0, unknown_method=0)
-    assert _workspace_row(registry_path, "destroy-me") is None
+    assert _drydock_row(registry_path, "destroy-me") is None
     assert not worktree_path.exists()
     assert not overlay_path.exists()
     assert not secrets_dir.exists()
@@ -350,12 +350,12 @@ def test_recovery_completes_in_progress_destroy(tmp_path, monkeypatch):
     outcome = json.loads(task["outcome_json"])
     assert task["status"] == "completed"
     assert outcome["destroyed"] is True
-    assert outcome["desk_id"] == "ws_destroy_me"
+    assert outcome["drydock_id"] == "dock_destroy_me"
     assert outcome["recovered"] is True
 
 
 def test_daemon_startup_invokes_recovery_and_then_serves():
-    tmp = Path(tempfile.mkdtemp(prefix="wsd-recovery-", dir="/tmp"))
+    tmp = Path(tempfile.mkdtemp(prefix="daemon-recovery-", dir="/tmp"))
     sock = tmp / "s"
     registry_path = tmp / "r.db"
     Registry(db_path=registry_path).close()
@@ -373,7 +373,7 @@ def test_daemon_startup_invokes_recovery_and_then_serves():
         [
             sys.executable,
             "-m",
-            "drydock.wsd",
+            "drydock.daemon",
             "--socket",
             str(sock),
             "--registry",
@@ -387,7 +387,7 @@ def test_daemon_startup_invokes_recovery_and_then_serves():
         _wait_for_socket(sock, proc, timeout=5.0)
         response = _call_rpc(
             sock,
-            {"jsonrpc": "2.0", "method": "wsd.health", "id": "health-1"},
+            {"jsonrpc": "2.0", "method": "daemon.health", "id": "health-1"},
         )
         assert response["result"]["ok"] is True
 

@@ -6,12 +6,12 @@ from click.testing import CliRunner
 
 from drydock.cli.stop import stop
 from drydock.core import WsError
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 from drydock.output.formatter import Output
 
 
 def _make_ws(state="running"):
-    return Workspace(
+    return Drydock(
         name="test-ws",
         project="proj",
         repo_path="/tmp/repo",
@@ -36,7 +36,7 @@ def _invoke(registry, dry_run=False):
 def test_stop_calls_devcontainer_stop(MockCLI):
     ws = _make_ws()
     registry = MagicMock()
-    registry.get_workspace.return_value = ws
+    registry.get_drydock.return_value = ws
     registry.update_state.return_value = ws
 
     result = _invoke(registry)
@@ -51,7 +51,7 @@ def test_stop_calls_devcontainer_stop(MockCLI):
 def test_stop_dry_run_skips_cli_call(MockCLI):
     ws = _make_ws()
     registry = MagicMock()
-    registry.get_workspace.return_value = ws
+    registry.get_drydock.return_value = ws
 
     result = _invoke(registry, dry_run=True)
 
@@ -62,11 +62,11 @@ def test_stop_dry_run_skips_cli_call(MockCLI):
 
 @patch("drydock.cli.stop.DevcontainerCLI")
 def test_stop_propagates_wserror_and_marks_error(MockCLI):
-    """Failure during stop/remove marks the workspace as 'error' so next
+    """Failure during stop/remove marks the drydock as 'error' so next
     ws create refuses to silently reuse half-torn-down state."""
     ws = _make_ws()
     registry = MagicMock()
-    registry.get_workspace.return_value = ws
+    registry.get_drydock.return_value = ws
 
     mock_devc = MockCLI.return_value
     mock_devc.stop.side_effect = WsError("devcontainer down failed: timeout")
@@ -81,7 +81,7 @@ def test_stop_propagates_wserror_and_marks_error(MockCLI):
 def test_tailnet_logout_called_before_stop(MockCLI):
     ws = _make_ws()
     registry = MagicMock()
-    registry.get_workspace.return_value = ws
+    registry.get_drydock.return_value = ws
     registry.update_state.return_value = ws
 
     call_order = []

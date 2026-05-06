@@ -1,4 +1,4 @@
-"""ws stop — stop a running workspace."""
+"""ws stop — stop a running drydock."""
 
 import click
 
@@ -11,7 +11,7 @@ from drydock.core.audit import log_event
 @click.argument("name")
 @click.pass_context
 def stop(ctx, name):
-    """Stop a running workspace.
+    """Stop a running drydock.
 
     Stops the container and removes it so the next ws create rebuilds fresh.
     Volumes and checkout are preserved.
@@ -20,12 +20,12 @@ def stop(ctx, name):
     registry = ctx.obj["registry"]
     dry_run = ctx.obj["dry_run"]
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if not ws:
         out.error(
             WsError(
-                f"Workspace '{name}' not found",
-                fix="Run 'ws list' to see available workspaces",
+                f"Drydock '{name}' not found",
+                fix="Run 'ws list' to see available drydocks",
             )
         )
         return
@@ -33,16 +33,16 @@ def stop(ctx, name):
     if ws.state != "running":
         out.error(
             WsError(
-                f"Workspace '{name}' is in state '{ws.state}', cannot stop",
-                fix="Only running workspaces can be stopped",
+                f"Drydock '{name}' is in state '{ws.state}', cannot stop",
+                fix="Only running drydocks can be stopped",
             )
         )
         return
 
     if dry_run:
         out.success(
-            {"dry_run": True, "action": "stop", "workspace": ws.to_dict()},
-            human_lines=[f"Would stop workspace '{name}'"],
+            {"dry_run": True, "action": "stop", "drydock": ws.to_dict()},
+            human_lines=[f"Would stop drydock '{name}'"],
         )
         return
 
@@ -56,9 +56,9 @@ def stop(ctx, name):
         raise
 
     ws = registry.update_state(name, "suspended")
-    log_event("workspace.stopped", ws.id)
+    log_event("drydock.stopped", ws.id)
 
     out.success(
         ws.to_dict(),
-        human_lines=[f"workspace '{name}' stopped"],
+        human_lines=[f"drydock '{name}' stopped"],
     )

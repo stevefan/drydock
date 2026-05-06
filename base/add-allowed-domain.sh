@@ -1,7 +1,7 @@
 #!/bin/bash
 # Idempotently add a domain to this container's live firewall allowlist.
 #
-# Invoked from the Harbor by `wsd` when a NETWORK_REACH capability is
+# Invoked from the Harbor by `drydock daemon` when a NETWORK_REACH capability is
 # granted (see docs/design/network-reach.md). Can also be run manually
 # for one-off opens during interactive debugging.
 #

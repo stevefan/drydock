@@ -6,9 +6,9 @@ A personal agent fabric. Each workspace is a durable, addressable place where an
 
 ## What it does today
 
-- **One-command desks.** `ws create myapp` spins up a sandboxed devcontainer with its own Tailscale hostname, default-deny firewall, scoped secrets, Claude Code remote-control, and a git checkout of your project on a fresh branch.
-- **Reachable from anywhere.** Desks are on your tailnet. Attach via `ws attach <name>` (opens VS Code / Cursor), SSH via `mosh node@<desk>`, or jump in from the Claude mobile app at `claude.ai/code`.
-- **Fleet aware.** `ws status` shows every desk's health (tailscale joined? supervisor alive? firewall active?). Audit log at `~/.drydock/audit.log` tracks lifecycle events.
+- **One-command desks.** `drydock create myapp` spins up a sandboxed devcontainer with its own Tailscale hostname, default-deny firewall, scoped secrets, Claude Code remote-control, and a git checkout of your project on a fresh branch.
+- **Reachable from anywhere.** Desks are on your tailnet. Attach via `drydock attach <name>` (opens VS Code / Cursor), SSH via `mosh node@<desk>`, or jump in from the Claude mobile app at `claude.ai/code`.
+- **Fleet aware.** `drydock status` shows every desk's health (tailscale joined? supervisor alive? firewall active?). Audit log at `~/.drydock/audit.log` tracks lifecycle events.
 - **Isolated by default.** Each desk gets its own `/run/secrets/` directory, its own narrow firewall allowlist, its own git branch. Compromise of one desk doesn't reach the others.
 - **Shared where it matters.** Claude config (auth, trust, sessions) carries across all your desks automatically. VS Code extensions, npm cache, pip cache all shared. Per-desk isolation of the rest.
 
@@ -32,26 +32,26 @@ firewall_extra_domains:
 EOF
 
 # populate secrets
-mkdir -p ~/.drydock/secrets/ws_myproject
-echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/ws_myproject/anthropic_api_key
-echo -n "$TAILSCALE_AUTHKEY"  > ~/.drydock/secrets/ws_myproject/tailscale_authkey
+mkdir -p ~/.drydock/secrets/dock_myproject
+echo -n "$ANTHROPIC_API_KEY" > ~/.drydock/secrets/dock_myproject/anthropic_api_key
+echo -n "$TAILSCALE_AUTHKEY"  > ~/.drydock/secrets/dock_myproject/tailscale_authkey
 
 # spawn a desk
-ws create myproject
-ws attach myproject --editor cursor
+drydock create myproject
+drydock attach myproject --editor cursor
 ```
 
 ## Commands
 
 ```
-ws create <name>          Spawn a new desk
-ws list                   All desks, compact
-ws inspect <name>         Full state for one desk
-ws status                 Fleet health (probes tailscale/supervisor/firewall)
-ws attach <name>          Open editor attached to the desk
-ws exec <name> [cmd...]   Shell or command inside the desk
-ws stop <name>            Stop the container, preserve state
-ws destroy <name> --force Remove the desk entirely (worktree, overlay, container, registry)
+drydock create <name>          Spawn a new desk
+drydock list                   All desks, compact
+drydock inspect <name>         Full state for one desk
+drydock status                 Fleet health (probes tailscale/supervisor/firewall)
+drydock attach <name>          Open editor attached to the desk
+drydock exec <name> [cmd...]   Shell or command inside the desk
+drydock stop <name>            Stop the container, preserve state
+drydock destroy <name> --force Remove the desk entirely (worktree, overlay, container, registry)
 ```
 
 ## Repo layout

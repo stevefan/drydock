@@ -1,4 +1,4 @@
-"""ws secret — manage workspace secrets (file-backed)."""
+"""ws secret — manage drydock secrets (file-backed)."""
 
 import os
 import re
@@ -13,9 +13,9 @@ import click
 
 from drydock.core import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID, WsError
 
-# ws_id flows into ssh/rsync remote-command strings; anything outside this
+# dock_id flows into ssh/rsync remote-command strings; anything outside this
 # character set would enable command injection on the remote host.
-_WS_ID_RE = re.compile(r"^ws_[a-zA-Z0-9_]+$")
+_DOCK_ID_RE = re.compile(r"^dock_[a-zA-Z0-9_]+$")
 _KEY_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
@@ -24,18 +24,18 @@ def _secrets_root() -> Path:
 
 
 def _ws_id_for(name: str, registry) -> str:
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if ws:
-        ws_id = ws.id
+        dock_id = ws.id
     else:
         name_slug = name.replace("-", "_").replace(" ", "_")
-        ws_id = f"ws_{name_slug}"
-    if not _WS_ID_RE.match(ws_id):
+        dock_id = f"dock_{name_slug}"
+    if not _DOCK_ID_RE.match(dock_id):
         raise WsError(
-            f"Unsafe workspace name {name!r} (derived id {ws_id!r} has characters outside [A-Za-z0-9_])",
-            fix="Use a workspace name matching [A-Za-z0-9_-] with no whitespace or shell metacharacters",
+            f"Unsafe drydock name {name!r} (derived id {dock_id!r} has characters outside [A-Za-z0-9_])",
+            fix="Use a drydock name matching [A-Za-z0-9_-] with no whitespace or shell metacharacters",
         )
-    return ws_id
+    return dock_id
 
 
 def _validate_key_name(key_name: str) -> None:
@@ -46,8 +46,8 @@ def _validate_key_name(key_name: str) -> None:
         )
 
 
-def _ws_secret_dir(ws_id: str) -> Path:
-    return _secrets_root() / ws_id
+def _ws_secret_dir(dock_id: str) -> Path:
+    return _secrets_root() / dock_id
 
 
 def _write_secret_atomic(secret_dir: Path, key_name: str, value: bytes) -> Path:
@@ -77,15 +77,15 @@ def _write_secret_atomic(secret_dir: Path, key_name: str, value: bytes) -> Path:
 
 @click.group()
 def secret():
-    """Manage workspace secrets."""
+    """Manage drydock secrets."""
 
 
 @secret.command("set")
-@click.argument("workspace")
+@click.argument("drydock")
 @click.argument("key_name")
 @click.pass_context
-def secret_set(ctx, workspace, key_name):
-    """Store a secret for a workspace (value read from stdin)."""
+def secret_set(ctx, drydock, key_name):
+    """Store a secret for a drydock (value read from stdin)."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
@@ -101,16 +101,16 @@ def secret_set(ctx, workspace, key_name):
     if not value:
         out.error(WsError("No value provided on stdin", fix="Pipe a value: echo -n val | ws secret set WS KEY"))
 
-    ws = registry.get_workspace(workspace)
+    ws = registry.get_drydock(drydock)
     if not ws:
-        click.echo(f"warning: workspace '{workspace}' not in registry (pre-populating)", err=True)
+        click.echo(f"warning: drydock '{drydock}' not in registry (pre-populating)", err=True)
 
     try:
-        ws_id = _ws_id_for(workspace, registry)
+        dock_id = _ws_id_for(drydock, registry)
     except WsError as e:
         out.error(e)
 
-    secret_dir = _ws_secret_dir(ws_id)
+    secret_dir = _ws_secret_dir(dock_id)
     secret_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(secret_dir, 0o700)
     if os.geteuid() == 0:
@@ -119,31 +119,31 @@ def secret_set(ctx, workspace, key_name):
     secret_path = _write_secret_atomic(secret_dir, key_name, value)
 
     out.success(
-        {"workspace": workspace, "key": key_name, "path": str(secret_path), "bytes": len(value)},
+        {"drydock": drydock, "key": key_name, "path": str(secret_path), "bytes": len(value)},
         human_lines=[f"Secret '{key_name}' stored ({len(value)} bytes)"],
     )
 
 
 @secret.command("list")
-@click.argument("workspace")
+@click.argument("drydock")
 @click.pass_context
-def secret_list(ctx, workspace):
-    """List secret key names for a workspace (never shows values)."""
+def secret_list(ctx, drydock):
+    """List secret key names for a drydock (never shows values)."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
     try:
-        ws_id = _ws_id_for(workspace, registry)
+        dock_id = _ws_id_for(drydock, registry)
     except WsError as e:
         out.error(e)
-    secret_dir = _ws_secret_dir(ws_id)
+    secret_dir = _ws_secret_dir(dock_id)
 
     if not secret_dir.is_dir():
         out.success(
-            {"workspace": workspace, "keys": []},
+            {"drydock": drydock, "keys": []},
             human_lines=[
-                f"No secrets for workspace '{workspace}'.",
-                f"  fix: Run 'ws secret set {workspace} <key>' to add one.",
+                f"No secrets for drydock '{drydock}'.",
+                f"  fix: Run 'ws secret set {drydock} <key>' to add one.",
             ],
         )
         return
@@ -160,31 +160,31 @@ def secret_list(ctx, workspace):
             })
 
     out.success(
-        {"workspace": workspace, "keys": keys},
+        {"drydock": drydock, "keys": keys},
         human_lines=[f"  {k['name']}  {k['mode']}  {k['size']}B" for k in keys]
-        or [f"No secrets for workspace '{workspace}'."],
+        or [f"No secrets for drydock '{drydock}'."],
     )
 
 
 @secret.command("rm")
-@click.argument("workspace")
+@click.argument("drydock")
 @click.argument("key_name")
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def secret_rm(ctx, workspace, key_name, force):
-    """Remove a secret from a workspace."""
+def secret_rm(ctx, drydock, key_name, force):
+    """Remove a secret from a drydock."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
     try:
         _validate_key_name(key_name)
-        ws_id = _ws_id_for(workspace, registry)
+        dock_id = _ws_id_for(drydock, registry)
     except WsError as e:
         out.error(e)
-    secret_path = _ws_secret_dir(ws_id) / key_name
+    secret_path = _ws_secret_dir(dock_id) / key_name
 
     if secret_path.exists() and not force and sys.stdin.isatty():
-        click.confirm(f"Remove secret '{key_name}' from workspace '{workspace}'?", abort=True)
+        click.confirm(f"Remove secret '{key_name}' from drydock '{drydock}'?", abort=True)
 
     try:
         secret_path.unlink()
@@ -193,34 +193,34 @@ def secret_rm(ctx, workspace, key_name, force):
         removed = False
 
     out.success(
-        {"workspace": workspace, "key": key_name, "removed": removed},
+        {"drydock": drydock, "key": key_name, "removed": removed},
         human_lines=[f"Secret '{key_name}' {'removed' if removed else 'not found (no-op)'}."],
     )
 
 
 @secret.command("push")
-@click.argument("workspace")
+@click.argument("drydock")
 @click.option("--to", "ssh_host", required=True, help="SSH host to push secrets to")
 @click.pass_context
-def secret_push(ctx, workspace, ssh_host):
-    """Push workspace secrets to a remote host via rsync over SSH."""
+def secret_push(ctx, drydock, ssh_host):
+    """Push drydock secrets to a remote host via rsync over SSH."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
     dry_run = ctx.obj.get("dry_run", False)
 
     try:
-        ws_id = _ws_id_for(workspace, registry)
+        dock_id = _ws_id_for(drydock, registry)
     except WsError as e:
         out.error(e)
-    secret_dir = _ws_secret_dir(ws_id)
+    secret_dir = _ws_secret_dir(dock_id)
 
     if not secret_dir.is_dir():
         out.error(WsError(
-            f"No secrets directory for workspace '{workspace}'",
-            fix=f"Run 'ws secret set {workspace} <key>' first",
+            f"No secrets directory for drydock '{drydock}'",
+            fix=f"Run 'ws secret set {drydock} <key>' first",
         ))
 
-    remote_path = f"~/.drydock/secrets/{ws_id}/"
+    remote_path = f"~/.drydock/secrets/{dock_id}/"
     cmd = [
         "rsync", "-a",
         "-e", "ssh",
@@ -228,18 +228,18 @@ def secret_push(ctx, workspace, ssh_host):
         f"{ssh_host}:{remote_path}",
     ]
 
-    mkdir_cmd = ["ssh", ssh_host, f"mkdir -p -m 700 ~/.drydock/secrets/{ws_id}"]
+    mkdir_cmd = ["ssh", ssh_host, f"mkdir -p -m 700 ~/.drydock/secrets/{dock_id}"]
     # Receiver-side chown after rsync: rsync from a non-root sender can't set
     # remote ownership, so we do it explicitly. Required on Linux receivers
     # where bind-mounts preserve uid; harmless if the receiver is macOS.
     chown_cmd = [
         "ssh", ssh_host,
-        f"chown -R {CONTAINER_REMOTE_UID}:{CONTAINER_REMOTE_GID} ~/.drydock/secrets/{ws_id}",
+        f"chown -R {CONTAINER_REMOTE_UID}:{CONTAINER_REMOTE_GID} ~/.drydock/secrets/{dock_id}",
     ]
 
     if dry_run:
         out.success(
-            {"workspace": workspace, "ssh_host": ssh_host, "mkdir_cmd": mkdir_cmd, "rsync_cmd": cmd, "chown_cmd": chown_cmd, "dry_run": True},
+            {"drydock": drydock, "ssh_host": ssh_host, "mkdir_cmd": mkdir_cmd, "rsync_cmd": cmd, "chown_cmd": chown_cmd, "dry_run": True},
             human_lines=[f"[dry-run] Would run:", f"  {' '.join(mkdir_cmd)}", f"  {' '.join(cmd)}", f"  {' '.join(chown_cmd)}"],
         )
         return
@@ -249,6 +249,6 @@ def secret_push(ctx, workspace, ssh_host):
     subprocess.run(chown_cmd, check=True)
 
     out.success(
-        {"workspace": workspace, "ssh_host": ssh_host, "synced": True},
-        human_lines=[f"Secrets for '{workspace}' pushed to {ssh_host}."],
+        {"drydock": drydock, "ssh_host": ssh_host, "synced": True},
+        human_lines=[f"Secrets for '{drydock}' pushed to {ssh_host}."],
     )

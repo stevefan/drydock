@@ -11,7 +11,7 @@ from click.testing import CliRunner
 
 from drydock.cli.main import cli
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True)
@@ -30,13 +30,13 @@ def _init_repo(path: Path, *, with_devcontainer: bool = True) -> None:
     _git(path, "commit", "-m", "initial")
 
 
-def test_destroy_routes_through_daemon(wsd, monkeypatch):
-    monkeypatch.setenv("HOME", str(wsd.home))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(wsd.socket_path))
+def test_destroy_routes_through_daemon(daemon, monkeypatch):
+    monkeypatch.setenv("HOME", str(daemon.home))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(daemon.socket_path))
 
-    repo = wsd.home / "repo-destroy-route"
+    repo = daemon.home / "repo-destroy-route"
     _init_repo(repo)
-    created = wsd.call_rpc(
+    created = daemon.call_rpc(
         "CreateDesk",
         params={"project": "proj", "name": "desk-destroy-route", "repo_path": str(repo)},
         request_id="create-destroy-route",
@@ -52,17 +52,17 @@ def test_destroy_routes_through_daemon(wsd, monkeypatch):
     payload = json.loads(result.output)
     assert payload == {"destroyed": "desk-destroy-route"}
 
-    registry = Registry(db_path=wsd.registry_path)
+    registry = Registry(db_path=daemon.registry_path)
     try:
-        workspace = registry.get_workspace("desk-destroy-route")
-        token = registry.get_token_info(created["desk_id"])
+        drydock = registry.get_drydock("desk-destroy-route")
+        token = registry.get_token_info(created["drydock_id"])
         destroy_tasks = registry._conn.execute(
             "SELECT outcome_json FROM task_log WHERE method = 'DestroyDesk'"
         ).fetchall()
     finally:
         registry.close()
 
-    assert workspace is None
+    assert drydock is None
     assert token is None
     assert destroy_tasks
     destroy_result = json.loads(destroy_tasks[-1]["outcome_json"])
@@ -74,7 +74,7 @@ def test_destroy_routes_through_daemon(wsd, monkeypatch):
 @patch("drydock.cli.destroy.tailnet_api")
 def test_destroy_falls_back_to_direct_when_daemon_unreachable(mock_tailnet, MockCLI, _mock_log_event, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "missing.sock"))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(tmp_path / "missing.sock"))
 
     repo = tmp_path / "repo"
     _init_repo(repo, with_devcontainer=False)
@@ -85,8 +85,8 @@ def test_destroy_falls_back_to_direct_when_daemon_unreachable(mock_tailnet, Mock
     overlay = tmp_path / ".drydock" / "overlays" / "desk-fallback-destroy.json"
     overlay.parent.mkdir(parents=True, exist_ok=True)
     overlay.write_text("{}")
-    registry.create_workspace(
-        Workspace(
+    registry.create_drydock(
+        Drydock(
             name="desk-fallback-destroy",
             project="proj",
             repo_path=str(repo),
@@ -112,9 +112,9 @@ def test_destroy_falls_back_to_direct_when_daemon_unreachable(mock_tailnet, Mock
     MockCLI.return_value.stop.assert_called_once_with(container_id="ctr-destroy-fallback")
 
 
-def test_destroy_propagates_daemon_rpc_error(wsd, monkeypatch):
-    monkeypatch.setenv("HOME", str(wsd.home))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(wsd.socket_path))
+def test_destroy_propagates_daemon_rpc_error(daemon, monkeypatch):
+    monkeypatch.setenv("HOME", str(daemon.home))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(daemon.socket_path))
 
     runner = CliRunner()
     result = runner.invoke(
@@ -126,7 +126,7 @@ def test_destroy_propagates_daemon_rpc_error(wsd, monkeypatch):
     error = json.loads(result.output)
     assert error["error"] == "desk_not_found"
 
-    registry = Registry(db_path=wsd.registry_path)
+    registry = Registry(db_path=daemon.registry_path)
     try:
         destroy_tasks = registry._conn.execute(
             "SELECT COUNT(*) AS n FROM task_log WHERE method = 'DestroyDesk'"

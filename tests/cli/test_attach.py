@@ -19,7 +19,7 @@ def _init_repo(path):
     subprocess.run(["git", "commit", "-m", "initial"], cwd=path, capture_output=True, check=True)
 
 
-def _create_workspace(tmp_path, monkeypatch, overlay_content="{}", state="running"):
+def _create_drydock(tmp_path, monkeypatch, overlay_content="{}", state="running"):
     monkeypatch.setenv("HOME", str(tmp_path))
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -36,7 +36,7 @@ def _create_workspace(tmp_path, monkeypatch, overlay_content="{}", state="runnin
 
     from drydock.core.registry import Registry
     reg = Registry()
-    reg.update_workspace("test-ws", config={"overlay_path": str(overlay_file)})
+    reg.update_drydock("test-ws", config={"overlay_path": str(overlay_file)})
     if state != "running":
         reg.update_state("test-ws", state)
     reg.close()
@@ -44,28 +44,28 @@ def _create_workspace(tmp_path, monkeypatch, overlay_content="{}", state="runnin
     return runner
 
 
-def test_attach_workspace_not_found(tmp_path, monkeypatch):
+def test_attach_drydock_not_found(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = CliRunner()
     result = runner.invoke(cli, ["attach", "nonexistent"])
     assert result.exit_code == 1
 
 
-def test_attach_workspace_not_running(tmp_path, monkeypatch):
-    runner = _create_workspace(tmp_path, monkeypatch, state="suspended")
+def test_attach_drydock_not_running(tmp_path, monkeypatch):
+    runner = _create_drydock(tmp_path, monkeypatch, state="suspended")
     result = runner.invoke(cli, ["attach", "test-ws"])
     assert result.exit_code == 1
 
 
 @patch("drydock.cli.attach._find_container", return_value="")
 def test_attach_missing_container(mock_find, tmp_path, monkeypatch):
-    runner = _create_workspace(tmp_path, monkeypatch)
+    runner = _create_drydock(tmp_path, monkeypatch)
     result = runner.invoke(cli, ["attach", "test-ws"])
     assert result.exit_code == 1
 
 
 def test_attach_missing_editor(tmp_path, monkeypatch):
-    runner = _create_workspace(tmp_path, monkeypatch)
+    runner = _create_drydock(tmp_path, monkeypatch)
     with patch("drydock.cli.attach._find_container", return_value="silly_spence"), \
          patch("drydock.cli.attach.shutil.which", return_value=None):
         result = runner.invoke(cli, ["attach", "test-ws"])
@@ -74,7 +74,7 @@ def test_attach_missing_editor(tmp_path, monkeypatch):
 
 
 def test_attach_happy_path(tmp_path, monkeypatch):
-    runner = _create_workspace(tmp_path, monkeypatch)
+    runner = _create_drydock(tmp_path, monkeypatch)
     with patch("drydock.cli.attach._find_container", return_value="silly_spence"), \
          patch("drydock.cli.attach.shutil.which", return_value="/usr/bin/code"), \
          patch("drydock.cli.attach.subprocess.Popen") as mock_popen:
@@ -82,7 +82,7 @@ def test_attach_happy_path(tmp_path, monkeypatch):
     assert result.exit_code == 0
     data = json.loads(result.output)
     expected_hex = "".join(f"{b:02x}" for b in b"silly_spence")
-    assert data["uri"] == f"vscode-remote://attached-container+{expected_hex}/workspace"
+    assert data["uri"] == f"vscode-remote://attached-container+{expected_hex}/drydock"
     assert data["editor"] == "code"
     mock_popen.assert_called_once()
     args = mock_popen.call_args[0][0]
@@ -91,8 +91,8 @@ def test_attach_happy_path(tmp_path, monkeypatch):
 
 
 def test_attach_custom_workspace_folder(tmp_path, monkeypatch):
-    overlay = json.dumps({"workspaceFolder": "/custom/path"})
-    runner = _create_workspace(tmp_path, monkeypatch, overlay_content=overlay)
+    overlay = json.dumps({"drydockFolder": "/custom/path"})
+    runner = _create_drydock(tmp_path, monkeypatch, overlay_content=overlay)
     with patch("drydock.cli.attach._find_container", return_value="silly_spence"), \
          patch("drydock.cli.attach.shutil.which", return_value="/usr/bin/code"), \
          patch("drydock.cli.attach.subprocess.Popen"):
@@ -103,11 +103,11 @@ def test_attach_custom_workspace_folder(tmp_path, monkeypatch):
 
 
 def test_attach_no_workspace_folder_defaults(tmp_path, monkeypatch):
-    runner = _create_workspace(tmp_path, monkeypatch, overlay_content='{"image": "node"}')
+    runner = _create_drydock(tmp_path, monkeypatch, overlay_content='{"image": "node"}')
     with patch("drydock.cli.attach._find_container", return_value="silly_spence"), \
          patch("drydock.cli.attach.shutil.which", return_value="/usr/bin/code"), \
          patch("drydock.cli.attach.subprocess.Popen"):
         result = runner.invoke(cli, ["--json", "attach", "test-ws"])
     assert result.exit_code == 0
     data = json.loads(result.output)
-    assert data["uri"].endswith("/workspace")
+    assert data["uri"].endswith("/drydock")

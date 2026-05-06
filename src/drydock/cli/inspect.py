@@ -1,4 +1,4 @@
-"""ws inspect — show workspace details."""
+"""ws inspect — show drydock details."""
 
 import click
 
@@ -9,16 +9,16 @@ from drydock.core import WsError
 @click.argument("name")
 @click.pass_context
 def inspect(ctx, name):
-    """Show full details for a workspace."""
+    """Show full details for a drydock."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if not ws:
         out.error(
             WsError(
-                f"Workspace '{name}' not found",
-                fix="Run 'ws list' to see available workspaces",
+                f"Drydock '{name}' not found",
+                fix="Run 'ws list' to see available drydocks",
             )
         )
         return
@@ -26,7 +26,7 @@ def inspect(ctx, name):
     out.success(
         ws.to_dict(),
         human_lines=[
-            f"Workspace: {ws.name}",
+            f"Drydock: {ws.name}",
             f"  id:         {ws.id}",
             f"  project:    {ws.project}",
             f"  branch:     {ws.branch}",

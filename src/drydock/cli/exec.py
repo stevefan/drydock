@@ -1,4 +1,4 @@
-"""ws exec — shell into a running workspace container."""
+"""ws exec — shell into a running drydock container."""
 
 import json
 import os
@@ -45,9 +45,9 @@ def _read_workspace_folder(overlay_path: str) -> str:
     try:
         with open(overlay_path) as f:
             data = json.load(f)
-        return data.get("workspaceFolder", "/workspace")
+        return data.get("drydockFolder", "/drydock")
     except (OSError, json.JSONDecodeError):
-        return "/workspace"
+        return "/drydock"
 
 
 @click.command(name="exec", context_settings={"ignore_unknown_options": True})
@@ -55,16 +55,16 @@ def _read_workspace_folder(overlay_path: str) -> str:
 @click.argument("cmd", nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
 def exec_cmd(ctx, name, cmd):
-    """Execute a command in a running workspace container."""
+    """Execute a command in a running drydock container."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if not ws:
         out.error(
             WsError(
-                f"Workspace '{name}' not found",
-                fix="Run 'ws list' to see available workspaces",
+                f"Drydock '{name}' not found",
+                fix="Run 'ws list' to see available drydocks",
             )
         )
         return
@@ -72,7 +72,7 @@ def exec_cmd(ctx, name, cmd):
     if ws.state != "running":
         out.error(
             WsError(
-                f"Workspace '{name}' is not running (state: {ws.state})",
+                f"Drydock '{name}' is not running (state: {ws.state})",
                 fix=f"Run 'ws create {ws.project} {name}' to start it",
             )
         )
@@ -82,7 +82,7 @@ def exec_cmd(ctx, name, cmd):
     if overlay_path:
         workdir = _read_workspace_folder(overlay_path)
     else:
-        workdir = "/workspace"
+        workdir = "/drydock"
 
     effective_folder = (
         os.path.join(ws.worktree_path, ws.workspace_subdir)
@@ -93,7 +93,7 @@ def exec_cmd(ctx, name, cmd):
     if not container_id:
         out.error(
             WsError(
-                f"No running container found for workspace '{name}'",
+                f"No running container found for drydock '{name}'",
                 fix=f"The container may have stopped. Run 'ws inspect {name}' to check status",
             )
         )

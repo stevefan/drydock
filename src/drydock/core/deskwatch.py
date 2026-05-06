@@ -18,12 +18,12 @@ Project YAML:
         - name: daily-crawl
           expect_success_within: 25h
       outputs:
-        - path: /workspace/data/auction_crawl.db
+        - path: /drydock/data/auction_crawl.db
           max_age: 25h
           may_be_empty: true
       probes:
         - name: db-readable
-          cmd: "test -r /workspace/data/auction_crawl.db"
+          cmd: "test -r /drydock/data/auction_crawl.db"
           interval: 1h
 
 All three sections optional. A desk without a `deskwatch:` block is
@@ -145,7 +145,7 @@ def parse_deskwatch_config(raw: dict | None) -> DeskwatchConfig:
         if not isinstance(item, dict) or "path" not in item:
             raise WsError(
                 "deskwatch.outputs entries must be dicts with at least 'path'",
-                fix="Example: - path: /workspace/data/out.db\\n          max_age: 25h",
+                fix="Example: - path: /drydock/data/out.db\\n          max_age: 25h",
                 code="deskwatch_outputs_invalid",
             )
         outputs.append(OutputExpectation(
@@ -211,14 +211,14 @@ def _parse_ts(ts: str) -> datetime:
 
 def evaluate_jobs(
     registry,
-    desk_id: str,
+    drydock_id: str,
     jobs: list[JobExpectation],
     now: datetime | None = None,
 ) -> list[Check]:
     now = now or _utcnow()
     checks: list[Check] = []
     for job in jobs:
-        last = registry.last_deskwatch_event(desk_id, "job_run", job.name)
+        last = registry.last_deskwatch_event(drydock_id, "job_run", job.name)
         if last is None:
             checks.append(Check(
                 kind="job", name=job.name, healthy=False,
@@ -329,7 +329,7 @@ def evaluate_outputs(
 
 def evaluate_probes(
     registry,
-    desk_id: str,
+    drydock_id: str,
     container_id: str,
     probes: list[ProbeExpectation],
     now: datetime | None = None,
@@ -345,7 +345,7 @@ def evaluate_probes(
     now = now or _utcnow()
     checks: list[Check] = []
     for probe in probes:
-        last = registry.last_deskwatch_event(desk_id, "probe_result", probe.name)
+        last = registry.last_deskwatch_event(drydock_id, "probe_result", probe.name)
         should_run = True
         if not force_rerun and last is not None:
             last_ts = _parse_ts(last["timestamp"])
@@ -355,7 +355,7 @@ def evaluate_probes(
         if should_run:
             if not container_id:
                 registry.record_deskwatch_event(
-                    desk_id, "probe_result", probe.name, "missing",
+                    drydock_id, "probe_result", probe.name, "missing",
                     detail="container not running",
                 )
                 checks.append(Check(
@@ -374,9 +374,9 @@ def evaluate_probes(
                 status = "failed"
                 detail = f"probe exception: {exc}"
             registry.record_deskwatch_event(
-                desk_id, "probe_result", probe.name, status, detail=detail,
+                drydock_id, "probe_result", probe.name, status, detail=detail,
             )
-            last = registry.last_deskwatch_event(desk_id, "probe_result", probe.name)
+            last = registry.last_deskwatch_event(drydock_id, "probe_result", probe.name)
 
         last_ts = _parse_ts(last["timestamp"])
         age = now - last_ts
@@ -416,7 +416,7 @@ def evaluate_desk(
     violations = sum(1 for c in checks if not c.healthy)
     return {
         "desk": ws.name,
-        "desk_id": ws.id,
+        "drydock_id": ws.id,
         "evaluated_at": now.isoformat(),
         "checks": [c.to_dict() for c in checks],
         "violations": violations,

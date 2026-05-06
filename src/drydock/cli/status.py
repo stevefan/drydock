@@ -1,4 +1,4 @@
-"""ws status — per-workspace health overview."""
+"""ws status — per-drydock health overview."""
 
 import json
 import logging
@@ -30,14 +30,14 @@ def _effective_workspace_folder(ws) -> str:
 def _read_workspace_folder(ws) -> str:
     overlay_path = ws.config.get("overlay_path", "")
     if not overlay_path:
-        return "/workspace"
+        return "/drydock"
     try:
         with open(overlay_path) as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         logger.debug("status: failed reading overlay for %s: %s", ws.name, exc)
-        return "/workspace"
-    return data.get("workspaceFolder", "/workspace")
+        return "/drydock"
+    return data.get("drydockFolder", "/drydock")
 
 
 def _docker_container_id(*candidate_paths: str) -> str:
@@ -111,7 +111,7 @@ def _probe_firewall(container_id: str) -> bool:
         return False
 
 
-def _exec_in_workspace(ws, command: list[str], devcontainer: DevcontainerCLI | None = None):
+def _exec_in_drydock(ws, command: list[str], devcontainer: DevcontainerCLI | None = None):
     if not ws.worktree_path:
         return None
     devcontainer = devcontainer or DevcontainerCLI()
@@ -129,7 +129,7 @@ def _probe_refresh_supervisor(
 ) -> str:
     if firewall_status != "active":
         return "not_applicable"
-    result = _exec_in_workspace(
+    result = _exec_in_drydock(
         ws,
         [
             "sh",
@@ -152,7 +152,7 @@ def _probe_refresh_supervisor(
 
 
 def _probe_ipset(ws, devcontainer: DevcontainerCLI | None = None) -> dict[str, int] | None:
-    result = _exec_in_workspace(
+    result = _exec_in_drydock(
         ws,
         ["ipset", "list", "allowed-domains", "-t"],
         devcontainer,
@@ -167,11 +167,11 @@ def _probe_ipset(ws, devcontainer: DevcontainerCLI | None = None) -> dict[str, i
     return {"size": int(size_match.group(1)), "max": int(max_match.group(1))}
 
 
-def _trusted_workspace_entry_matches(entry, workspace_folder: str) -> bool | None:
+def _trusted_drydock_entry_matches(entry, workspace_folder: str) -> bool | None:
     if isinstance(entry, str):
         return entry == workspace_folder
     if isinstance(entry, dict):
-        for key in ("path", "workspaceFolder"):
+        for key in ("path", "drydockFolder"):
             value = entry.get(key)
             if isinstance(value, str):
                 return value == workspace_folder
@@ -182,7 +182,7 @@ def _probe_trust_accepted(
     ws,
     devcontainer: DevcontainerCLI | None = None,
 ) -> bool | None:
-    result = _exec_in_workspace(
+    result = _exec_in_drydock(
         ws,
         ["cat", "/home/node/.claude/.claude.json"],
         devcontainer,
@@ -206,7 +206,7 @@ def _probe_trust_accepted(
     if isinstance(trusted, list):
         saw_recognized = False
         for entry in trusted:
-            matched = _trusted_workspace_entry_matches(entry, workspace_folder)
+            matched = _trusted_drydock_entry_matches(entry, workspace_folder)
             if matched is None:
                 continue
             saw_recognized = True
@@ -368,7 +368,7 @@ def _probe_compliance(ws) -> str | None:
     return "ok"
 
 
-def _probe_workspace(ws) -> dict:
+def _probe_drydock(ws) -> dict:
     row = {
         "name": ws.name,
         "state": ws.state,
@@ -411,12 +411,12 @@ def _probe_workspace(ws) -> dict:
 @click.command()
 @click.pass_context
 def status(ctx):
-    """Show per-workspace health status."""
+    """Show per-drydock health status."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    workspaces = registry.list_workspaces()
-    rows = [_probe_workspace(ws) for ws in workspaces]
+    drydocks = registry.list_drydocks()
+    rows = [_probe_drydock(ws) for ws in drydocks]
 
     out.table(
         rows,

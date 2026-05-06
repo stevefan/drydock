@@ -14,13 +14,13 @@ See [vocabulary.md](vocabulary.md) for Harbor / DryDock / Worker. See [capabilit
 
 Laptops sleep, reboot, get OS-updated, travel. Hetzner-class Harbors are durable — same identity day after day, same audit principal, same policy scope. Credentials with multi-hour OAuth expiry want to live where something can refresh them on a timer, not where they decay in a sleeping keychain.
 
-## The fleet-auth employee (first instance)
+## The archipelago-auth employee (first instance)
 
 `infra` drydock on `drydock-hillsboro`. Its job:
 
-1. Hold archipelago-level Claude Code OAuth credentials at `~/.drydock/secrets/ws_infra/{claude_credentials, claude_account_state}`.
+1. Hold archipelago-level Claude Code OAuth credentials at `~/.drydock/secrets/dock_infra/{claude_credentials, claude_account_state}`.
 2. Run `claude remote-control` inside the drydock — that process's built-in refresh loop keeps the OAuth token alive indefinitely.
-3. Delegate to peer drydocks on request: another drydock with `request_secret_leases` + `claude_credentials` in its `delegatable_secrets` calls `RequestCapability(type=SECRET, scope={secret_name: "claude_credentials", source_desk_id: "ws_infra"})`. The daemon reads bytes from infra's secret dir, writes a copy into the caller's secret dir (chowned to container uid), audits, returns the lease.
+3. Delegate to peer drydocks on request: another drydock with `request_secret_leases` + `claude_credentials` in its `delegatable_secrets` calls `RequestCapability(type=SECRET, scope={secret_name: "claude_credentials", source_desk_id: "dock_infra"})`. The daemon reads bytes from infra's secret dir, writes a copy into the caller's secret dir (chowned to container uid), audits, returns the lease.
 
 Project YAML shape:
 
@@ -47,7 +47,7 @@ delegatable_secrets:
   - claude_account_state
 ```
 
-Secrets on Harbor at `~/.drydock/secrets/ws_infra/` include a daemon-issued `drydock-token` and the human-seeded Claude credentials. An `/etc/cron.d/drydock-infra-auth-check` cron runs every 4h to warn if the OAuth token's `expiresAt` has passed.
+Secrets on Harbor at `~/.drydock/secrets/dock_infra/` include a daemon-issued `drydock-token` and the human-seeded Claude credentials. An `/etc/cron.d/drydock-infra-auth-check` cron runs every 4h to warn if the OAuth token's `expiresAt` has passed.
 
 ## Why V2's primitives unlock this
 

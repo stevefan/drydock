@@ -3,7 +3,7 @@
 Phase A of docs/design/resource-ceilings.md: the substrate-enforced
 half of the two-track design. These ceilings translate directly to
 docker runArgs and the kernel kills any process that breaches them.
-No Harbormaster/Harbormaster involvement — the substrate is the enforcer.
+No Authority/Auditor involvement — the substrate is the enforcer.
 
 The deliberately-narrow Phase A surface:
 
@@ -13,9 +13,9 @@ The deliberately-narrow Phase A surface:
 | memory_max    | memory_max     | --memory=N          | OOM-takes-host       |
 | pids_max      | pids_max       | --pids-limit=N      | fork bomb            |
 
-`workspace_disk_max` is intentionally NOT in Phase A because reliable
+`drydock_disk_max` is intentionally NOT in Phase A because reliable
 filesystem quotas need an xfs/btrfs worktree volume that ext4-on-the-
-Harbor doesn't have. Soft observation by the Harbormaster (Phase B) covers
+Harbor doesn't have. Soft observation by the Auditor (Phase B) covers
 the disk-fills case until quota fs lands.
 
 Soft ceilings (anthropic_tokens_per_day, egress_bytes_per_day, etc.)

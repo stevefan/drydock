@@ -53,7 +53,7 @@ def sync(ctx, name, source_branch):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if ws is None:
         out.error(WsError(f"Drydock '{name}' not found",
                           fix="Check `ws list` for the name",

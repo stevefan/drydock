@@ -5,7 +5,7 @@ Pin the contracts:
 - parse_percent strips % and parses float; None on garbage
 - parse_docker_stats_line handles realistic docker stats output
 - malformed input returns None for the field, not crash
-- count_recent_audit_events filters by desk_id + window
+- count_recent_audit_events filters by drydock_id + window
 - count_active_leases excludes revoked
 - snapshot_harbor handles missing-container gracefully (metrics=None)
 - HarborSnapshot is JSON-serializable
@@ -36,7 +36,7 @@ from drydock.core.auditor.storage import (
     write_snapshot,
 )
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 
 class TestParseSize:
@@ -120,8 +120,8 @@ def registry(tmp_path):
     r.close()
 
 
-def _ws(name: str) -> Workspace:
-    return Workspace(
+def _ws(name: str) -> Drydock:
+    return Drydock(
         name=name, project=name, repo_path="/tmp/r", worktree_path=f"/tmp/{name}",
         branch=f"ws/{name}", state="running", container_id="cid_" + name,
     )
@@ -129,49 +129,49 @@ def _ws(name: str) -> Workspace:
 
 class TestCountActiveLeases:
     def test_empty(self, registry):
-        registry.create_workspace(_ws("a"))
-        result = count_active_leases(registry, "ws_a")
+        registry.create_drydock(_ws("a"))
+        result = count_active_leases(registry, "dock_a")
         assert result == {"active_total": 0, "by_type": {}}
 
     def test_with_leases(self, registry):
         from drydock.core.capability import CapabilityLease, CapabilityType
-        registry.create_workspace(_ws("a"))
+        registry.create_drydock(_ws("a"))
         # Issue two SECRET leases and one STORAGE_MOUNT
         for i, t in enumerate([CapabilityType.SECRET, CapabilityType.SECRET,
                                 CapabilityType.STORAGE_MOUNT]):
             registry.insert_lease(CapabilityLease(
-                lease_id=f"l_{i}", desk_id="ws_a", type=t,
+                lease_id=f"l_{i}", drydock_id="dock_a", type=t,
                 scope={}, issued_at=datetime.now(timezone.utc),
-                expiry=None, issuer="wsd",
+                expiry=None, issuer="daemon",
             ))
-        result = count_active_leases(registry, "ws_a")
+        result = count_active_leases(registry, "dock_a")
         assert result["active_total"] == 3
         assert result["by_type"] == {"SECRET": 2, "STORAGE_MOUNT": 1}
 
     def test_revoked_excluded(self, registry):
         from drydock.core.capability import CapabilityLease, CapabilityType
-        registry.create_workspace(_ws("a"))
+        registry.create_drydock(_ws("a"))
         registry.insert_lease(CapabilityLease(
-            lease_id="l1", desk_id="ws_a", type=CapabilityType.SECRET,
+            lease_id="l1", drydock_id="dock_a", type=CapabilityType.SECRET,
             scope={}, issued_at=datetime.now(timezone.utc),
-            expiry=None, issuer="wsd",
+            expiry=None, issuer="daemon",
         ))
         registry.revoke_lease("l1", "test")
-        result = count_active_leases(registry, "ws_a")
+        result = count_active_leases(registry, "dock_a")
         assert result == {"active_total": 0, "by_type": {}}
 
 
 class TestCountRecentAuditEvents:
     def test_missing_log_returns_none(self, tmp_path):
         result = count_recent_audit_events(
-            "ws_a", audit_path=tmp_path / "no-such-log",
+            "dock_a", audit_path=tmp_path / "no-such-log",
         )
         assert result is None
 
     def test_empty_log_returns_zero(self, tmp_path):
         log = tmp_path / "audit.log"
         log.write_text("")
-        result = count_recent_audit_events("ws_a", audit_path=log)
+        result = count_recent_audit_events("dock_a", audit_path=log)
         assert result == {"events_total": 0, "by_event_class": {}}
 
     def test_filters_by_desk_id(self, tmp_path):
@@ -179,13 +179,13 @@ class TestCountRecentAuditEvents:
         now = datetime.now(timezone.utc).isoformat()
         log.write_text(
             json.dumps({"timestamp": now, "event": "lease.issued",
-                        "principal": "ws_a"}) + "\n"
+                        "principal": "dock_a"}) + "\n"
             + json.dumps({"timestamp": now, "event": "lease.issued",
-                          "principal": "ws_b"}) + "\n"
+                          "principal": "dock_b"}) + "\n"
             + json.dumps({"timestamp": now, "event": "lease.denied",
-                          "principal": "ws_a"}) + "\n"
+                          "principal": "dock_a"}) + "\n"
         )
-        result = count_recent_audit_events("ws_a", audit_path=log)
+        result = count_recent_audit_events("dock_a", audit_path=log)
         assert result["events_total"] == 2
         assert result["by_event_class"] == {"lease.issued": 1, "lease.denied": 1}
 
@@ -194,11 +194,11 @@ class TestCountRecentAuditEvents:
         recent = datetime.now(timezone.utc).isoformat()
         old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         log.write_text(
-            json.dumps({"timestamp": recent, "event": "x", "principal": "ws_a"}) + "\n"
-            + json.dumps({"timestamp": old, "event": "y", "principal": "ws_a"}) + "\n"
+            json.dumps({"timestamp": recent, "event": "x", "principal": "dock_a"}) + "\n"
+            + json.dumps({"timestamp": old, "event": "y", "principal": "dock_a"}) + "\n"
         )
         result = count_recent_audit_events(
-            "ws_a", audit_path=log, window=timedelta(hours=1),
+            "dock_a", audit_path=log, window=timedelta(hours=1),
         )
         assert result["events_total"] == 1
 
@@ -206,12 +206,12 @@ class TestCountRecentAuditEvents:
         log = tmp_path / "audit.log"
         now = datetime.now(timezone.utc).isoformat()
         log.write_text(
-            json.dumps({"timestamp": now, "event": "x", "principal": "ws_a"}) + "\n"
+            json.dumps({"timestamp": now, "event": "x", "principal": "dock_a"}) + "\n"
             + "not json\n"
             + "\n"
-            + json.dumps({"timestamp": now, "event": "y", "principal": "ws_a"}) + "\n"
+            + json.dumps({"timestamp": now, "event": "y", "principal": "dock_a"}) + "\n"
         )
-        result = count_recent_audit_events("ws_a", audit_path=log)
+        result = count_recent_audit_events("dock_a", audit_path=log)
         assert result["events_total"] == 2
 
 
@@ -228,8 +228,8 @@ class TestSnapshotHarbor:
         from drydock.core.auditor import measurement
         monkeypatch.setattr(measurement, "collect_docker_stats", lambda ids: {})
 
-        registry.create_workspace(_ws("alpha"))
-        registry.create_workspace(_ws("beta"))
+        registry.create_drydock(_ws("alpha"))
+        registry.create_drydock(_ws("beta"))
         snap = snapshot_harbor(registry, hostname="test")
         assert snap.drydock_count == 2
         assert all(d["metrics"] is None for d in snap.drydocks)
@@ -239,7 +239,7 @@ class TestSnapshotHarbor:
             assert d["yaml_drift"] in ("unpinned", "unknown")
 
     def test_serializes_to_json(self, registry):
-        registry.create_workspace(_ws("alpha"))
+        registry.create_drydock(_ws("alpha"))
         snap = snapshot_harbor(registry, hostname="test")
         # Should not raise
         json.dumps(snap.to_dict())

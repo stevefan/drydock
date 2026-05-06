@@ -2,10 +2,10 @@
 
 Per docs/v2-design-capability-broker.md and docs/v2-design-protocol.md:
 
-- Subject desk is derived from the bearer token (caller_desk_id) — never
+- Subject desk is derived from the bearer token (caller_drydock_id) — never
   taken as an RPC argument. Mitigates a confused-deputy class of bugs.
 - V2.0 ships type=SECRET. V2.1 added cross-drydock secret delegation via
-  `source_desk_id`. V4 Phase 1 adds type=STORAGE_MOUNT (scoped AWS STS
+  `source_drydock_id`. V4 Phase 1 adds type=STORAGE_MOUNT (scoped AWS STS
   credentials). Phase 1c adds type=NETWORK_REACH (live firewall opens
   via add-allowed-domain.sh; per-Dock delegatable_network_reach +
   network_reach_ports policy). Only COMPUTE_QUOTA remains reserved-but-
@@ -58,7 +58,7 @@ from drydock.core.storage import (
     StorageBackendUnavailable,
     StorageCredential,
 )
-from drydock.wsd.server import _RpcError
+from drydock.daemon.server import _RpcError
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def _emit_capability_amendment(
     *,
     kind: str,
     request: dict,
-    caller_desk_id: str,
+    caller_drydock_id: str,
     status: str,
     reason: str | None = None,
 ) -> None:
@@ -99,8 +99,8 @@ def _emit_capability_amendment(
             kind=kind,
             request=request,
             proposed_by_type="dockworker",
-            proposed_by_id=caller_desk_id,
-            drydock_id=caller_desk_id,
+            proposed_by_id=caller_drydock_id,
+            drydock_id=caller_drydock_id,
             reason=reason,
             status=status,
         )
@@ -108,9 +108,9 @@ def _emit_capability_amendment(
         # Amendment recording is observability — must not crash the
         # capability handler. Log but don't escalate.
         logger.exception(
-            "wsd: failed to emit capability amendment "
+            "daemon: failed to emit capability amendment "
             "(caller=%s kind=%s status=%s) — capability path continues",
-            caller_desk_id, kind, status,
+            caller_drydock_id, kind, status,
         )
 
 
@@ -145,7 +145,7 @@ def _check_capability(
 def request_capability(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
     *,
     registry_path: Path,
     secrets_root: Path,
@@ -153,7 +153,7 @@ def request_capability(
     backend: SecretsBackend | None = None,
     storage_backend: StorageBackend | None = None,
 ) -> dict:
-    if caller_desk_id is None:
+    if caller_drydock_id is None:
         # The dispatcher should have rejected this already (requires_auth=True),
         # but defense-in-depth: handler must not run without a subject.
         raise _RpcError(code=-32004, message="unauthenticated", data={"reason": "no_caller"})
@@ -164,7 +164,7 @@ def request_capability(
     if request_type == "SECRET":
         return _handle_secret_request(
             spec,
-            caller_desk_id=caller_desk_id,
+            caller_drydock_id=caller_drydock_id,
             request_id=request_id,
             registry_path=registry_path,
             secrets_root=secrets_root,
@@ -174,7 +174,7 @@ def request_capability(
     if request_type == "STORAGE_MOUNT":
         return _handle_storage_request(
             spec,
-            caller_desk_id=caller_desk_id,
+            caller_drydock_id=caller_drydock_id,
             request_id=request_id,
             registry_path=registry_path,
             secrets_root=secrets_root,
@@ -183,7 +183,7 @@ def request_capability(
     if request_type == "INFRA_PROVISION":
         return _handle_provision_request(
             spec,
-            caller_desk_id=caller_desk_id,
+            caller_drydock_id=caller_drydock_id,
             request_id=request_id,
             registry_path=registry_path,
             secrets_root=secrets_root,
@@ -192,7 +192,7 @@ def request_capability(
     if request_type == "NETWORK_REACH":
         return _handle_network_reach_request(
             spec,
-            caller_desk_id=caller_desk_id,
+            caller_drydock_id=caller_drydock_id,
             request_id=request_id,
             registry_path=registry_path,
         )
@@ -204,7 +204,7 @@ def request_capability(
 def _handle_network_reach_request(
     spec: dict,
     *,
-    caller_desk_id: str,
+    caller_drydock_id: str,
     request_id: str | int | None,
     registry_path: Path,
 ) -> dict:
@@ -219,10 +219,10 @@ def _handle_network_reach_request(
     """
     registry = Registry(db_path=registry_path)
     try:
-        policy_row = registry.load_desk_policy(caller_desk_id)
+        policy_row = registry.load_desk_policy(caller_drydock_id)
         if policy_row is None:
             raise _RpcError(code=-32001, message="desk_not_found",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_NETWORK_REACH,
@@ -244,7 +244,7 @@ def _handle_network_reach_request(
             }
             emit_audit(
                 "lease.denied",
-                principal=caller_desk_id,
+                principal=caller_drydock_id,
                 request_id=request_id,
                 method="RequestCapability",
                 result="denied",
@@ -270,7 +270,7 @@ def _handle_network_reach_request(
             _emit_capability_amendment(
                 registry, kind="network_reach",
                 request={"domain": spec["domain"], "port": spec["port"]},
-                caller_desk_id=caller_desk_id, status="escalated",
+                caller_drydock_id=caller_drydock_id, status="escalated",
                 reason=f"narrowness_violated: {reason}",
             )
             raise _RpcError(
@@ -282,14 +282,14 @@ def _handle_network_reach_request(
         # ungated desks don't go dark in operation.
         is_wildcard_grant = "*" in granted_domains
 
-        workspace = _lookup_workspace(registry, caller_desk_id)
-        if workspace is None or not workspace.container_id:
+        drydock = _lookup_drydock(registry, caller_drydock_id)
+        if drydock is None or not drydock.container_id:
             raise _RpcError(code=-32010, message="desk_not_running",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         try:
             add_result = _materialize_network_reach(
-                workspace.container_id, spec["domain"], spec["port"],
+                drydock.container_id, spec["domain"], spec["port"],
             )
         except RuntimeError as exc:
             raise _RpcError(code=-32011, message="materialization_failed",
@@ -299,7 +299,7 @@ def _handle_network_reach_request(
             err = add_result.get("error", "add_failed")
             emit_audit(
                 "lease.denied",
-                principal=caller_desk_id,
+                principal=caller_drydock_id,
                 request_id=request_id,
                 method="RequestCapability",
                 result="denied",
@@ -320,33 +320,33 @@ def _handle_network_reach_request(
         }
         lease = CapabilityLease(
             lease_id=f"nr_{uuid4().hex}",
-            desk_id=caller_desk_id,
+            drydock_id=caller_drydock_id,
             type=CapabilityType.NETWORK_REACH,
             scope=lease_scope,
             issued_at=_utc_now(),
             expiry=None,    # additive-only V1; container restart wipes
-            issuer="wsd",
+            issuer="daemon",
         )
         registry.insert_lease(lease)
         _emit_capability_amendment(
             registry, kind="network_reach",
             request={"domain": spec["domain"], "port": spec["port"]},
-            caller_desk_id=caller_desk_id, status="auto_approved",
+            caller_drydock_id=caller_drydock_id, status="auto_approved",
             reason="within_policy" + (" (wildcard grant)" if is_wildcard_grant else ""),
         )
         logger.info(
-            "wsd: NETWORK_REACH lease issued lease_id=%s desk_id=%s domain=%s port=%s wildcard=%s",
-            lease.lease_id, caller_desk_id, spec["domain"], spec["port"], is_wildcard_grant,
+            "daemon: NETWORK_REACH lease issued lease_id=%s drydock_id=%s domain=%s port=%s wildcard=%s",
+            lease.lease_id, caller_drydock_id, spec["domain"], spec["port"], is_wildcard_grant,
         )
         emit_audit(
             "lease.issued",
-            principal=caller_desk_id,
+            principal=caller_drydock_id,
             request_id=request_id,
             method="RequestCapability",
             result="ok",
             details={
                 "lease_id": lease.lease_id,
-                "desk_id": caller_desk_id,
+                "drydock_id": caller_drydock_id,
                 "type": lease.type.value,
                 "scope": dict(lease.scope),
                 "expiry": None,
@@ -389,7 +389,7 @@ def _materialize_network_reach(
 def _handle_secret_request(
     spec: dict,
     *,
-    caller_desk_id: str,
+    caller_drydock_id: str,
     request_id: str | int | None,
     registry_path: Path,
     secrets_root: Path,
@@ -399,10 +399,10 @@ def _handle_secret_request(
     backend = backend or build_backend(backend_name, secrets_root=secrets_root)
     registry = Registry(db_path=registry_path)
     try:
-        policy_row = registry.load_desk_policy(caller_desk_id)
+        policy_row = registry.load_desk_policy(caller_drydock_id)
         if policy_row is None:
             raise _RpcError(code=-32001, message="desk_not_found",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_SECRET_LEASES,
@@ -414,8 +414,8 @@ def _handle_secret_request(
             _emit_capability_amendment(
                 registry, kind="secret_grant",
                 request={"secret_name": spec["secret_name"],
-                         "source_desk_id": spec.get("source_desk_id")},
-                caller_desk_id=caller_desk_id, status="escalated",
+                         "source_drydock_id": spec.get("source_drydock_id")},
+                caller_drydock_id=caller_drydock_id, status="escalated",
                 reason="narrowness_violated: secret_not_entitled",
             )
             raise _RpcError(
@@ -428,17 +428,17 @@ def _handle_secret_request(
             )
 
         # Resolve which desk's secret dir to read from.
-        source_desk_id = spec.get("source_desk_id")
-        fetch_desk_id = source_desk_id or caller_desk_id
-        is_cross_desk = source_desk_id is not None and source_desk_id != caller_desk_id
+        source_drydock_id = spec.get("source_drydock_id")
+        fetch_desk_id = source_drydock_id or caller_drydock_id
+        is_cross_desk = source_drydock_id is not None and source_drydock_id != caller_drydock_id
 
         if is_cross_desk:
             # Validate source desk exists.
-            source_policy = registry.load_desk_policy(source_desk_id)
+            source_policy = registry.load_desk_policy(source_drydock_id)
             if source_policy is None:
                 raise _RpcError(
                     code=-32001, message="source_desk_not_found",
-                    data={"source_desk_id": source_desk_id},
+                    data={"source_drydock_id": source_drydock_id},
                 )
 
         try:
@@ -464,7 +464,7 @@ def _handle_secret_request(
         # /run/secrets/<name> inside the caller's container.
         #
         # Same-Dock + file-backed (V2.0): the overlay bind-mounts
-        # ~/.drydock/secrets/<caller_desk_id>/ at /run/secrets/ read-only.
+        # ~/.drydock/secrets/<caller_drydock_id>/ at /run/secrets/ read-only.
         # The file is already visible. No materialization needed.
         #
         # Cross-Dock + file-backed (V2.1): the source desk's file is NOT
@@ -474,17 +474,17 @@ def _handle_secret_request(
         # On release, daemon removes the file from the caller's dir.
         #
         # Non-file backends: active docker-exec materialization.
-        workspace = _lookup_workspace(registry, caller_desk_id)
-        if workspace is None or not workspace.container_id:
+        drydock = _lookup_drydock(registry, caller_drydock_id)
+        if drydock is None or not drydock.container_id:
             raise _RpcError(code=-32010, message="desk_not_running",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         if is_cross_desk and isinstance(backend, FileBackend):
             # Cross-Dock file-backed: write source bytes into caller's
             # host secret dir so the bind mount picks them up.
             try:
                 _materialize_to_host_secret_dir(
-                    secrets_root, caller_desk_id, spec["secret_name"], payload,
+                    secrets_root, caller_drydock_id, spec["secret_name"], payload,
                 )
             except OSError as exc:
                 raise _RpcError(code=-32011, message="materialization_failed",
@@ -492,46 +492,46 @@ def _handle_secret_request(
         elif not isinstance(backend, FileBackend):
             # Non-file backends: active docker-exec materialization.
             try:
-                _materialize_secret(workspace.container_id, spec["secret_name"], payload)
+                _materialize_secret(drydock.container_id, spec["secret_name"], payload)
             except RuntimeError as exc:
                 raise _RpcError(code=-32011, message="materialization_failed",
                                 data={"detail": str(exc)})
         # else: same-desk file-backed — already visible via bind mount.
 
         lease_scope: dict = {"secret_name": spec["secret_name"]}
-        if source_desk_id:
-            lease_scope["source_desk_id"] = source_desk_id
+        if source_drydock_id:
+            lease_scope["source_drydock_id"] = source_drydock_id
 
         lease = CapabilityLease(
             lease_id=f"ls_{uuid4().hex}",
-            desk_id=caller_desk_id,
+            drydock_id=caller_drydock_id,
             type=CapabilityType.SECRET,
             scope=lease_scope,
             issued_at=_utc_now(),
             expiry=None,
-            issuer="wsd",
+            issuer="daemon",
         )
         registry.insert_lease(lease)
         _emit_capability_amendment(
             registry, kind="secret_grant",
             request={"secret_name": spec["secret_name"],
-                     "source_desk_id": source_desk_id},
-            caller_desk_id=caller_desk_id, status="auto_approved",
+                     "source_drydock_id": source_drydock_id},
+            caller_drydock_id=caller_drydock_id, status="auto_approved",
             reason="within_policy",
         )
         logger.info(
-            "wsd: capability lease issued lease_id=%s desk_id=%s secret=%s",
-            lease.lease_id, caller_desk_id, spec["secret_name"],
+            "daemon: capability lease issued lease_id=%s drydock_id=%s secret=%s",
+            lease.lease_id, caller_drydock_id, spec["secret_name"],
         )
         emit_audit(
             "lease.issued",
-            principal=caller_desk_id,
+            principal=caller_drydock_id,
             request_id=request_id,
             method="RequestCapability",
             result="ok",
             details={
                 "lease_id": lease.lease_id,
-                "desk_id": caller_desk_id,
+                "drydock_id": caller_drydock_id,
                 "type": lease.type.value,
                 "scope": dict(lease.scope),
                 "expiry": None,
@@ -545,7 +545,7 @@ def _handle_secret_request(
 def _handle_storage_request(
     spec: dict,
     *,
-    caller_desk_id: str,
+    caller_drydock_id: str,
     request_id: str | int | None,
     registry_path: Path,
     secrets_root: Path,
@@ -561,7 +561,7 @@ def _handle_storage_request(
         raise _RpcError(
             code=-32015, message="storage_backend_not_configured",
             data={
-                "fix": "Set [storage] backend = 'sts' and role_arn = '...' in ~/.drydock/wsd.toml",
+                "fix": "Set [storage] backend = 'sts' and role_arn = '...' in ~/.drydock/daemon.toml",
             },
         )
 
@@ -572,13 +572,13 @@ def _handle_storage_request(
         # overwrites prior creds, so stale "active" rows would make release
         # cleanup unreliable). Auto-revoke prior on new issue.
         while True:
-            prior = registry.find_active_aws_lease(caller_desk_id)
+            prior = registry.find_active_aws_lease(caller_drydock_id)
             if prior is None:
                 break
             registry.revoke_lease(prior.lease_id, "superseded")
             emit_audit(
                 "lease.released",
-                principal=caller_desk_id,
+                principal=caller_drydock_id,
                 request_id=request_id,
                 method="RequestCapability",
                 result="ok",
@@ -588,13 +588,13 @@ def _handle_storage_request(
                 },
             )
             logger.info(
-                "wsd: superseded prior storage lease %s on new issue", prior.lease_id,
+                "daemon: superseded prior storage lease %s on new issue", prior.lease_id,
             )
 
-        policy_row = registry.load_desk_policy(caller_desk_id)
+        policy_row = registry.load_desk_policy(caller_drydock_id)
         if policy_row is None:
             raise _RpcError(code=-32001, message="desk_not_found",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_STORAGE_LEASES,
@@ -614,7 +614,7 @@ def _handle_storage_request(
                 registry, kind="storage_grant",
                 request={"bucket": spec["bucket"], "prefix": spec["prefix"],
                          "mode": spec["mode"]},
-                caller_desk_id=caller_desk_id, status="escalated",
+                caller_drydock_id=caller_drydock_id, status="escalated",
                 reason="narrowness_violated: storage_scope_not_entitled",
             )
             raise _RpcError(
@@ -632,14 +632,14 @@ def _handle_storage_request(
                 },
             )
 
-        workspace = _lookup_workspace(registry, caller_desk_id)
-        if workspace is None or not workspace.container_id:
+        drydock = _lookup_drydock(registry, caller_drydock_id)
+        if drydock is None or not drydock.container_id:
             raise _RpcError(code=-32010, message="desk_not_running",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         try:
             cred = storage_backend.mint(
-                desk_id=caller_desk_id,
+                drydock_id=caller_drydock_id,
                 bucket=spec["bucket"],
                 prefix=spec["prefix"],
                 mode=spec["mode"],
@@ -655,7 +655,7 @@ def _handle_storage_request(
                             data={"detail": str(exc), "retry": True})
 
         try:
-            _materialize_storage_credentials(secrets_root, caller_desk_id, cred)
+            _materialize_storage_credentials(secrets_root, caller_drydock_id, cred)
         except OSError as exc:
             raise _RpcError(code=-32011, message="materialization_failed",
                             data={"detail": str(exc)})
@@ -668,34 +668,34 @@ def _handle_storage_request(
         }
         lease = CapabilityLease(
             lease_id=f"ls_{uuid4().hex}",
-            desk_id=caller_desk_id,
+            drydock_id=caller_drydock_id,
             type=CapabilityType.STORAGE_MOUNT,
             scope=lease_scope,
             issued_at=_utc_now(),
             expiry=cred.expiration,
-            issuer="wsd",
+            issuer="daemon",
         )
         registry.insert_lease(lease)
         _emit_capability_amendment(
             registry, kind="storage_grant",
             request={"bucket": spec["bucket"], "prefix": spec["prefix"],
                      "mode": spec["mode"]},
-            caller_desk_id=caller_desk_id, status="auto_approved",
+            caller_drydock_id=caller_drydock_id, status="auto_approved",
             reason="within_policy",
         )
         logger.info(
-            "wsd: storage lease issued lease_id=%s desk_id=%s bucket=%s prefix=%s mode=%s",
-            lease.lease_id, caller_desk_id, spec["bucket"], spec["prefix"], spec["mode"],
+            "daemon: storage lease issued lease_id=%s drydock_id=%s bucket=%s prefix=%s mode=%s",
+            lease.lease_id, caller_drydock_id, spec["bucket"], spec["prefix"], spec["mode"],
         )
         emit_audit(
             "lease.issued",
-            principal=caller_desk_id,
+            principal=caller_drydock_id,
             request_id=request_id,
             method="RequestCapability",
             result="ok",
             details={
                 "lease_id": lease.lease_id,
-                "desk_id": caller_desk_id,
+                "drydock_id": caller_drydock_id,
                 "type": lease.type.value,
                 "scope": dict(lease.scope),
                 "expiry": cred.expiration.isoformat(),
@@ -709,7 +709,7 @@ def _handle_storage_request(
 def _handle_provision_request(
     spec: dict,
     *,
-    caller_desk_id: str,
+    caller_drydock_id: str,
     request_id: str | int | None,
     registry_path: Path,
     secrets_root: Path,
@@ -725,29 +725,29 @@ def _handle_provision_request(
     if storage_backend is None:
         raise _RpcError(
             code=-32015, message="storage_backend_not_configured",
-            data={"fix": "Set [storage] backend = 'sts' and role_arn = '...' in ~/.drydock/wsd.toml"},
+            data={"fix": "Set [storage] backend = 'sts' and role_arn = '...' in ~/.drydock/daemon.toml"},
         )
 
     registry = Registry(db_path=registry_path)
     try:
         while True:
-            prior = registry.find_active_aws_lease(caller_desk_id)
+            prior = registry.find_active_aws_lease(caller_drydock_id)
             if prior is None:
                 break
             registry.revoke_lease(prior.lease_id, "superseded")
             emit_audit(
                 "lease.released",
-                principal=caller_desk_id,
+                principal=caller_drydock_id,
                 request_id=request_id,
                 method="RequestCapability",
                 result="ok",
                 details={"lease_id": prior.lease_id, "reason": "superseded_by_new_provision_lease"},
             )
 
-        policy_row = registry.load_desk_policy(caller_desk_id)
+        policy_row = registry.load_desk_policy(caller_drydock_id)
         if policy_row is None:
             raise _RpcError(code=-32001, message="desk_not_found",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         _check_capability(
             policy_row, CapabilityKind.REQUEST_PROVISION_LEASES,
@@ -759,7 +759,7 @@ def _handle_provision_request(
             _emit_capability_amendment(
                 registry, kind="provision_grant",
                 request={"actions": list(spec["actions"])},
-                caller_desk_id=caller_desk_id, status="escalated",
+                caller_drydock_id=caller_drydock_id, status="escalated",
                 reason="narrowness_violated: provision_actions_not_entitled",
             )
             raise _RpcError(
@@ -772,14 +772,14 @@ def _handle_provision_request(
                 },
             )
 
-        workspace = _lookup_workspace(registry, caller_desk_id)
-        if workspace is None or not workspace.container_id:
+        drydock = _lookup_drydock(registry, caller_drydock_id)
+        if drydock is None or not drydock.container_id:
             raise _RpcError(code=-32010, message="desk_not_running",
-                            data={"desk_id": caller_desk_id})
+                            data={"drydock_id": caller_drydock_id})
 
         try:
             cred = storage_backend.mint_provision(
-                desk_id=caller_desk_id,
+                drydock_id=caller_drydock_id,
                 actions=spec["actions"],
             )
         except StorageBackendConfigError as exc:
@@ -793,7 +793,7 @@ def _handle_provision_request(
                             data={"detail": str(exc), "retry": True})
 
         try:
-            _materialize_storage_credentials(secrets_root, caller_desk_id, cred)
+            _materialize_storage_credentials(secrets_root, caller_drydock_id, cred)
         except OSError as exc:
             raise _RpcError(code=-32011, message="materialization_failed",
                             data={"detail": str(exc)})
@@ -804,33 +804,33 @@ def _handle_provision_request(
         }
         lease = CapabilityLease(
             lease_id=f"ls_{uuid4().hex}",
-            desk_id=caller_desk_id,
+            drydock_id=caller_drydock_id,
             type=CapabilityType.INFRA_PROVISION,
             scope=lease_scope,
             issued_at=_utc_now(),
             expiry=cred.expiration,
-            issuer="wsd",
+            issuer="daemon",
         )
         registry.insert_lease(lease)
         _emit_capability_amendment(
             registry, kind="provision_grant",
             request={"actions": list(spec["actions"])},
-            caller_desk_id=caller_desk_id, status="auto_approved",
+            caller_drydock_id=caller_drydock_id, status="auto_approved",
             reason="within_policy",
         )
         logger.info(
-            "wsd: provision lease issued lease_id=%s desk_id=%s actions=%s",
-            lease.lease_id, caller_desk_id, spec["actions"],
+            "daemon: provision lease issued lease_id=%s drydock_id=%s actions=%s",
+            lease.lease_id, caller_drydock_id, spec["actions"],
         )
         emit_audit(
             "lease.issued",
-            principal=caller_desk_id,
+            principal=caller_drydock_id,
             request_id=request_id,
             method="RequestCapability",
             result="ok",
             details={
                 "lease_id": lease.lease_id,
-                "desk_id": caller_desk_id,
+                "drydock_id": caller_drydock_id,
                 "type": lease.type.value,
                 "scope": dict(lease.scope),
                 "expiry": cred.expiration.isoformat(),
@@ -844,12 +844,12 @@ def _handle_provision_request(
 def release_capability(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
     *,
     registry_path: Path,
     secrets_root: Path,
 ) -> dict:
-    if caller_desk_id is None:
+    if caller_drydock_id is None:
         raise _RpcError(code=-32004, message="unauthenticated", data={"reason": "no_caller"})
 
     if not isinstance(params, dict):
@@ -866,7 +866,7 @@ def release_capability(
         if lease is None:
             raise _RpcError(code=-32012, message="lease_not_found",
                             data={"lease_id": lease_id})
-        if lease.desk_id != caller_desk_id:
+        if lease.drydock_id != caller_drydock_id:
             raise _RpcError(code=-32012, message="lease_not_found",
                             data={"lease_id": lease_id})
 
@@ -879,21 +879,21 @@ def release_capability(
         # secret dir. On release, remove the copy so the caller loses
         # access through the bind mount.
         if lease.type == CapabilityType.SECRET and revoked:
-            source_desk_id = lease.scope.get("source_desk_id")
+            source_drydock_id = lease.scope.get("source_drydock_id")
             secret_name = lease.scope.get("secret_name")
             is_cross_desk = (
-                isinstance(source_desk_id, str)
-                and source_desk_id != caller_desk_id
+                isinstance(source_drydock_id, str)
+                and source_drydock_id != caller_drydock_id
             )
             if is_cross_desk and isinstance(secret_name, str):
                 # Only remove if no other active lease still grants the
                 # same cross-Dock secret to this caller.
                 still_active = registry.find_active_secret_lease(
-                    caller_desk_id, secret_name,
+                    caller_drydock_id, secret_name,
                 )
                 if still_active is None:
                     _remove_from_host_secret_dir(
-                        secrets_root, caller_desk_id, secret_name,
+                        secrets_root, caller_drydock_id, secret_name,
                     )
 
         # Storage lease cleanup. The daemon materialized aws_* files into
@@ -904,9 +904,9 @@ def release_capability(
         # per drydock overwrites prior creds in place. On release of the
         # last active lease we drop the files entirely.
         if lease.type in (CapabilityType.STORAGE_MOUNT, CapabilityType.INFRA_PROVISION) and revoked:
-            still_active_aws = registry.find_active_aws_lease(caller_desk_id)
+            still_active_aws = registry.find_active_aws_lease(caller_drydock_id)
             if still_active_aws is None:
-                _remove_storage_credentials(secrets_root, caller_desk_id)
+                _remove_storage_credentials(secrets_root, caller_drydock_id)
 
         # NETWORK_REACH release is bookkeeping-only in V1 (additive-only
         # firewall model per network-reach.md). The ipset entry stays put
@@ -918,14 +918,14 @@ def release_capability(
         if revoked:
             emit_audit(
                 "lease.released",
-                principal=caller_desk_id,
+                principal=caller_drydock_id,
                 request_id=request_id,
                 method="ReleaseCapability",
                 result="ok",
                 details={
                     "lease_id": lease_id,
                     "reason": "client_release",
-                    "source_desk_id": lease.scope.get("source_desk_id"),
+                    "source_drydock_id": lease.scope.get("source_drydock_id"),
                 },
             )
         return {"lease_id": lease_id, "revoked": revoked}
@@ -1012,17 +1012,17 @@ def _validate_secret_scope(scope: dict) -> dict:
         raise _RpcError(code=-32602, message="invalid_params",
                         data={"reason": "scope.secret_name must match [A-Za-z0-9_.-]{1,64}"})
 
-    # V2.1: optional source_desk_id for cross-Dock secret delegation.
+    # V2.1: optional source_drydock_id for cross-Dock secret delegation.
     # When present, the daemon reads from the source desk's secret dir
     # instead of the caller's. The caller must still have the secret in
     # its own entitlements (the capability broker gate is on the CALLER's
     # policy, not the source's).
-    source_desk_id = scope.get("source_desk_id")
-    if source_desk_id is not None and not isinstance(source_desk_id, str):
+    source_drydock_id = scope.get("source_drydock_id")
+    if source_drydock_id is not None and not isinstance(source_drydock_id, str):
         raise _RpcError(code=-32602, message="invalid_params",
-                        data={"reason": "scope.source_desk_id must be a string"})
+                        data={"reason": "scope.source_drydock_id must be a string"})
 
-    return {"type": "SECRET", "secret_name": secret_name, "source_desk_id": source_desk_id}
+    return {"type": "SECRET", "secret_name": secret_name, "source_drydock_id": source_drydock_id}
 
 
 def _validate_storage_scope(scope: dict) -> dict:
@@ -1091,13 +1091,13 @@ _STORAGE_CRED_FILENAMES = (
 
 
 def _materialize_storage_credentials(
-    secrets_root: Path, desk_id: str, cred: "StorageCredential",
+    secrets_root: Path, drydock_id: str, cred: "StorageCredential",
 ) -> None:
     """Write storage lease bytes into the caller's host secret dir.
 
     Writes 4 files: aws_access_key_id, aws_secret_access_key,
     aws_session_token, aws_session_expiration. The overlay bind-mounts
-    ~/.drydock/secrets/<desk_id>/ read-only at /run/secrets/ inside the
+    ~/.drydock/secrets/<drydock_id>/ read-only at /run/secrets/ inside the
     container, so these become immediately visible to the worker.
 
     Files are chowned to the container's node uid (1000) with mode 0400
@@ -1110,7 +1110,7 @@ def _materialize_storage_credentials(
     mid-write could see inconsistent state. Acceptable today: workers
     poll on aws_session_expiration to check freshness.
     """
-    desk_dir = secrets_root / desk_id
+    desk_dir = secrets_root / drydock_id
     desk_dir.mkdir(parents=True, exist_ok=True)
     payload = cred.to_files()
     for name, value in payload.items():
@@ -1124,20 +1124,20 @@ def _materialize_storage_credentials(
         os.chmod(target, 0o400)
 
 
-def _remove_storage_credentials(secrets_root: Path, desk_id: str) -> None:
+def _remove_storage_credentials(secrets_root: Path, drydock_id: str) -> None:
     """Remove the 4 aws_* storage-lease files from the Dock's secret dir."""
-    desk_dir = secrets_root / desk_id
+    desk_dir = secrets_root / drydock_id
     for name in _STORAGE_CRED_FILENAMES:
         target = desk_dir / name
         try:
             target.unlink(missing_ok=True)
         except OSError as exc:
-            logger.warning("wsd: failed to remove %s: %s", target, exc)
+            logger.warning("daemon: failed to remove %s: %s", target, exc)
 
 
-def _lookup_workspace(registry: Registry, desk_id: str):
-    for ws in registry.list_workspaces():
-        if ws.id == desk_id:
+def _lookup_drydock(registry: Registry, drydock_id: str):
+    for ws in registry.list_drydocks():
+        if ws.id == drydock_id:
             return ws
     return None
 
@@ -1172,7 +1172,7 @@ def _materialize_secret(container_id: str, secret_name: str, payload: bytes) -> 
 
 
 def _materialize_to_host_secret_dir(
-    secrets_root: Path, desk_id: str, secret_name: str, payload: bytes,
+    secrets_root: Path, drydock_id: str, secret_name: str, payload: bytes,
 ) -> None:
     """Write secret bytes into a Dock's host secret directory.
 
@@ -1184,32 +1184,32 @@ def _materialize_to_host_secret_dir(
     Without chown the worker inside the drydock can't read a root-owned
     0400 file — same class as the STORAGE_MOUNT materialization gotcha.
     """
-    desk_dir = secrets_root / desk_id
+    desk_dir = secrets_root / drydock_id
     desk_dir.mkdir(parents=True, exist_ok=True)
     target = desk_dir / secret_name
     target.write_bytes(payload)
     chown_to_container(target)
     os.chmod(target, 0o400)
     logger.info(
-        "wsd: cross-Dock secret materialized at %s (%d bytes)",
+        "daemon: cross-Dock secret materialized at %s (%d bytes)",
         target, len(payload),
     )
 
 
 def _remove_from_host_secret_dir(
-    secrets_root: Path, desk_id: str, secret_name: str,
+    secrets_root: Path, drydock_id: str, secret_name: str,
 ) -> None:
     """Remove a cross-Dock materialized secret from the host secret dir.
 
     Best-effort: logs on failure, does not raise. The lease is already
     revoked in the registry; the file is a convenience copy.
     """
-    target = secrets_root / desk_id / secret_name
+    target = secrets_root / drydock_id / secret_name
     try:
         target.unlink(missing_ok=True)
-        logger.info("wsd: cross-Dock secret removed from %s", target)
+        logger.info("daemon: cross-Dock secret removed from %s", target)
     except OSError as exc:
-        logger.warning("wsd: failed to remove cross-Dock secret %s: %s", target, exc)
+        logger.warning("daemon: failed to remove cross-Dock secret %s: %s", target, exc)
 
 
 def _remove_materialized_secret(container_id: str, secret_name: str) -> None:
@@ -1228,8 +1228,8 @@ def _remove_materialized_secret(container_id: str, secret_name: str) -> None:
         )
         if result.returncode != 0:
             logger.warning(
-                "wsd: failed to remove %s in %s: %s",
+                "daemon: failed to remove %s in %s: %s",
                 target, container_id, result.stderr.strip(),
             )
     except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("wsd: docker exec rm failed for %s: %s", target, exc)
+        logger.warning("daemon: docker exec rm failed for %s: %s", target, exc)

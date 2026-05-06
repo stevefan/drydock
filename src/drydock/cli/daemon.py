@@ -1,4 +1,4 @@
-"""ws daemon — manage the local drydock.wsd process."""
+"""drydock daemon — manage the local drydock.daemon process."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import click
-from drydock.cli._wsd_client import DaemonRpcError, DaemonUnavailable, call_daemon
+from drydock.cli._daemon_client import DaemonRpcError, DaemonUnavailable, call_daemon
 
 
 STARTUP_TIMEOUT_SECONDS = 5.0
@@ -25,23 +25,23 @@ def _state_root() -> Path:
 def _socket_path(value: str | Path | None = None) -> Path:
     if value is not None:
         return Path(value).expanduser()
-    return Path(os.environ.get("DRYDOCK_WSD_SOCKET", "~/.drydock/run/wsd.sock")).expanduser()
+    return Path(os.environ.get("DRYDOCK_DAEMON_SOCKET", "~/.drydock/run/daemon.sock")).expanduser()
 
 
 def _registry_path(value: str | Path | None = None) -> Path:
     if value is not None:
         return Path(value).expanduser()
-    return Path(os.environ.get("DRYDOCK_WSD_REGISTRY", "~/.drydock/registry.db")).expanduser()
+    return Path(os.environ.get("DRYDOCK_DAEMON_REGISTRY", "~/.drydock/registry.db")).expanduser()
 
 
 def _log_path(value: str | Path | None = None) -> Path:
     if value is not None:
         return Path(value).expanduser()
-    return Path(os.environ.get("DRYDOCK_WSD_LOG", "~/.drydock/wsd.log")).expanduser()
+    return Path(os.environ.get("DRYDOCK_DAEMON_LOG", "~/.drydock/daemon.log")).expanduser()
 
 
 def _pid_path() -> Path:
-    return _state_root() / "wsd.pid"
+    return _state_root() / "daemon.pid"
 
 
 def _read_pid(pid_path: Path) -> int | None:
@@ -82,7 +82,7 @@ def _daemon_command(socket_path: Path, registry_path: Path) -> list[str]:
     return [
         sys.executable,
         "-m",
-        "drydock.wsd",
+        "drydock.daemon",
         "--socket",
         str(socket_path),
         "--registry",
@@ -127,7 +127,7 @@ def _emit_start_failure(log_path: Path) -> None:
 def _health_call(socket_path: Path, timeout: float = HEALTH_TIMEOUT_SECONDS) -> bool:
     try:
         result = call_daemon(
-            "wsd.health",
+            "daemon.health",
             {},
             socket_path=socket_path,
             request_id="daemon-status",
@@ -186,7 +186,7 @@ def _wait_for_socket_removal(socket_path: Path, timeout: float) -> None:
 
 @click.group()
 def daemon():
-    """Manage the local drydock.wsd daemon."""
+    """Manage the local drydock daemon."""
 
 
 @daemon.command()
@@ -285,8 +285,8 @@ def reload(
 
     The daemon is a long-lived Python process; editable-install code
     changes (pipx install --editable) don't reach it without a
-    restart. `ws daemon reload` stops + starts in one command. Equivalent
-    to `systemctl restart drydock-wsd.service` where systemd is
+    restart. `drydock daemon reload` stops + starts in one command. Equivalent
+    to `systemctl restart drydock.service` where systemd is
     managing the unit.
     """
     pid_path = _pid_path()

@@ -33,8 +33,8 @@ class TestCreateAmendment:
             kind="network_reach",
             request={"domain": "github.com", "port": 443},
             proposed_by_type="dockworker",
-            proposed_by_id="ws_auction_crawl",
-            drydock_id="ws_auction_crawl",
+            proposed_by_id="dock_auction_crawl",
+            drydock_id="dock_auction_crawl",
             reason="fetching deps",
         )
         assert a["id"].startswith("am_")
@@ -99,15 +99,15 @@ class TestListAmendments:
     def test_filter_by_drydock(self, registry):
         registry.create_amendment(
             kind="x", request={}, proposed_by_type="dockworker",
-            proposed_by_id="ws_a", drydock_id="ws_a",
+            proposed_by_id="dock_a", drydock_id="dock_a",
         )
         registry.create_amendment(
             kind="x", request={}, proposed_by_type="dockworker",
-            proposed_by_id="ws_b", drydock_id="ws_b",
+            proposed_by_id="dock_b", drydock_id="dock_b",
         )
-        a_only = registry.list_amendments(drydock_id="ws_a")
+        a_only = registry.list_amendments(drydock_id="dock_a")
         assert len(a_only) == 1
-        assert a_only[0]["drydock_id"] == "ws_a"
+        assert a_only[0]["drydock_id"] == "dock_a"
 
     def test_newest_first(self, registry):
         ids = []

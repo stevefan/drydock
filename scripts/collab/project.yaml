@@ -11,10 +11,10 @@
 #
 # Userland setup, in order:
 #   1. Create a Telegram bot via @BotFather, capture the token.
-#   2. ws secret set collab telegram_bot_token <token-from-stdin>
-#   3. (Optional) ws secret set collab telegram_allowed_chats <comma-list>
+#   2. drydock secret set collab telegram_bot_token <token-from-stdin>
+#   3. (Optional) drydock secret set collab telegram_allowed_chats <comma-list>
 #      — if unset, the bot TOFU-pins to the first chat it sees.
-#   4. ws stop collab && ws create collab    # so the secret is mounted
+#   4. drydock stop collab && drydock create collab    # so the secret is mounted
 #   5. Send any message in your bot's chat — bot pins to that chat id.
 #   6. Tailscale admin → ACL: allow `tag:collab` SSH for collaborators.
 

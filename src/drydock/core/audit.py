@@ -1,14 +1,14 @@
-"""Append-only audit log for workspace lifecycle events.
+"""Append-only audit log for drydock lifecycle events.
 
 Two emitters write to the same JSONL file at ~/.drydock/audit.log:
 
-- `log_event(event, workspace_id, extra)` — v1 shape. Used by host CLI
+- `log_event(event, drydock_id, extra)` — v1 shape. Used by host CLI
   commands today (cli/create.py, cli/destroy.py, cli/stop.py,
   cli/tailnet.py). Kept for backward compatibility — every existing
-  consumer reads its keys (`event`, `workspace_id`, `timestamp`).
+  consumer reads its keys (`event`, `drydock_id`, `timestamp`).
 
 - `emit_audit(event, principal, request_id, method, result, details)`
-  — V2 spec shape per docs/v2-design-state.md §1a. Used by the wsd
+  — V2 spec shape per docs/v2-design-state.md §1a. Used by the drydock daemon
   daemon. Adds `principal`, `request_id`, `method`, `result` so audit
   consumers can correlate events to RPC calls and filter by caller.
 
@@ -29,13 +29,13 @@ DEFAULT_LOG_PATH = Path.home() / ".drydock" / "audit.log"
 # these names — adding events is free; renaming or removing is a
 # breaking change for every audit consumer.
 V2_EVENTS = frozenset({
-    "desk.created",
-    "desk.resumed",
-    "desk.spawned",
-    "desk.spawn_rejected",
-    "desk.stopped",
-    "desk.destroyed",
-    "desk.error",
+    "drydock.created",
+    "drydock.resumed",
+    "drydock.spawned",
+    "drydock.spawn_rejected",
+    "drydock.stopped",
+    "drydock.destroyed",
+    "drydock.error",
     "lease.issued",
     "lease.renewed",
     "lease.released",
@@ -63,7 +63,7 @@ def _resolve_log_path(log_path: Path | None) -> Path:
 
 def log_event(
     event: str,
-    workspace_id: str,
+    drydock_id: str,
     extra: dict | None = None,
     *,
     log_path: Path | None = None,
@@ -76,7 +76,7 @@ def log_event(
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "event": event,
-        "workspace_id": workspace_id,
+        "drydock_id": drydock_id,
     }
     if extra:
         entry.update(extra)

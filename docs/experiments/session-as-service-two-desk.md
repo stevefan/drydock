@@ -28,7 +28,7 @@ A desk running `claude -p --resume <session-id> "<prompt>"` against a *peer desk
 
 - Two drydock desks, reachable via Tailscale. `auction-crawl` (Hetzner) and any local desk, for example.
 - A Claude session file on desk B with accumulated context about a topic desk A wants to ask about. Location: `~/.claude/projects/<project-slug>/<session-id>.jsonl` inside the desk.
-- SSH or `ws exec` access from desk A to desk B (drydock already provides Tailscale SSH).
+- SSH or `drydock exec` access from desk A to desk B (drydock already provides Tailscale SSH).
 
 ## Protocol
 
@@ -37,7 +37,7 @@ A desk running `claude -p --resume <session-id> "<prompt>"` against a *peer desk
 From desk A:
 
 ```bash
-# Via ws exec into desk B, or ssh over Tailscale, invoke claude --resume on desk B's session
+# Via drydock exec into desk B, or ssh over Tailscale, invoke claude --resume on desk B's session
 ssh node@<desk-b-tailnet-hostname> \
   "cd <desk-b-project-path> && claude -p --resume <session-id> 'In one paragraph: what is the current state of <topic>, based on your memory of our conversation?'" \
   > probe_output.txt
@@ -92,7 +92,7 @@ Today's reality: if desk A can `ssh node@desk-b`, it can `claude -p --resume` an
 
 - **Evidence (or counter-evidence) for session-as-service.** If probe 1 produces coherent replies with acceptable latency and probe 2 doesn't mutate on simple reads, the primitive is viable. If every probe degrades or mutates, the primitive isn't ready and substrate shoulders more coordination weight.
 - **A concrete failure-mode inventory** for V2 capability design. The `scope` dict for a future `SESSION_QUERY` capability should encode what the probes surfaced (read-only vs. mutating, concurrency serialization, drift-threshold hints, discovery surface).
-- **A real two-desk test of drydock V1's Tailscale reachability** for something beyond `ws attach`. Bonus.
+- **A real two-desk test of drydock V1's Tailscale reachability** for something beyond `drydock attach`. Bonus.
 
 ## Open design questions the results should inform
 
@@ -104,7 +104,7 @@ Today's reality: if desk A can `ssh node@desk-b`, it can `claude -p --resume` an
 ## Failure modes to watch for
 
 - **Session lock file / IPC conflict.** Claude Code may hold a lock on active sessions. Resuming a session that's in use by a live Claude process may fail or interfere.
-- **Filesystem access not granted to peer user.** ws exec runs as the desk's container user; session files may have restrictive permissions.
+- **Filesystem access not granted to peer user.** drydock exec runs as the desk's container user; session files may have restrictive permissions.
 - **Model mismatch.** Desk A queries at a moment when desk B's session was using a different model. Output style differs. Not a bug, but worth noting.
 - **Drift masquerading as wrong answer.** B's session "knows" about a situation that has changed. Reply is coherent but wrong. The worst failure mode — tests should explicitly include a post-session event.
 
@@ -115,7 +115,7 @@ Half a day to a full day once both desks are up. Most of the time is in evaluati
 ## Follow-ups (not this experiment)
 
 - Add session discovery / registry to drydock V2 daemon as a reserved future capability.
-- Wrap the probe in a small `ws session-query <peer-desk> <session-id> "<prompt>"` CLI once the primitive is validated.
+- Wrap the probe in a small `drydock session-query <peer-desk> <session-id> "<prompt>"` CLI once the primitive is validated.
 - Combine with substrate ingestion: the probe's reply AND the queried session both ingest into the hypergraph, giving a compounding knowledge surface.
 - Multi-desk orchestration patterns: agent-of-agents, where one desk's occupant routes sub-questions to peer desks.
 

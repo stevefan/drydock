@@ -10,7 +10,7 @@ See [vocabulary.md](vocabulary.md) for Harbor / DryDock / Worker. See [persisten
 
 Tailscale's `tailscale logout` releases the node-side auth state. It does **not** delete the device record from the tailnet admin. Per Tailscale's design, the device remains as an "offline" record indefinitely until explicitly removed via the admin UI or the Tailscale API.
 
-Concrete symptom (observed 2026-04-14): the Mac auction-crawl drydock was `ws stop`'d, drydock called `tailscale logout` correctly, but the `auction-crawl` device record remained in the tailnet admin. When a new drydock on Hetzner came up with the same configured hostname, Tailscale auto-renamed it to `auction-crawl-1`. Identity continuity broken; canonical hostname lost.
+Concrete symptom (observed 2026-04-14): the Mac auction-crawl drydock was `drydock stop`'d, drydock called `tailscale logout` correctly, but the `auction-crawl` device record remained in the tailnet admin. When a new drydock on Hetzner came up with the same configured hostname, Tailscale auto-renamed it to `auction-crawl-1`. Identity continuity broken; canonical hostname lost.
 
 The daemon owns drydock lifecycle in V2. Tailnet identity IS drydock identity (the per-node hostname IS the audit principal in tailnet logs, the SSH target, the firewall identity). Letting it linger contradicts the "drydocks as durable addressable places" promise.
 
@@ -21,8 +21,8 @@ What ships:
 - **Daemon-side tailnet device deletion** as part of `DestroyDesk` cleanup (and cascaded child destroys).
 - **Daemon-level admin credential** (Tailscale API token), stored as daemon-internal infrastructure at `~/.drydock/daemon-secrets/` — not a per-drydock capability.
 - **Two audit events** (`tailnet.device_deleted`, `tailnet.device_delete_failed`) in the schema — see [persistence.md](persistence.md).
-- **One admin RPC** (`PruneStaleTailnetDevices`) for batch cleanup of orphaned records. CLI surface: `ws tailnet prune [--apply]`.
-- **Harbor-mode parity**: Harbor-mode `ws destroy` calls the same primitive when the daemon is configured with a token; behavior unchanged when no token is configured.
+- **One admin RPC** (`PruneStaleTailnetDevices`) for batch cleanup of orphaned records. CLI surface: `drydock tailnet prune [--apply]`.
+- **Harbor-mode parity**: Harbor-mode `drydock destroy` calls the same primitive when the daemon is configured with a token; behavior unchanged when no token is configured.
 
 Not in scope:
 
@@ -46,7 +46,7 @@ The cleaner framing: the token is **daemon-internal infrastructure**, like the d
 | Path | `~/.drydock/daemon-secrets/tailscale_admin_token` |
 | Mode | `0400`, owned by daemon uid |
 | Required scope | `devices` (Tailscale API key generation UI) |
-| Tailnet identifier | Configured in `wsd.toml` (`tailnet = "..."`); not fetched dynamically |
+| Tailnet identifier | Configured in `daemon.toml` (`tailnet = "..."`); not fetched dynamically |
 | Absence behavior | Non-fatal. Daemon logs `warning: no tailnet admin token configured; device records will not be auto-deleted on destroy`. Behavior matches V1 (logout only, record persists). |
 
 Rotation is operator-driven; no V2 daemon-side rotation logic. (Revisit when the secrets-broker plugin pattern can lease from external sources — capability broker §7.)
@@ -58,25 +58,25 @@ Rotation is operator-driven; no V2 daemon-side rotation logic. (Revisit when the
 Pseudocode:
 
 ```
-def destroy_desk(desk_id):
-    desk = registry.get_desk(desk_id)
-    children = registry.get_children(desk_id)
+def destroy_desk(drydock_id):
+    desk = registry.get_desk(drydock_id)
+    children = registry.get_children(drydock_id)
     for child in children:
         destroy_desk(child.id)  # cascaded; emits its own audit
     devc.tailnet_logout(desk.container_id)   # existing v1 behavior
     devc.stop(desk.container_id)
     devc.remove(desk.container_id)
     checkout.remove(desk.worktree_path)
-    registry.delete(desk_id)
-    audit.emit("desk.destroyed", {desk_id, cascaded_children: [c.id for c in children]})
+    registry.delete(drydock_id)
+    audit.emit("desk.destroyed", {drydock_id, cascaded_children: [c.id for c in children]})
     if tailnet_admin_token_present():
         try:
             device_id = tailnet.find_device_by_hostname(desk.tailscale_hostname or desk.id)
             tailnet.delete_device(device_id)
-            audit.emit("tailnet.device_deleted", {desk_id, hostname, device_id})
+            audit.emit("tailnet.device_deleted", {drydock_id, hostname, device_id})
         except TailnetApiError as e:
-            audit.emit("tailnet.device_delete_failed", {desk_id, hostname, device_id, error: str(e)})
-            log.warning("tailnet device delete failed for %s: %s", desk_id, e)
+            audit.emit("tailnet.device_delete_failed", {drydock_id, hostname, device_id, error: str(e)})
+            log.warning("tailnet device delete failed for %s: %s", drydock_id, e)
             # Destroy still succeeds — daemon-side teardown completed.
 ```
 
@@ -110,7 +110,7 @@ PruneStaleTailnetDevices {
 
 Logic: enumerate `GET /api/v2/tailnet/{tailnet}/devices`, match each against the `workspaces` registry by hostname, mark for deletion any whose hostname matches the drydock pattern but doesn't correspond to a live drydock.
 
-CLI: `ws tailnet prune` (alias of dry-run); `ws tailnet prune --apply`. Both list candidates first, before action.
+CLI: `drydock tailnet prune` (alias of dry-run); `drydock tailnet prune --apply`. Both list candidates first, before action.
 
 Useful after: force-removed containers, daemon crashes mid-destroy, stale records left by ad-hoc operations.
 
@@ -120,8 +120,8 @@ Two events extend the schema in [persistence.md](persistence.md):
 
 | Event | Emitted on | Required `details` keys |
 |---|---|---|
-| `tailnet.device_deleted` | Successful API DELETE during `DestroyDesk` cleanup or `PruneStaleTailnetDevices` | `desk_id` (nullable for prune of orphan), `hostname`, `device_id` |
-| `tailnet.device_delete_failed` | API DELETE returns non-2xx or connection fails | `desk_id` (nullable), `hostname`, `device_id` (nullable if resolve failed), `error` (string excerpt) |
+| `tailnet.device_deleted` | Successful API DELETE during `DestroyDesk` cleanup or `PruneStaleTailnetDevices` | `drydock_id` (nullable for prune of orphan), `hostname`, `device_id` |
+| `tailnet.device_delete_failed` | API DELETE returns non-2xx or connection fails | `drydock_id` (nullable), `hostname`, `device_id` (nullable if resolve failed), `error` (string excerpt) |
 
 The `result` field of the event envelope is `"ok"` for deleted and `"error"` for delete_failed.
 
@@ -129,12 +129,12 @@ The `result` field of the event envelope is `"ok"` for deleted and `"error"` for
 
 | Mode | Behavior |
 |---|---|
-| Daemon + token configured | `ws destroy` → daemon executes destroy → tailnet device deleted. |
-| Daemon, no token configured | `ws destroy` → `tailscale logout`, tailnet record persists. Daemon logs the absence at startup. |
+| Daemon + token configured | `drydock destroy` → daemon executes destroy → tailnet device deleted. |
+| Daemon, no token configured | `drydock destroy` → `tailscale logout`, tailnet record persists. Daemon logs the absence at startup. |
 
 ## 8. Open questions
 
-- **Multi-tailnet support**: a daemon handling drydocks across multiple tailnets. Today assumes one tailnet per daemon, configured in `wsd.toml`. Revisit if the need surfaces.
+- **Multi-tailnet support**: a daemon handling drydocks across multiple tailnets. Today assumes one tailnet per daemon, configured in `daemon.toml`. Revisit if the need surfaces.
 - **Tailscale OAuth client tokens vs. user API tokens**: OAuth clients (auto-issued from a tailnet) avoid manual rotation. Today accepts user API tokens; OAuth-client integration is an ergonomic improvement, not architectural.
 - **Reauth flow when admin token expires mid-destroy**: logs and proceeds (best-effort). Alerting hook addable if this becomes noisy.
 - Drydock memory: `project_v2_tailnet_lifecycle.md`.

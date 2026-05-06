@@ -1,8 +1,8 @@
 """Root pytest fixtures.
 
-Shared fixtures (registry, output, wsd) live here so any test can use them
+Shared fixtures (registry, output, daemon) live here so any test can use them
 via fixture lookup without import games. Sub-directory conftests must NOT
-declare these via `pytest_plugins = ("tests.wsd.conftest",)` etc. — that
+declare these via `pytest_plugins = ("tests.daemon.conftest",)` etc. — that
 collides with pytest's auto-discovery and produces a duplicate-plugin
 registration error.
 """
@@ -35,7 +35,7 @@ def output():
     return Output(force_json=True)
 
 
-# --- wsd daemon fixtures (per docs/v2-design-state.md §7) ---------------------
+# --- drydock daemon fixtures (per docs/v2-design-state.md §7) ---------------------
 
 
 def _wait_for_socket(path: Path, proc: subprocess.Popen, timeout: float = 5.0) -> None:
@@ -46,11 +46,11 @@ def _wait_for_socket(path: Path, proc: subprocess.Popen, timeout: float = 5.0) -
         if proc.poll() is not None:
             _, stderr = proc.communicate(timeout=1)
             raise RuntimeError(
-                f"wsd exited before socket appeared (rc={proc.returncode}); "
+                f"daemon exited before socket appeared (rc={proc.returncode}); "
                 f"stderr: {stderr.decode('utf-8', errors='replace')}"
             )
         time.sleep(0.02)
-    raise TimeoutError(f"wsd socket {path} did not appear within {timeout}s")
+    raise TimeoutError(f"daemon socket {path} did not appear within {timeout}s")
 
 
 class WsdClient:
@@ -101,10 +101,10 @@ class WsdClient:
 
 
 @pytest.fixture
-def wsd():
+def daemon():
     # macOS AF_UNIX socket paths are capped at ~104 chars; pytest's tmp_path
     # blows past that. Use a short /tmp dir instead and clean up manually.
-    tmp = Path(tempfile.mkdtemp(prefix="wsd-", dir="/tmp"))
+    tmp = Path(tempfile.mkdtemp(prefix="daemon-", dir="/tmp"))
     sock = tmp / "s"  # 1-char filename keeps path well under limit
     registry = tmp / "r.db"
     secrets_root = tmp / "secrets"
@@ -117,7 +117,7 @@ def wsd():
         [
             sys.executable,
             "-m",
-            "drydock.wsd",
+            "drydock.daemon",
             "--socket",
             str(sock),
             "--registry",

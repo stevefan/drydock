@@ -1,6 +1,6 @@
 # Yard — grouping of related DryDocks
 
-**Status:** sketch · **Pulls from:** [vocabulary.md](vocabulary.md) §"The seven layers" layer 3, [project-dock-ontology.md](project-dock-ontology.md), [principal-harbormaster-governance.md](principal-harbormaster-governance.md)
+**Status:** sketch · **Pulls from:** [vocabulary.md](vocabulary.md) §"The seven layers" layer 3, [project-dock-ontology.md](project-dock-ontology.md)
 
 ## What a Yard is
 
@@ -118,16 +118,16 @@ Existing Projects without a `yard:` field default to "no yard" — backwards-com
 
 | Command | Purpose |
 |---|---|
-| `ws yard create <name> [--repo <path>]` | Register a new Yard |
-| `ws yard list` | List Yards on this Harbor |
-| `ws yard show <name>` | Show Yard config + member Drydocks |
-| `ws yard destroy <name> [--with-members]` | Remove Yard (refuses if members exist unless --with-members) |
-| `ws yard add <name> <project>` | Add a Project to a Yard (sets the `yard:` field in its YAML) |
-| `ws yard remove <name> <project>` | Remove a Project from a Yard |
+| `drydock yard create <name> [--repo <path>]` | Register a new Yard |
+| `drydock yard list` | List Yards on this Harbor |
+| `drydock yard show <name>` | Show Yard config + member Drydocks |
+| `drydock yard destroy <name> [--with-members]` | Remove Yard (refuses if members exist unless --with-members) |
+| `drydock yard add <name> <project>` | Add a Project to a Yard (sets the `yard:` field in its YAML) |
+| `drydock yard remove <name> <project>` | Remove a Project from a Yard |
 
 ## Implementation phasing
 
-**Phase Y0 — primitive (this turn):** `yards` table, `yard_id` FK on workspaces, `ws yard create/list/show`, `yard:` field in project YAML wired through. NO shared-substrate features yet — Yards exist as a grouping with no functional difference from standalone Drydocks. Tests verify the schema, CRUD, and FK.
+**Phase Y0 — primitive (this turn):** `yards` table, `yard_id` FK on workspaces, `drydock yard create/list/show`, `yard:` field in project YAML wired through. NO shared-substrate features yet — Yards exist as a grouping with no functional difference from standalone Drydocks. Tests verify the schema, CRUD, and FK.
 
 **Phase Y1 — shared secrets:** member Drydocks can request secrets declared at Yard level via the broker (`RequestCapability(SECRET, scope.source_yard=microfoundry)`). Capability-handler change.
 
@@ -135,13 +135,16 @@ Existing Projects without a `yard:` field default to "no yard" — backwards-com
 
 **Phase Y3 — internal network:** member Drydocks get tailnet tags or docker-network membership tying them to the Yard's internal address space. NETWORK_REACH within yard becomes permissive-by-default.
 
-**Phase Y4 — collective metering / lifecycle:** Auditor groups by Yard in Telegram summaries; `ws yard up/down` brings whole Yards.
+**Phase Y4 — collective metering / lifecycle:** Auditor groups by Yard in Telegram summaries; `drydock yard up/down` brings whole Yards.
 
 This doc is what unblocks Phase Y0. Y1+ build on top.
 
-## Open questions
+## Resolved decisions and open questions
 
-1. **Cross-yard policy default.** Should a Drydock in microfoundry Yard need explicit narrowness to call something in personal-tools Yard, or is cross-yard explicit-deny? Probably explicit-narrowness (same as cross-domain network reach today). Document explicitly.
-2. **Yard YAML in source repo?** A Yard tied to a monorepo could have its YAML at `<repo>/.drydock/yard.yaml` instead of Harbor-local. Defers the same Phase 5 question from project-dock-ontology.md.
-3. **Cross-Harbor Yards.** If microfoundry Yard exists on both Mac and Hetzner, are they "the same Yard"? Probably no — Yard is a Harbor-local grouping; cross-Harbor coordination is its own concern. But naming convention (microfoundry@mac vs microfoundry@hetzner) might matter.
-4. **Yard authority for Auditor.** The Auditor (when implemented) presumably has read access across all Yards on its Harbor. Does it have *write* access (Bucket-2 actions like throttle) at Yard level too, or only per-Drydock? Probably both — throttling a Yard's egress affects all members.
+**Resolved:**
+- **Cross-yard policy default.** Explicit-narrowness, same as cross-domain network reach. A Drydock in microfoundry Yard needs declared narrowness to call into personal-tools Yard.
+- **Cross-Harbor Yards.** No — Yard is a Harbor-local grouping. If microfoundry exists on both Mac and Hetzner, they are distinct Yards (suggested naming: `microfoundry@mac` vs `microfoundry@hetzner`); cross-Harbor coordination is its own concern.
+
+**Still open:**
+1. **Yard YAML in source repo?** A Yard tied to a monorepo could have its YAML at `<repo>/.drydock/yard.yaml` instead of Harbor-local. Defers the same Phase 5 question from project-dock-ontology.md.
+2. **Yard authority for Auditor.** The Auditor (when implemented) presumably has read access across all Yards on its Harbor. Does it have *write* access (Bucket-2 actions like throttle) at Yard level too, or only per-Drydock? Probably both — throttling a Yard's egress affects all members.

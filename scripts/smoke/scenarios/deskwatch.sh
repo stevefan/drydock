@@ -1,7 +1,7 @@
 #!/bin/bash
-# smoke: deskwatch event → ws deskwatch end-to-end.
+# smoke: deskwatch event → drydock deskwatch end-to-end.
 #
-# Creates a throwaway desk, records a job_run event, asserts ws deskwatch
+# Creates a throwaway desk, records a job_run event, asserts drydock deskwatch
 # reports HEALTHY with exit 0. Then records a failure, asserts UNHEALTHY
 # with exit 1. Verifies both the CLI plumbing and the registry round-trip.
 #
@@ -17,13 +17,13 @@ SSH="ssh $HARBOR"
 NAME="smoke-deskwatch-$$"
 
 cleanup() {
-    $SSH "ws destroy $NAME --force" >/dev/null 2>&1 || true
+    $SSH "drydock destroy $NAME --force" >/dev/null 2>&1 || true
     $SSH "rm -f /root/.drydock/projects/$NAME.yaml" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 # Minimal project YAML so registry can create the desk without a real build.
-# We don't `ws create` — we just want the registry row to record events
+# We don't `drydock create` — we just want the registry row to record events
 # against. deskwatch operates against the registry.
 $SSH "cat > /root/.drydock/projects/$NAME.yaml" <<YAML
 repo_path: /root/src/infra
@@ -34,7 +34,7 @@ deskwatch:
 YAML
 
 # Insert a minimal registry row directly via the pipx-installed drydock
-# python. Avoids the cost of `ws create` (full container build) — we
+# python. Avoids the cost of `drydock create` (full container build) — we
 # only need a registry row so deskwatch has something to target.
 DRYDOCK_PY=$($SSH "head -1 \$(which ws) | tr -d '#!'")
 $SSH "$DRYDOCK_PY -c '
@@ -58,7 +58,7 @@ fi
 echo "no-events → unhealthy: OK"
 
 # 2. Record success → healthy, exit 0.
-$SSH "ws deskwatch-record $NAME job_run synthetic-job ok --detail 'smoke'" >/dev/null \
+$SSH "drydock deskwatch-record $NAME job_run synthetic-job ok --detail 'smoke'" >/dev/null \
     || { echo "FAIL: couldn't record ok event"; exit 1; }
 got=$($SSH "ws --json deskwatch $NAME 2>&1; echo EXIT:\$?")
 if ! echo "$got" | grep -q '"healthy": *true'; then
@@ -67,7 +67,7 @@ fi
 echo "ok event → healthy: OK"
 
 # 3. Record failure → unhealthy, exit 1.
-$SSH "ws deskwatch-record $NAME job_run synthetic-job failed --detail 'exit 2'" >/dev/null \
+$SSH "drydock deskwatch-record $NAME job_run synthetic-job failed --detail 'exit 2'" >/dev/null \
     || { echo "FAIL: couldn't record failed event"; exit 1; }
 got=$($SSH "ws --json deskwatch $NAME 2>&1; echo EXIT:\$?")
 if ! echo "$got" | grep -q '"healthy": *false'; then

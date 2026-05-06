@@ -67,14 +67,14 @@ def test_parse_empty_yields_empty_config():
 def test_parse_jobs_outputs_probes_full_cycle():
     raw = {
         "jobs": [{"name": "daily-crawl", "expect_success_within": "25h"}],
-        "outputs": [{"path": "/workspace/data/db.sqlite", "max_age": "25h",
+        "outputs": [{"path": "/drydock/data/db.sqlite", "max_age": "25h",
                      "may_be_empty": True}],
         "probes": [{"name": "alive", "cmd": "true", "interval": "1h"}],
     }
     c = parse_deskwatch_config(raw)
     assert c.jobs == [JobExpectation("daily-crawl", timedelta(hours=25))]
     assert c.outputs == [OutputExpectation(
-        "/workspace/data/db.sqlite", timedelta(hours=25), may_be_empty=True,
+        "/drydock/data/db.sqlite", timedelta(hours=25), may_be_empty=True,
     )]
     assert c.probes == [ProbeExpectation("alive", "true", timedelta(hours=1))]
 
@@ -183,7 +183,7 @@ def test_evaluate_outputs_stale_file_marks_unhealthy():
                return_value=_fake_stat_result(0, f"{four_days_ago} 12345")):
         checks = evaluate_outputs(
             container_id="abc",
-            outputs=[OutputExpectation("/workspace/db", timedelta(hours=25))],
+            outputs=[OutputExpectation("/drydock/db", timedelta(hours=25))],
             now=now,
         )
     assert checks[0].healthy is False
@@ -257,14 +257,14 @@ def test_evaluate_probes_reruns_after_interval_elapses():
 def test_registry_record_and_last_event_roundtrip(tmp_path):
     from drydock.core.registry import Registry
     reg = Registry(db_path=tmp_path / "registry.db")
-    reg.record_deskwatch_event("ws_x", "job_run", "nightly", "ok", detail="exit 0")
-    reg.record_deskwatch_event("ws_x", "job_run", "nightly", "failed", detail="exit 1")
-    latest = reg.last_deskwatch_event("ws_x", "job_run", "nightly")
+    reg.record_deskwatch_event("dock_x", "job_run", "nightly", "ok", detail="exit 0")
+    reg.record_deskwatch_event("dock_x", "job_run", "nightly", "failed", detail="exit 1")
+    latest = reg.last_deskwatch_event("dock_x", "job_run", "nightly")
     assert latest["status"] == "failed"
     assert latest["detail"] == "exit 1"
 
     # Different event name → separate history.
-    assert reg.last_deskwatch_event("ws_x", "job_run", "other") is None
+    assert reg.last_deskwatch_event("dock_x", "job_run", "other") is None
     reg.close()
 
 

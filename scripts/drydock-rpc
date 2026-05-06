@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""drydock-rpc — in-desk JSON-RPC client for the wsd daemon.
+"""drydock-rpc — in-desk JSON-RPC client for the drydock daemon.
 
 Designed to run inside a drydock container, reaching the Harbor-side
-`wsd` via the bind-mounted Unix socket. Equivalent surface to
+`drydock daemon` via the bind-mounted Unix socket. Equivalent surface to
 `src/drydock/cli/_wsd_client.py` but stdlib-only so it can ship as a
 single executable into `drydock-base`-derived containers without
 pulling in the full drydock Python package.
@@ -10,31 +10,31 @@ pulling in the full drydock Python package.
 Usage examples (from inside a drydock):
 
     # Health check
-    drydock-rpc wsd.health
+    drydock-rpc daemon.health
 
     # Identify the caller's desk (uses drydock-token from /run/secrets/)
-    drydock-rpc wsd.whoami
+    drydock-rpc daemon.whoami
 
     # List all drydocks visible on this Harbor
     drydock-rpc ListDesks
 
-    # Cross-desk secret delegation (V2.1): caller asks wsd for a lease
+    # Cross-desk secret delegation (V2.1): caller asks daemon for a lease
     # on infra's claude_credentials, materialized into this drydock
     # at /run/secrets/claude_credentials.
     drydock-rpc RequestCapability \\
         type=SECRET \\
         scope.secret_name=claude_credentials \\
-        scope.source_desk_id=ws_infra
+        scope.source_desk_id=dock_infra
 
 Dotted keys (`scope.foo=bar`) build nested dicts. Values are JSON-parsed
 when they look like JSON (`true`, `42`, `null`, strings-with-quotes);
 otherwise passed through as raw strings.
 
 Auth: reads `/run/secrets/drydock-token` if present and sends it as the
-`auth` field of every request. That is how wsd derives the subject
+`auth` field of every request. That is how daemon derives the subject
 desk_id for `RequestCapability` (see v2-design-protocol.md §5).
 
-Socket path: `$DRYDOCK_WSD_SOCKET`, default `/run/drydock/wsd.sock`.
+Socket path: `$DRYDOCK_DAEMON_SOCKET`, default `/run/drydock/daemon.sock`.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ import sys
 import uuid
 from pathlib import Path
 
-DEFAULT_SOCKET = "/run/drydock/wsd.sock"
+DEFAULT_SOCKET = "/run/drydock/daemon.sock"
 DEFAULT_TOKEN_PATH = "/run/secrets/drydock-token"
 DEFAULT_TIMEOUT = 30.0
 
@@ -119,16 +119,16 @@ def call(
             buf += chunk
 
     if not buf:
-        raise RuntimeError("empty response from wsd")
+        raise RuntimeError("empty response from daemon")
     return json.loads(buf.decode("utf-8").strip())
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="drydock-rpc",
-        description="In-desk JSON-RPC client for the wsd daemon.",
+        description="In-desk JSON-RPC client for the drydock daemon.",
     )
-    parser.add_argument("method", help="RPC method name (e.g. wsd.health, RequestCapability)")
+    parser.add_argument("method", help="RPC method name (e.g. daemon.health, RequestCapability)")
     parser.add_argument(
         "params",
         nargs="*",
@@ -136,8 +136,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--socket",
-        default=os.environ.get("DRYDOCK_WSD_SOCKET", DEFAULT_SOCKET),
-        help=f"Unix socket path (default: $DRYDOCK_WSD_SOCKET or {DEFAULT_SOCKET})",
+        default=os.environ.get("DRYDOCK_DAEMON_SOCKET", DEFAULT_SOCKET),
+        help=f"Unix socket path (default: $DRYDOCK_DAEMON_SOCKET or {DEFAULT_SOCKET})",
     )
     parser.add_argument(
         "--request-id",
@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"drydock-rpc: socket not found at {args.socket}", file=sys.stderr)
         return 3
     except ConnectionRefusedError:
-        print(f"drydock-rpc: connection refused at {args.socket} (is wsd running?)", file=sys.stderr)
+        print(f"drydock-rpc: connection refused at {args.socket} (is daemon running?)", file=sys.stderr)
         return 3
     except PermissionError as exc:
         print(f"drydock-rpc: permission denied on {args.socket} ({exc})", file=sys.stderr)

@@ -49,10 +49,10 @@ While in `collab` mode, every plain text message also gets passed to
 #    BotFather replies with: "Use this token to access the HTTP API: 12345:ABC..."
 
 # 2. Push the token into the desk as a drydock secret.
-ssh root@<harbor> 'ws secret set collab telegram_bot_token' <<<"<paste token>"
+ssh root@<harbor> 'drydock secret set collab telegram_bot_token' <<<"<paste token>"
 
 # 3. Restart so the secret mounts.
-ssh root@<harbor> 'ws stop collab && ws create collab'
+ssh root@<harbor> 'drydock stop collab && drydock create collab'
 
 # 4. Add the bot to a Telegram chat (DM with the bot, or a group).
 #    Send any message — the bot pins to that chat.
@@ -86,14 +86,14 @@ asynchronous reasoner.
 
 ## Operational notes
 
-- **Bot state survives `ws stop && ws create`** via named volume
+- **Bot state survives `drydock stop && drydock create`** via named volume
   `collab-telegram-state`. To wipe (drop chat pin, clear inbox):
   `docker volume rm collab-telegram-state` then recreate.
 - **Deskwatch** probes the bot's pidfile every 5min — surfaces if the
   Python process dies. Inbox freshness is intentionally *not* a
   health signal: a quiet bot is fine.
 - **Token rotation**: revoke at @BotFather, get a new one,
-  `ws secret set collab telegram_bot_token` again, recreate the desk.
+  `drydock secret set collab telegram_bot_token` again, recreate the desk.
 - **Cost**: `/ai` and `/wake` and collab-mode-replies use `claude -p`
   with the desk's delegated `claude_credentials` (your claude.ai
   subscription). No Anthropic API key needed; budget == subscription.

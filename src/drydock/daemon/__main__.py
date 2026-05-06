@@ -1,4 +1,4 @@
-"""`python -m drydock.wsd` entrypoint.
+"""`python -m drydock.daemon` entrypoint.
 
 Parses CLI flags, configures logging to stderr, installs signal handlers,
 and hands off to `server.serve`. Designed to run under launchd (macOS)
@@ -14,8 +14,8 @@ import signal
 import sys
 from pathlib import Path
 
-from drydock.wsd.config import ConfigError, load_wsd_config
-from drydock.wsd.server import serve
+from drydock.daemon.config import ConfigError, load_wsd_config
+from drydock.daemon.server import serve
 
 
 def _install_signal_handlers() -> None:
@@ -27,8 +27,8 @@ def _install_signal_handlers() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="drydock.wsd",
-        description="Drydock workspace daemon (V2).",
+        prog="drydock.daemon",
+        description="Drydock drydock daemon (V2).",
     )
     parser.add_argument("--socket", required=True, help="Unix socket path to bind")
     parser.add_argument(
@@ -42,8 +42,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--config",
-        default=str(Path.home() / ".drydock" / "wsd.toml"),
-        help="Path to wsd.toml (default: ~/.drydock/wsd.toml; missing file = defaults)",
+        default=str(Path.home() / ".drydock" / "daemon.toml"),
+        help="Path to daemon.toml (default: ~/.drydock/daemon.toml; missing file = defaults)",
     )
     args = parser.parse_args(argv)
 
@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_wsd_config(Path(args.config))
     except ConfigError as exc:
-        logging.error("wsd: configuration error: %s", exc)
+        logging.error("daemon: configuration error: %s", exc)
         return 2
 
     _install_signal_handlers()

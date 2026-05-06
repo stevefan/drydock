@@ -1,4 +1,4 @@
-"""SQLite workspace registry."""
+"""SQLite drydock registry."""
 
 import json
 import sqlite3
@@ -7,14 +7,14 @@ from pathlib import Path
 
 from . import WsError
 from .capability import CapabilityLease, CapabilityType
-from .workspace import Workspace
+from .runtime import Drydock
 
 # Schema drops hostname and labels columns as of this revision.  Existing
 # SQLite registries with those columns still read fine (SQLite ignores extra
 # columns), but new databases won't have them.  If you hit column-mismatch
 # errors after upgrading, delete ~/.drydock/registry.db and re-create.
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS workspaces (
+CREATE TABLE IF NOT EXISTS drydocks (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL UNIQUE,
     project         TEXT NOT NULL,
@@ -34,16 +34,16 @@ CREATE TABLE IF NOT EXISTS workspaces (
 
 CREATE TABLE IF NOT EXISTS events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id    TEXT NOT NULL,
+    drydock_id    TEXT NOT NULL,
     event           TEXT NOT NULL,
     timestamp       TEXT NOT NULL,
     data            TEXT NOT NULL DEFAULT '{}',
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+    FOREIGN KEY (drydock_id) REFERENCES drydocks(id)
 );
 """
 
 V2_WORKSPACE_COLUMNS = (
-    ("parent_desk_id", "TEXT DEFAULT NULL"),
+    ("parent_drydock_id", "TEXT DEFAULT NULL"),
     ("delegatable_firewall_domains", "TEXT DEFAULT '[]'"),
     ("delegatable_secrets", "TEXT DEFAULT '[]'"),
     ("capabilities", "TEXT DEFAULT '[]'"),
@@ -89,8 +89,8 @@ CREATE TABLE IF NOT EXISTS yards (
     updated_at      TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_workspaces_yard_id
-    ON workspaces (yard_id);
+CREATE INDEX IF NOT EXISTS idx_drydocks_yard_id
+    ON drydocks (yard_id);
 """
 
 
@@ -138,7 +138,7 @@ def _migrate_to_v5(conn: sqlite3.Connection) -> None:
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
     lease_id            TEXT PRIMARY KEY,
-    desk_id             TEXT NOT NULL,
+    drydock_id             TEXT NOT NULL,
     type                TEXT NOT NULL,
     scope               TEXT NOT NULL,
     issued_at           TIMESTAMP NOT NULL,
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS leases (
 );
 
 CREATE TABLE IF NOT EXISTS tokens (
-    desk_id             TEXT PRIMARY KEY,
+    drydock_id             TEXT PRIMARY KEY,
     token_sha256        TEXT NOT NULL,
     issued_at           TIMESTAMP NOT NULL,
     rotated_at          TIMESTAMP NULL
@@ -170,13 +170,13 @@ CREATE TABLE IF NOT EXISTS task_log (
 def _migrate_to_v2(conn: sqlite3.Connection) -> None:
     columns = {
         row["name"]
-        for row in conn.execute("PRAGMA table_info('workspaces')").fetchall()
+        for row in conn.execute("PRAGMA table_info('drydocks')").fetchall()
     }
     for column_name, column_def in V2_WORKSPACE_COLUMNS:
         if column_name in columns:
             continue
         conn.execute(
-            f"ALTER TABLE workspaces ADD COLUMN {column_name} {column_def}"
+            f"ALTER TABLE drydocks ADD COLUMN {column_name} {column_def}"
         )
     conn.executescript(V2_TABLES)
 
@@ -190,7 +190,7 @@ def _migrate_to_v2(conn: sqlite3.Connection) -> None:
 V3_TABLES = """
 CREATE TABLE IF NOT EXISTS deskwatch_events (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    desk_id      TEXT NOT NULL,
+    drydock_id      TEXT NOT NULL,
     kind         TEXT NOT NULL,
     name         TEXT NOT NULL,
     timestamp    TEXT NOT NULL,
@@ -199,12 +199,108 @@ CREATE TABLE IF NOT EXISTS deskwatch_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deskwatch_lookup
-    ON deskwatch_events (desk_id, kind, name, timestamp DESC);
+    ON deskwatch_events (drydock_id, kind, name, timestamp DESC);
 """
 
 
 def _migrate_to_v3(conn: sqlite3.Connection) -> None:
     conn.executescript(V3_TABLES)
+
+
+def _migrate_v1_vocab_to_drydock(conn: sqlite3.Connection) -> None:
+    """One-time vocabulary rename: workspace/desk/ws_ → drydock/dock_.
+
+    Idempotent — only fires when the legacy ``workspaces`` table exists.
+    Performs an atomic in-place rename of the table, FK columns, ID
+    prefixes, and audit event names. Filesystem secret directories are
+    migrated separately (see ``drydock host init``).
+    """
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    if "workspaces" not in tables:
+        return  # already migrated, or fresh DB
+
+    # If the SCHEMA executescript hasn't run yet (we're called first),
+    # 'drydocks' should not exist. If it does, it's empty (legacy bug
+    # from a partial migration); drop it so the rename can proceed.
+    if "drydocks" in tables:
+        row = conn.execute("SELECT COUNT(*) FROM drydocks").fetchone()
+        if row[0] == 0:
+            conn.execute("DROP TABLE drydocks")
+        else:
+            raise RuntimeError(
+                "Both 'workspaces' and 'drydocks' tables hold rows; manual "
+                "reconciliation needed before vocab migration can proceed."
+            )
+
+    conn.execute("ALTER TABLE workspaces RENAME TO drydocks")
+
+    # Rename FK columns workspace_id → drydock_id wherever present.
+    fk_tables = ("events", "leases", "tokens", "amendments", "deskwatch_events")
+    for tbl in fk_tables:
+        if tbl not in tables:
+            continue
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info('{tbl}')")}
+        if "workspace_id" in cols and "drydock_id" not in cols:
+            conn.execute(f"ALTER TABLE {tbl} RENAME COLUMN workspace_id TO drydock_id")
+        if "parent_workspace_id" in cols and "parent_drydock_id" not in cols:
+            conn.execute(f"ALTER TABLE {tbl} RENAME COLUMN parent_workspace_id TO parent_drydock_id")
+
+    # Also rename parent_workspace_id on drydocks itself (set in V2 migration).
+    drydocks_cols = {r[1] for r in conn.execute("PRAGMA table_info('drydocks')")}
+    if "parent_workspace_id" in drydocks_cols and "parent_drydock_id" not in drydocks_cols:
+        conn.execute("ALTER TABLE drydocks RENAME COLUMN parent_workspace_id TO parent_drydock_id")
+
+    # Rewrite ws_<slug> → dock_<slug> in primary keys + FK columns.
+    conn.execute(r"UPDATE drydocks SET id = 'dock_' || substr(id, 4) WHERE id LIKE 'ws\_%' ESCAPE '\'")
+    for tbl in fk_tables:
+        if tbl not in tables:
+            continue
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info('{tbl}')")}
+        if "drydock_id" in cols:
+            conn.execute(
+                rf"UPDATE {tbl} SET drydock_id = 'dock_' || substr(drydock_id, 4) "
+                rf"WHERE drydock_id LIKE 'ws\_%' ESCAPE '\'"
+            )
+        if "parent_drydock_id" in cols:
+            conn.execute(
+                rf"UPDATE {tbl} SET parent_drydock_id = 'dock_' || substr(parent_drydock_id, 4) "
+                rf"WHERE parent_drydock_id LIKE 'ws\_%' ESCAPE '\'"
+            )
+    if "parent_drydock_id" in drydocks_cols or "parent_drydock_id" in {
+        r[1] for r in conn.execute("PRAGMA table_info('drydocks')")
+    }:
+        conn.execute(
+            r"UPDATE drydocks SET parent_drydock_id = 'dock_' || substr(parent_drydock_id, 4) "
+            r"WHERE parent_drydock_id LIKE 'ws\_%' ESCAPE '\'"
+        )
+
+    # Rename audit event names: desk.* → drydock.*
+    if "events" in tables:
+        conn.execute(
+            "UPDATE events SET event = 'drydock.' || substr(event, 6) "
+            "WHERE event LIKE 'desk.%'"
+        )
+
+    # Rename indexes that hardcoded 'workspaces' in their name.
+    for old_idx, new_idx, ddl in (
+        (
+            "idx_workspaces_yard_id",
+            "idx_drydocks_yard_id",
+            "CREATE INDEX IF NOT EXISTS idx_drydocks_yard_id ON drydocks (yard_id)",
+        ),
+    ):
+        existing = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )}
+        if old_idx in existing:
+            conn.execute(f"DROP INDEX {old_idx}")
+        if new_idx not in existing:
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # column not present yet; later migration recreates
 
 
 class Registry:
@@ -221,6 +317,11 @@ class Registry:
         self._migrate()
 
     def _migrate(self):
+        # Pre-V6 vocabulary rename (workspace/desk/ws_ → drydock/dock_).
+        # Must run BEFORE the SCHEMA executescript so we can detect the
+        # legacy 'workspaces' table before CREATE TABLE IF NOT EXISTS
+        # silently creates an empty 'drydocks' alongside it.
+        _migrate_v1_vocab_to_drydock(self._conn)
         self._conn.executescript(SCHEMA)
         _migrate_to_v2(self._conn)
         _migrate_to_v3(self._conn)
@@ -231,15 +332,15 @@ class Registry:
     def close(self):
         self._conn.close()
 
-    def create_workspace(self, ws: Workspace) -> Workspace:
-        existing = self.get_workspace(ws.name)
+    def create_drydock(self, ws: Drydock) -> Drydock:
+        existing = self.get_drydock(ws.name)
         if existing:
             raise WsError(
-                f"Workspace '{ws.name}' already exists (state: {existing.state})",
+                f"Drydock '{ws.name}' already exists (state: {existing.state})",
                 fix=f"Use a different name, or destroy it first: ws destroy {ws.name}",
             )
         self._conn.execute(
-            """INSERT INTO workspaces
+            """INSERT INTO drydocks
                (id, name, project, repo_path, worktree_path, branch, base_ref,
                 state, container_id, workspace_subdir, image, owner,
                 created_at, updated_at, config)
@@ -263,35 +364,35 @@ class Registry:
             ),
         )
         self._conn.commit()
-        self.log_event(ws.id, "workspace.created")
+        self.log_event(ws.id, "drydock.created")
         return ws
 
-    def get_workspace(self, name: str) -> Workspace | None:
+    def get_drydock(self, name: str) -> Drydock | None:
         row = self._conn.execute(
-            "SELECT * FROM workspaces WHERE name = ?", (name,)
+            "SELECT * FROM drydocks WHERE name = ?", (name,)
         ).fetchone()
         if not row:
             return None
-        return self._row_to_workspace(row)
+        return self._row_to_drydock(row)
 
-    def get_children(self, parent_desk_id: str) -> list[Workspace]:
+    def get_children(self, parent_drydock_id: str) -> list[Drydock]:
         rows = self._conn.execute(
             """
             SELECT *
-            FROM workspaces
-            WHERE parent_desk_id = ?
+            FROM drydocks
+            WHERE parent_drydock_id = ?
             ORDER BY name ASC
             """,
-            (parent_desk_id,),
+            (parent_drydock_id,),
         ).fetchall()
-        return [self._row_to_workspace(row) for row in rows]
+        return [self._row_to_drydock(row) for row in rows]
 
-    def list_workspaces(
+    def list_drydocks(
         self,
         project: str | None = None,
         state: str | None = None,
-    ) -> list[Workspace]:
-        query = "SELECT * FROM workspaces WHERE 1=1"
+    ) -> list[Drydock]:
+        query = "SELECT * FROM drydocks WHERE 1=1"
         params: list = []
         if project:
             query += " AND project = ?"
@@ -301,100 +402,100 @@ class Registry:
             params.append(state)
         query += " ORDER BY updated_at DESC"
         rows = self._conn.execute(query, params).fetchall()
-        return [self._row_to_workspace(r) for r in rows]
+        return [self._row_to_drydock(r) for r in rows]
 
-    def update_state(self, name: str, state: str) -> Workspace:
+    def update_state(self, name: str, state: str) -> Drydock:
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
-            "UPDATE workspaces SET state = ?, updated_at = ? WHERE name = ?",
+            "UPDATE drydocks SET state = ?, updated_at = ? WHERE name = ?",
             (state, now, name),
         )
         self._conn.commit()
-        ws = self.get_workspace(name)
+        ws = self.get_drydock(name)
         if ws:
-            self.log_event(ws.id, f"workspace.{state}")
+            self.log_event(ws.id, f"drydock.{state}")
         return ws
 
-    def update_workspace(self, name: str, **fields) -> Workspace:
+    def update_drydock(self, name: str, **fields) -> Drydock:
         if not fields:
-            return self.get_workspace(name)
+            return self.get_drydock(name)
         fields["updated_at"] = datetime.now(timezone.utc).isoformat()
         if "config" in fields and isinstance(fields["config"], dict):
             fields["config"] = json.dumps(fields["config"])
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [name]
         self._conn.execute(
-            f"UPDATE workspaces SET {set_clause} WHERE name = ?",
+            f"UPDATE drydocks SET {set_clause} WHERE name = ?",
             values,
         )
         self._conn.commit()
-        return self.get_workspace(name)
+        return self.get_drydock(name)
 
-    def delete_workspace(self, name: str) -> None:
-        ws = self.get_workspace(name)
+    def delete_drydock(self, name: str) -> None:
+        ws = self.get_drydock(name)
         if ws:
-            self.log_event(ws.id, "workspace.destroyed")
-        self._conn.execute("DELETE FROM workspaces WHERE name = ?", (name,))
+            self.log_event(ws.id, "drydock.destroyed")
+        self._conn.execute("DELETE FROM drydocks WHERE name = ?", (name,))
         self._conn.commit()
 
     def log_event(
-        self, workspace_id: str, event: str, data: dict | None = None
+        self, drydock_id: str, event: str, data: dict | None = None
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
-            "INSERT INTO events (workspace_id, event, timestamp, data) VALUES (?, ?, ?, ?)",
-            (workspace_id, event, now, json.dumps(data or {})),
+            "INSERT INTO events (drydock_id, event, timestamp, data) VALUES (?, ?, ?, ?)",
+            (drydock_id, event, now, json.dumps(data or {})),
         )
         self._conn.commit()
 
-    def insert_token(self, desk_id: str, token_sha256: str, issued_at: datetime) -> None:
+    def insert_token(self, drydock_id: str, token_sha256: str, issued_at: datetime) -> None:
         self._conn.execute(
             """
-            INSERT INTO tokens (desk_id, token_sha256, issued_at, rotated_at)
+            INSERT INTO tokens (drydock_id, token_sha256, issued_at, rotated_at)
             VALUES (?, ?, ?, NULL)
-            ON CONFLICT(desk_id) DO NOTHING
+            ON CONFLICT(drydock_id) DO NOTHING
             """,
-            (desk_id, token_sha256, issued_at.isoformat()),
+            (drydock_id, token_sha256, issued_at.isoformat()),
         )
         self._conn.commit()
 
     def find_desk_by_token_hash(self, token_sha256: str) -> str | None:
         row = self._conn.execute(
-            "SELECT desk_id FROM tokens WHERE token_sha256 = ?",
+            "SELECT drydock_id FROM tokens WHERE token_sha256 = ?",
             (token_sha256,),
         ).fetchone()
         if row is None:
             return None
-        return str(row["desk_id"])
+        return str(row["drydock_id"])
 
-    def get_token_info(self, desk_id: str) -> dict | None:
+    def get_token_info(self, drydock_id: str) -> dict | None:
         row = self._conn.execute(
             """
-            SELECT desk_id, token_sha256, issued_at, rotated_at
+            SELECT drydock_id, token_sha256, issued_at, rotated_at
             FROM tokens
-            WHERE desk_id = ?
+            WHERE drydock_id = ?
             """,
-            (desk_id,),
+            (drydock_id,),
         ).fetchone()
         if row is None:
             return None
         return dict(row)
 
-    def delete_token(self, desk_id: str) -> None:
-        self._conn.execute("DELETE FROM tokens WHERE desk_id = ?", (desk_id,))
+    def delete_token(self, drydock_id: str) -> None:
+        self._conn.execute("DELETE FROM tokens WHERE drydock_id = ?", (drydock_id,))
         self._conn.commit()
 
-    def load_desk_policy(self, desk_id: str) -> dict | None:
+    def load_desk_policy(self, drydock_id: str) -> dict | None:
         row = self._conn.execute(
             """
             SELECT delegatable_firewall_domains, delegatable_secrets, capabilities,
                    delegatable_storage_scopes, delegatable_provision_scopes,
                    delegatable_network_reach, network_reach_ports,
                    resources_hard, config
-            FROM workspaces
+            FROM drydocks
             WHERE id = ?
             """,
-            (desk_id,),
+            (drydock_id,),
         ).fetchone()
         if row is None:
             return None
@@ -432,7 +533,7 @@ class Registry:
             fields["resources_hard"] = json.dumps(resources_hard)
         if not fields:
             return
-        self.update_workspace(name, **fields)
+        self.update_drydock(name, **fields)
 
     # ----- Task log maintenance (gotcha #1) -----
 
@@ -471,13 +572,13 @@ class Registry:
         self._conn.execute(
             """
             INSERT INTO leases
-                (lease_id, desk_id, type, scope, issued_at, expiry,
+                (lease_id, drydock_id, type, scope, issued_at, expiry,
                  issuer, revoked, revocation_reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 lease.lease_id,
-                lease.desk_id,
+                lease.drydock_id,
                 lease.type.value,
                 json.dumps(lease.scope),
                 lease.issued_at.isoformat(),
@@ -492,7 +593,7 @@ class Registry:
     def get_lease(self, lease_id: str) -> CapabilityLease | None:
         row = self._conn.execute(
             """
-            SELECT lease_id, desk_id, type, scope, issued_at, expiry,
+            SELECT lease_id, drydock_id, type, scope, issued_at, expiry,
                    issuer, revoked, revocation_reason
             FROM leases
             WHERE lease_id = ?
@@ -520,66 +621,66 @@ class Registry:
         self._conn.commit()
         return cur.rowcount > 0
 
-    def revoke_leases_for_desk(self, desk_id: str, reason: str) -> int:
+    def revoke_leases_for_desk(self, drydock_id: str, reason: str) -> int:
         """Revoke every active lease belonging to a desk. Returns count."""
         cur = self._conn.execute(
             """
             UPDATE leases
             SET revoked = 1, revocation_reason = ?
-            WHERE desk_id = ? AND revoked = 0
+            WHERE drydock_id = ? AND revoked = 0
             """,
-            (reason, desk_id),
+            (reason, drydock_id),
         )
         self._conn.commit()
         return cur.rowcount
 
-    def list_active_leases_for_desk(self, desk_id: str) -> list[CapabilityLease]:
+    def list_active_leases_for_desk(self, drydock_id: str) -> list[CapabilityLease]:
         rows = self._conn.execute(
             """
-            SELECT lease_id, desk_id, type, scope, issued_at, expiry,
+            SELECT lease_id, drydock_id, type, scope, issued_at, expiry,
                    issuer, revoked, revocation_reason
             FROM leases
-            WHERE desk_id = ? AND revoked = 0
+            WHERE drydock_id = ? AND revoked = 0
             ORDER BY issued_at
             """,
-            (desk_id,),
+            (drydock_id,),
         ).fetchall()
         return [_row_to_lease(row) for row in rows]
 
     def find_active_secret_lease(
-        self, desk_id: str, secret_name: str
+        self, drydock_id: str, secret_name: str
     ) -> CapabilityLease | None:
-        """Return any active lease for (desk_id, secret_name) or None.
+        """Return any active lease for (drydock_id, secret_name) or None.
 
         Used by the daemon when releasing a lease to decide whether the
         materialized file at /run/secrets/<name> should also be removed
         (only when no other active lease still grants the same secret).
         """
-        for lease in self.list_active_leases_for_desk(desk_id):
+        for lease in self.list_active_leases_for_desk(drydock_id):
             if lease.type == CapabilityType.SECRET and lease.scope.get("secret_name") == secret_name:
                 return lease
         return None
 
-    def find_active_storage_lease(self, desk_id: str) -> CapabilityLease | None:
-        """Return any active STORAGE_MOUNT lease for desk_id, or None.
+    def find_active_storage_lease(self, drydock_id: str) -> CapabilityLease | None:
+        """Return any active STORAGE_MOUNT lease for drydock_id, or None.
 
         STORAGE_MOUNT uses a single-lease-at-a-time semantic: materialized
         aws_* files are overwritten by the latest lease, so the daemon
         needs to know whether any storage lease is still live before
         cleaning up on release.
         """
-        for lease in self.list_active_leases_for_desk(desk_id):
+        for lease in self.list_active_leases_for_desk(drydock_id):
             if lease.type == CapabilityType.STORAGE_MOUNT:
                 return lease
         return None
 
-    def find_active_aws_lease(self, desk_id: str) -> CapabilityLease | None:
-        """Any active STORAGE_MOUNT or INFRA_PROVISION lease for desk_id.
+    def find_active_aws_lease(self, drydock_id: str) -> CapabilityLease | None:
+        """Any active STORAGE_MOUNT or INFRA_PROVISION lease for drydock_id.
 
         Both types materialize the same 4 aws_* files, so supersede /
         cleanup decisions must consider them together.
         """
-        for lease in self.list_active_leases_for_desk(desk_id):
+        for lease in self.list_active_leases_for_desk(drydock_id):
             if lease.type in (CapabilityType.STORAGE_MOUNT, CapabilityType.INFRA_PROVISION):
                 return lease
         return None
@@ -590,7 +691,7 @@ class Registry:
 
     def record_deskwatch_event(
         self,
-        desk_id: str,
+        drydock_id: str,
         kind: str,
         name: str,
         status: str,
@@ -600,37 +701,37 @@ class Registry:
         """Append one deskwatch event. Returns the rowid."""
         ts = timestamp or datetime.now(timezone.utc).isoformat()
         cur = self._conn.execute(
-            "INSERT INTO deskwatch_events (desk_id, kind, name, timestamp, status, detail) "
+            "INSERT INTO deskwatch_events (drydock_id, kind, name, timestamp, status, detail) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (desk_id, kind, name, ts, status, detail),
+            (drydock_id, kind, name, ts, status, detail),
         )
         self._conn.commit()
         return cur.lastrowid
 
     def last_deskwatch_event(
-        self, desk_id: str, kind: str, name: str,
+        self, drydock_id: str, kind: str, name: str,
     ) -> dict | None:
         row = self._conn.execute(
             "SELECT timestamp, status, detail FROM deskwatch_events "
-            "WHERE desk_id = ? AND kind = ? AND name = ? "
+            "WHERE drydock_id = ? AND kind = ? AND name = ? "
             "ORDER BY timestamp DESC LIMIT 1",
-            (desk_id, kind, name),
+            (drydock_id, kind, name),
         ).fetchone()
         return dict(row) if row else None
 
     def list_deskwatch_events(
-        self, desk_id: str, limit: int = 100,
+        self, drydock_id: str, limit: int = 100,
     ) -> list[dict]:
         rows = self._conn.execute(
             "SELECT kind, name, timestamp, status, detail FROM deskwatch_events "
-            "WHERE desk_id = ? ORDER BY timestamp DESC LIMIT ?",
-            (desk_id, limit),
+            "WHERE drydock_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (drydock_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_workspace_extra_mounts(self, name: str) -> list[str]:
+    def get_drydock_extra_mounts(self, name: str) -> list[str]:
         row = self._conn.execute(
-            "SELECT config FROM workspaces WHERE name = ?",
+            "SELECT config FROM drydocks WHERE name = ?",
             (name,),
         ).fetchone()
         if row is None:
@@ -702,12 +803,12 @@ class Registry:
             out.append(d)
         return out
 
-    def list_yard_members(self, yard_id: str) -> list[Workspace]:
+    def list_yard_members(self, yard_id: str) -> list[Drydock]:
         rows = self._conn.execute(
-            "SELECT * FROM workspaces WHERE yard_id = ? ORDER BY name",
+            "SELECT * FROM drydocks WHERE yard_id = ? ORDER BY name",
             (yard_id,),
         ).fetchall()
-        return [self._row_to_workspace(row) for row in rows]
+        return [self._row_to_drydock(row) for row in rows]
 
     def destroy_yard(self, name: str, *, with_members: bool = False) -> int:
         """Remove a Yard. Refuses if members exist unless with_members=True
@@ -725,7 +826,7 @@ class Registry:
             )
         for m in members:
             self._conn.execute(
-                "UPDATE workspaces SET yard_id = NULL WHERE id = ?", (m.id,),
+                "UPDATE drydocks SET yard_id = NULL WHERE id = ?", (m.id,),
             )
         self._conn.execute("DELETE FROM yards WHERE id = ?", (yard["id"],))
         self._conn.commit()
@@ -859,21 +960,21 @@ class Registry:
         self._conn.commit()
         return cur.rowcount
 
-    def _row_to_workspace(self, row: sqlite3.Row) -> Workspace:
+    def _row_to_drydock(self, row: sqlite3.Row) -> Drydock:
         d = dict(row)
         d["config"] = json.loads(d["config"])
-        # Drop columns that the current Workspace dataclass doesn't accept.
+        # Drop columns that the current Drydock dataclass doesn't accept.
         # Lets existing registries (with legacy columns like hostname/labels)
         # migrate forward without needing a schema rewrite.
-        allowed = Workspace.__dataclass_fields__.keys()
+        allowed = Drydock.__dataclass_fields__.keys()
         d = {k: v for k, v in d.items() if k in allowed}
-        return Workspace(**d)
+        return Drydock(**d)
 
 
 def _row_to_lease(row: sqlite3.Row) -> CapabilityLease:
     return CapabilityLease(
         lease_id=str(row["lease_id"]),
-        desk_id=str(row["desk_id"]),
+        drydock_id=str(row["drydock_id"]),
         type=CapabilityType(row["type"]),
         scope=json.loads(row["scope"]),
         issued_at=datetime.fromisoformat(row["issued_at"]),

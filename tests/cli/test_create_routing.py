@@ -40,11 +40,11 @@ def _find_last_json_block(lines: list[str]) -> list[str]:
     return block_lines
 
 
-def test_create_routes_through_daemon_when_socket_present(wsd, monkeypatch):
-    monkeypatch.setenv("HOME", str(wsd.home))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(wsd.socket_path))
+def test_create_routes_through_daemon_when_socket_present(daemon, monkeypatch):
+    monkeypatch.setenv("HOME", str(daemon.home))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(daemon.socket_path))
 
-    repo = wsd.home / "repo-route"
+    repo = daemon.home / "repo-route"
     _init_repo(repo)
 
     runner = CliRunner()
@@ -55,18 +55,18 @@ def test_create_routes_through_daemon_when_socket_present(wsd, monkeypatch):
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["desk_id"] == "ws_desk_route"
+    assert payload["drydock_id"] == "dock_desk_route"
     assert payload["state"] == "running"
 
-    registry = Registry(db_path=wsd.registry_path)
+    registry = Registry(db_path=daemon.registry_path)
     try:
-        workspace = registry.get_workspace("desk-route")
-        token = registry.get_token_info("ws_desk_route")
+        drydock = registry.get_drydock("desk-route")
+        token = registry.get_token_info("dock_desk_route")
     finally:
         registry.close()
 
-    assert workspace is not None
-    assert workspace.container_id.startswith("dry-run-")
+    assert drydock is not None
+    assert drydock.container_id.startswith("dry-run-")
     assert token is not None
 
 
@@ -74,7 +74,7 @@ def test_create_routes_through_daemon_when_socket_present(wsd, monkeypatch):
 @patch("drydock.cli.create.DevcontainerCLI")
 def test_create_falls_back_to_direct_when_daemon_unreachable(MockCLI, _mock_log_event, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "missing.sock"))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(tmp_path / "missing.sock"))
 
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -95,11 +95,11 @@ def test_create_falls_back_to_direct_when_daemon_unreachable(MockCLI, _mock_log_
     assert payload["state"] == "running"
 
 
-def test_create_propagates_daemon_rpc_error_without_fallback(wsd, monkeypatch):
-    monkeypatch.setenv("HOME", str(wsd.home))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(wsd.socket_path))
+def test_create_propagates_daemon_rpc_error_without_fallback(daemon, monkeypatch):
+    monkeypatch.setenv("HOME", str(daemon.home))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(daemon.socket_path))
 
-    repo = wsd.home / "repo-rpc-error"
+    repo = daemon.home / "repo-rpc-error"
     _init_repo(repo)
 
     runner = CliRunner()
@@ -116,9 +116,9 @@ def test_create_propagates_daemon_rpc_error_without_fallback(wsd, monkeypatch):
     assert second.exit_code != 0
 
     error = json.loads(second.output)
-    assert error["error"] == "workspace_already_running"
+    assert error["error"] == "drydock_already_running"
 
-    registry = Registry(db_path=wsd.registry_path)
+    registry = Registry(db_path=daemon.registry_path)
     try:
         task_rows = registry._conn.execute(
             "SELECT method, status FROM task_log WHERE method = 'CreateDesk'"
@@ -133,13 +133,13 @@ def test_create_propagates_daemon_rpc_error_without_fallback(wsd, monkeypatch):
 @patch("drydock.cli.create.call_daemon")
 def test_create_only_sends_explicit_devcontainer_subpath_to_daemon(mock_call_daemon, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(tmp_path / "daemon.sock"))
 
     repo = tmp_path / "repo-subpath-route"
     _init_repo(repo)
 
     mock_call_daemon.return_value = {
-        "desk_id": "ws_desk_subpath_route",
+        "drydock_id": "dock_desk_subpath_route",
         "name": "desk-subpath-route",
         "project": "proj",
         "branch": "ws/desk-subpath-route",
@@ -171,13 +171,13 @@ def test_create_only_sends_explicit_devcontainer_subpath_to_daemon(mock_call_dae
 @patch("drydock.cli.create.call_daemon")
 def test_create_omits_default_devcontainer_subpath_from_daemon_request(mock_call_daemon, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(tmp_path / "daemon.sock"))
 
     repo = tmp_path / "repo-default-route"
     _init_repo(repo)
 
     mock_call_daemon.return_value = {
-        "desk_id": "ws_desk_default_route",
+        "drydock_id": "dock_desk_default_route",
         "name": "desk-default-route",
         "project": "proj",
         "branch": "ws/desk-default-route",
@@ -199,7 +199,7 @@ def test_create_omits_default_devcontainer_subpath_from_daemon_request(mock_call
 @patch("drydock.cli.create.call_daemon")
 def test_create_forwards_project_yaml_overlay_fields_to_daemon(mock_call_daemon, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(tmp_path / "daemon.sock"))
 
     repo = tmp_path / "repo-overlay-route"
     _init_repo(repo)
@@ -214,7 +214,7 @@ def test_create_forwards_project_yaml_overlay_fields_to_daemon(mock_call_daemon,
     )
 
     mock_call_daemon.return_value = {
-        "desk_id": "ws_myproject",
+        "drydock_id": "dock_myproject",
         "name": "myproject",
         "project": "myproject",
         "branch": "ws/myproject",
@@ -237,7 +237,7 @@ def test_create_forwards_project_yaml_overlay_fields_to_daemon(mock_call_daemon,
 @patch("drydock.cli.create.call_daemon")
 def test_create_omits_default_overlay_fields_from_daemon_request(mock_call_daemon, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("DRYDOCK_WSD_SOCKET", str(tmp_path / "wsd.sock"))
+    monkeypatch.setenv("DRYDOCK_DAEMON_SOCKET", str(tmp_path / "daemon.sock"))
 
     repo = tmp_path / "repo-no-overlay-route"
     _init_repo(repo)
@@ -246,7 +246,7 @@ def test_create_omits_default_overlay_fields_from_daemon_request(mock_call_daemo
     (projects_dir / "plainproject.yaml").write_text(f"repo_path: {repo}\n")
 
     mock_call_daemon.return_value = {
-        "desk_id": "ws_plainproject",
+        "drydock_id": "dock_plainproject",
         "name": "plainproject",
         "project": "plainproject",
         "branch": "ws/plainproject",

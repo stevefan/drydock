@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Mark all running desks as suspended before host shutdown.
-# Invoked by drydock-desks.service's ExecStop. Runs while wsd is
+# Invoked by drydock-desks.service's ExecStop. Runs while the daemon is
 # still up (systemd reverses dependency order for stop: desks stop
-# before wsd). This ensures drydock-resume-desks picks them up on
+# before daemon). This ensures drydock-resume-desks picks them up on
 # the next boot — without this hook, a `reboot` would leave the
 # registry state=running while the containers are actually gone,
 # and the boot-time resume sweep would skip them.
@@ -17,12 +17,12 @@ export PATH
 
 echo "drydock-stop-desks: $(date -Iseconds) starting"
 
-ws list 2>/dev/null | python3 -c '
+drydock list 2>/dev/null | python3 -c '
 import json, subprocess, sys
 try:
     rows = json.load(sys.stdin)
 except json.JSONDecodeError as e:
-    print(f"drydock-stop-desks: cannot parse ws list: {e}", flush=True)
+    print(f"drydock-stop-desks: cannot parse drydock list: {e}", flush=True)
     sys.exit(1)
 
 to_stop = [r["name"] for r in rows if r.get("state") == "running" and r.get("name")]

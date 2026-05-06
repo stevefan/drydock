@@ -1,0 +1,31 @@
+# Drydock daemon — systemd system unit (Linux).
+# Complements base/com.drydock.plist (macOS launchd user agent).
+# Long-running control-plane daemon, RestartOnFailure semantics,
+# logs to ~/.drydock/logs/daemon-systemd.log.
+#
+# Install on a Harbor:
+#   cp base/drydock.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now drydock.service
+#
+# Running as root matches Hetzner host convention:
+# pipx install at /root/.local, drydock state in /root/.drydock.
+[Unit]
+Description=Drydock daemon
+Documentation=https://github.com/stevefan/drydock
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/root/.local/bin/drydock daemon start --foreground
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/root/.drydock/logs/daemon-systemd.log
+StandardError=append:/root/.drydock/logs/daemon-systemd.log
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin
+Environment=HOME=/root
+
+[Install]
+WantedBy=multi-user.target

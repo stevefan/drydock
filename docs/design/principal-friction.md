@@ -43,7 +43,7 @@ type the dock name to confirm: _
 
 Properties:
 - **Declared in standing policy** (not LLM-judgment-derived). Principal pre-commits when calm: "any destroy command requires typed confirmation."
-- **Bypassable per session.** `ws incident-mode start --duration 30m` skips Form B confirmations until expiry. Use during real incidents where the friction would slow recovery.
+- **Bypassable per session.** `drydock incident-mode start --duration 30m` skips Form B confirmations until expiry. Use during real incidents where the friction would slow recovery.
 - **The typed token is action-specific.** Dock name for destroy, bucket name for delete, lease ID for revoke. Reduces the chance a half-typed command runs.
 
 Use when: the action is irreversible AND infrequent enough that the typing cost is worth the second-thought it produces. The AWS S3 bucket-deletion pattern.
@@ -98,7 +98,7 @@ These are baked-in design constraints, not just intentions:
 
 1. **Defaults to NONE.** The system ships with no friction except on a small set of obviously-dangerous actions (destroy, delete, provision, rotate). Principal opts in to more.
 2. **Self-tuning Form A.** Notes that the principal bypasses 100% of the time fire less often (down to never). The signal value of a note that's always ignored is zero; the cost is real.
-3. **Per-session bypass.** `ws incident-mode start` exists for a reason. Real incidents need fast iteration, not friction.
+3. **Per-session bypass.** `drydock incident-mode start` exists for a reason. Real incidents need fast iteration, not friction.
 4. **No false confidence.** The Auditor is forbidden from saying "I checked, looks good." It can only say "here's what I noticed" or stay silent. Affirming the principal's intent makes the principal less attentive, which is the opposite of the goal.
 5. **Audited bypass.** Frequency of bypass is itself a signal the principal can review. "Am I bypassing too much? Are the notes wrong too often?" — answerable from audit.
 6. **No friction on the friction.** Updating the friction policy file itself does NOT carry friction (other than the Form B/C the principal explicitly chose to put on it). Otherwise the system traps you in your own settings.
@@ -107,13 +107,14 @@ These are baked-in design constraints, not just intentions:
 
 - **Policy file**: `~/.drydock/policy/friction.yaml` — principal-authored, daemon-readable.
 - **Authority enforcement**: every Bucket-3 RPC checks the friction policy before executing. Returns either `friction_pending` (with the form-specific challenge) or proceeds.
-- **CLI**: `ws incident-mode start --duration 30m` enables per-session bypass for Form B (Form C cooldown is not bypassable mid-session — that's the point).
+- **CLI**: `drydock incident-mode start --duration 30m` enables per-session bypass for Form B (Form C cooldown is not bypassable mid-session — that's the point).
 - **Telegram integration**: forms render in Telegram; principal can respond with the typed token / 'cancel' / 'yes'.
 - **Audit shape**: every friction-bearing action emits a `friction.presented` event followed by `friction.bypassed` or `friction.cancelled` or `friction.satisfied` and the eventual `action.executed`.
 
-## Open questions
+## Resolved decisions and open questions
 
-1. Should Form A's self-tuning be transparent to the principal? "I'm firing this note less often because you've bypassed it 30 times in a row" — yes, probably, so the principal can correct if needed.
-2. Should Form C cooldowns scale with action magnitude? "Provision $1000 of compute = 30s cooldown; provision $10K = 5min cooldown; provision $100K = principal cannot self-approve, must escalate to a second principal (if multi-user)." Probably yes for very-high-stakes; not for V3 single-principal.
-3. Does Form B/C friction apply to actions taken via direct YAML edit (filesystem) vs CLI/RPC? Probably the friction is at the *enforcement* boundary, not at the *authoring* boundary — a YAML edit doesn't trigger friction; the policy applies when the change is *applied* via the daemon.
-4. Per-Yard or per-Dock friction overrides? "ASI Yard requires Form C even for Bucket-2 actions." Probably yes; principal can declare friction overrides per scope.
+**Resolved:**
+- **Form A self-tuning is transparent.** "I'm firing this note less often because you've bypassed it 30 times in a row" — surfaced to the principal so they can correct if needed.
+- **Form C cooldown scaling.** Not for V3 single-principal; revisit when multi-user lands and very-high-stakes actions might warrant magnitude-scaled cooldowns or second-principal approval.
+- **Friction boundary.** Applies at the *enforcement* boundary, not the *authoring* boundary. A direct YAML edit doesn't trigger friction; the policy applies when the change is *applied* via the daemon.
+- **Per-scope friction overrides.** Yes — principal can declare friction overrides per Yard or per Dock (e.g., "ASI Yard requires Form C even for Bucket-2 actions").

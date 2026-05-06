@@ -1,8 +1,8 @@
 # Drydock on-boot desk resume — systemd system unit (Linux).
 # Brings every workspace in state=suspended back to running after a reboot.
-# Pairs with drydock-wsd.service; depends on wsd being ready.
+# Pairs with drydock.service; depends on daemon being ready.
 #
-# Install alongside drydock-wsd.service:
+# Install alongside drydock.service:
 #   cp base/drydock-desks.service /etc/systemd/system/
 #   cp scripts/drydock-resume-desks /usr/local/bin/
 #   chmod +x /usr/local/bin/drydock-resume-desks
@@ -15,15 +15,15 @@
 [Unit]
 Description=Drydock — resume suspended desks at boot
 Documentation=https://github.com/stevefan/drydock
-After=drydock-wsd.service
-Requires=drydock-wsd.service
+After=drydock.service
+Requires=drydock.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/drydock-resume-desks
 # On graceful shutdown: mark running desks suspended so they resume next boot.
-# drydock-desks stops before drydock-wsd (reverse of start order), so wsd is
+# drydock-desks stops before drydock-daemon (reverse of start order), so the daemon is
 # still serving when ws stop runs.
 ExecStop=/usr/local/bin/drydock-stop-desks
 TimeoutStopSec=180

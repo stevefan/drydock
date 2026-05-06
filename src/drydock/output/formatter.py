@@ -39,7 +39,7 @@ class Output:
             return
 
         if not rows:
-            click.echo("(no workspaces)")
+            click.echo("(no drydocks)")
             return
 
         # Calculate column widths

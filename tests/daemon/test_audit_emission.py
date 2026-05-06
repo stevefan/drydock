@@ -17,9 +17,9 @@ import pytest
 from drydock.core.capability import CapabilityLease, CapabilityType
 from drydock.core.policy import CapabilityKind
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
-from drydock.wsd import handlers
-from drydock.wsd.capability_handlers import release_capability, request_capability
+from drydock.core.runtime import Drydock
+from drydock.daemon import handlers
+from drydock.daemon.capability_handlers import release_capability, request_capability
 
 
 def _read_events(audit_log: Path) -> list[dict]:
@@ -79,15 +79,15 @@ class TestCreateDeskEmission:
         # the handler — order matters (token first, then desk).
         names = [e["event"] for e in events]
         assert "token.issued" in names
-        assert "desk.created" in names
+        assert "drydock.created" in names
 
-        created = next(e for e in events if e["event"] == "desk.created")
+        created = next(e for e in events if e["event"] == "drydock.created")
         assert created["principal"] is None
         assert created["request_id"] == "req-create-1"
         assert created["method"] == "CreateDesk"
         assert created["result"] == "ok"
-        assert created["details"]["desk_id"] == result["desk_id"]
-        assert created["details"]["parent_desk_id"] is None
+        assert created["details"]["drydock_id"] == result["drydock_id"]
+        assert created["details"]["parent_drydock_id"] is None
 
 
 class TestDestroyDeskEmission:
@@ -117,12 +117,12 @@ class TestDestroyDeskEmission:
 
         names = [e["event"] for e in _v2_events(env["audit_log"])]
         assert "token.revoked" in names
-        assert "desk.destroyed" in names
+        assert "drydock.destroyed" in names
 
         destroyed = next(e for e in _v2_events(env["audit_log"])
-                         if e["event"] == "desk.destroyed")
+                         if e["event"] == "drydock.destroyed")
         assert destroyed["request_id"] == "req-d"
-        assert destroyed["details"]["desk_id"] == created["desk_id"]
+        assert destroyed["details"]["drydock_id"] == created["drydock_id"]
         assert destroyed["details"]["cascaded_children"] == []
 
 
@@ -131,7 +131,7 @@ class TestLeaseEmission:
     def lease_env(self, env):
         # Set up a desk + entitlement + secret on disk
         registry = Registry(db_path=env["db"])
-        ws = Workspace(
+        ws = Drydock(
             name="alpha",
             project="p",
             repo_path="/tmp/repo",
@@ -140,30 +140,30 @@ class TestLeaseEmission:
             state="running",
             container_id="cid_alpha",
         )
-        registry.create_workspace(ws)
+        registry.create_drydock(ws)
         registry.update_desk_delegations(
             "alpha",
             delegatable_secrets=["k"],
             capabilities=[CapabilityKind.REQUEST_SECRET_LEASES.value],
         )
-        desk_id = ws.id
+        drydock_id = ws.id
         registry.close()
 
-        secret_dir = env["secrets_root"] / desk_id
+        secret_dir = env["secrets_root"] / drydock_id
         secret_dir.mkdir(parents=True)
         (secret_dir / "k").write_bytes(b"value")
 
         env["audit_log"].parent.mkdir(parents=True, exist_ok=True)
         env["audit_log"].parent.mkdir(parents=True, exist_ok=True)
         env["audit_log"].write_text("")  # clear setup noise
-        return {**env, "desk_id": desk_id}
+        return {**env, "drydock_id": drydock_id}
 
-    @patch("drydock.wsd.capability_handlers._materialize_secret")
+    @patch("drydock.daemon.capability_handlers._materialize_secret")
     def test_emits_lease_issued(self, _mat, lease_env):
         result = request_capability(
             {"type": "SECRET", "scope": {"secret_name": "k"}},
             "req-req",
-            lease_env["desk_id"],
+            lease_env["drydock_id"],
             registry_path=lease_env["db"],
             secrets_root=lease_env["secrets_root"],
         )
@@ -171,19 +171,19 @@ class TestLeaseEmission:
                   if e["event"] == "lease.issued"]
         assert len(events) == 1
         ev = events[0]
-        assert ev["principal"] == lease_env["desk_id"]
+        assert ev["principal"] == lease_env["drydock_id"]
         assert ev["request_id"] == "req-req"
         assert ev["method"] == "RequestCapability"
         assert ev["details"]["lease_id"] == result["lease_id"]
         assert ev["details"]["scope"] == {"secret_name": "k"}
 
-    @patch("drydock.wsd.capability_handlers._remove_materialized_secret")
-    @patch("drydock.wsd.capability_handlers._materialize_secret")
+    @patch("drydock.daemon.capability_handlers._remove_materialized_secret")
+    @patch("drydock.daemon.capability_handlers._materialize_secret")
     def test_emits_lease_released_with_client_release_reason(self, _mat, _rm, lease_env):
         result = request_capability(
             {"type": "SECRET", "scope": {"secret_name": "k"}},
             "req-req",
-            lease_env["desk_id"],
+            lease_env["drydock_id"],
             registry_path=lease_env["db"],
             secrets_root=lease_env["secrets_root"],
         )
@@ -194,7 +194,7 @@ class TestLeaseEmission:
         release_capability(
             {"lease_id": result["lease_id"]},
             "req-rel",
-            lease_env["desk_id"],
+            lease_env["drydock_id"],
             registry_path=lease_env["db"],
             secrets_root=lease_env["secrets_root"],
         )
@@ -204,14 +204,14 @@ class TestLeaseEmission:
         assert len(events) == 1
         assert events[0]["details"]["reason"] == "client_release"
 
-    @patch("drydock.wsd.capability_handlers._materialize_secret")
+    @patch("drydock.daemon.capability_handlers._materialize_secret")
     def test_destroy_cascade_emits_lease_released_with_desk_destroyed_reason(
         self, _mat, lease_env
     ):
         request_capability(
             {"type": "SECRET", "scope": {"secret_name": "k"}},
             "req-req",
-            lease_env["desk_id"],
+            lease_env["drydock_id"],
             registry_path=lease_env["db"],
             secrets_root=lease_env["secrets_root"],
         )
@@ -219,7 +219,7 @@ class TestLeaseEmission:
         lease_env["audit_log"].write_text("")
 
         handlers.destroy_desk(
-            {"desk_id": lease_env["desk_id"]},
+            {"drydock_id": lease_env["drydock_id"]},
             "req-d",
             None,
             registry_path=lease_env["db"],

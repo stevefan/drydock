@@ -2,12 +2,12 @@
 # Smoke test the V2 daemon adoption path end-to-end.
 #
 # What this validates:
-#   - `ws daemon start` brings up the daemon and the socket appears
-#   - `ws daemon status` reports running + health-responsive
-#   - `ws create` routes through the daemon (verified by checking the
+#   - `drydock daemon start` brings up the daemon and the socket appears
+#   - `drydock daemon status` reports running + health-responsive
+#   - `drydock create` routes through the daemon (verified by checking the
 #     workspace lands in the daemon's registry, NOT the host's default)
-#   - `ws destroy` routes through the daemon (cascaded cleanup runs)
-#   - `ws daemon stop` tears down cleanly
+#   - `drydock destroy` routes through the daemon (cascaded cleanup runs)
+#   - `drydock daemon stop` tears down cleanly
 #
 # What this does NOT validate:
 #   - Real `devcontainer up` (uses DRYDOCK_WSD_DRY_RUN=1 — synthetic
@@ -20,27 +20,27 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WS_BIN="${WS_BIN:-${REPO_ROOT}/.venv/bin/ws}"
+DRYDOCK_BIN="${DRYDOCK_BIN:-${REPO_ROOT}/.venv/bin/ws}"
 PY_BIN="${PY_BIN:-${REPO_ROOT}/.venv/bin/python}"
 
-if [[ ! -x "${WS_BIN}" ]]; then
-    echo "ERROR: ws binary not found at ${WS_BIN}" >&2
+if [[ ! -x "${DRYDOCK_BIN}" ]]; then
+    echo "ERROR: drydock binary not found at ${DRYDOCK_BIN}" >&2
     echo "  hint: pip install -e '.[dev]' from ${REPO_ROOT}" >&2
     exit 2
 fi
 
 # Use a short tmp dir to stay under macOS AF_UNIX 104-char limit.
-TMPDIR_BASE=$(mktemp -d /tmp/wsd-smoke.XXXXXX)
+TMPDIR_BASE=$(mktemp -d /tmp/daemon-smoke.XXXXXX)
 SOCKET="${TMPDIR_BASE}/s"
 REGISTRY="${TMPDIR_BASE}/r.db"
-LOG="${TMPDIR_BASE}/wsd.log"
-PID_FILE="${TMPDIR_BASE}/wsd.pid"
+LOG="${TMPDIR_BASE}/daemon.log"
+PID_FILE="${TMPDIR_BASE}/daemon.pid"
 SECRETS="${TMPDIR_BASE}/secrets"
 HOME_OVERRIDE="${TMPDIR_BASE}"
 
-export DRYDOCK_WSD_SOCKET="${SOCKET}"
-export DRYDOCK_WSD_REGISTRY="${REGISTRY}"
-export DRYDOCK_WSD_LOG="${LOG}"
+export DRYDOCK_DAEMON_SOCKET="${SOCKET}"
+export DRYDOCK_DAEMON_REGISTRY="${REGISTRY}"
+export DRYDOCK_DAEMON_LOG="${LOG}"
 export DRYDOCK_SECRETS_ROOT="${SECRETS}"
 export DRYDOCK_WSD_DRY_RUN=1
 export HOME="${HOME_OVERRIDE}"
@@ -77,10 +77,10 @@ echo "==> socket: ${SOCKET}"
 # 1. Pre-create the registry file so the daemon doesn't race on first open.
 "${PY_BIN}" -c "from pathlib import Path; from drydock.core.registry import Registry; Registry(db_path=Path('${REGISTRY}')).close()"
 
-# 2. Start the daemon (manual subprocess; ws daemon start uses a different
+# 2. Start the daemon (manual subprocess; drydock daemon start uses a different
 # tempdir layout for HOME-relative defaults — easier to do it explicitly here).
 echo "==> starting daemon"
-"${PY_BIN}" -m drydock.wsd --socket "${SOCKET}" --registry "${REGISTRY}" >"${LOG}" 2>&1 &
+"${PY_BIN}" -m drydock.daemon --socket "${SOCKET}" --registry "${REGISTRY}" >"${LOG}" 2>&1 &
 DAEMON_PID=$!
 echo "${DAEMON_PID}" > "${PID_FILE}"
 
@@ -95,11 +95,11 @@ if [[ ! -S "${SOCKET}" ]]; then
 fi
 echo "    daemon up (pid=${DAEMON_PID})"
 
-# 3. Probe wsd.health via a raw JSON-RPC call.
-echo "==> probing wsd.health"
-HEALTH=$(echo '{"jsonrpc":"2.0","method":"wsd.health","id":"smoke-1"}' | nc -U "${SOCKET}")
+# 3. Probe daemon.health via a raw JSON-RPC call.
+echo "==> probing daemon.health"
+HEALTH=$(echo '{"jsonrpc":"2.0","method":"daemon.health","id":"smoke-1"}' | nc -U "${SOCKET}")
 if ! echo "${HEALTH}" | grep -q '"ok": *true'; then
-    echo "FAIL: wsd.health did not return ok=true" >&2
+    echo "FAIL: daemon.health did not return ok=true" >&2
     echo "  response: ${HEALTH}" >&2
     exit 1
 fi
@@ -116,10 +116,10 @@ echo "init" > "${REPO}/README.md"
 git -C "${REPO}" add .
 git -C "${REPO}" commit -m "init" -q
 
-# 5. Call ws create — should route through the daemon since
-# DRYDOCK_WSD_SOCKET is set and the socket exists.
-echo "==> ws create proj smokedesk (expects daemon routing)"
-CREATE_OUT=$("${WS_BIN}" --json create proj smokedesk --repo-path "${REPO}")
+# 5. Call drydock create — should route through the daemon since
+# DRYDOCK_DAEMON_SOCKET is set and the socket exists.
+echo "==> drydock create proj smokedesk (expects daemon routing)"
+CREATE_OUT=$("${DRYDOCK_BIN}" --json create proj smokedesk --repo-path "${REPO}")
 echo "    create output: ${CREATE_OUT}" | head -c 300; echo
 
 # Verify the daemon's registry got the row (proves the routing went via the
@@ -144,9 +144,9 @@ case "${WORKSPACE_NAME}" in
     *) echo "FAIL: container_id missing dry-run prefix; routing or dry-run env may be wrong" >&2; echo "  row: ${WORKSPACE_NAME}" >&2; exit 1 ;;
 esac
 
-# 6. Call ws destroy.
-echo "==> ws destroy smokedesk (expects daemon routing)"
-DESTROY_OUT=$("${WS_BIN}" --json destroy smokedesk --force)
+# 6. Call drydock destroy.
+echo "==> drydock destroy smokedesk (expects daemon routing)"
+DESTROY_OUT=$("${DRYDOCK_BIN}" --json destroy smokedesk --force)
 echo "    destroy output: ${DESTROY_OUT}" | head -c 300; echo
 
 # Verify the row is gone.

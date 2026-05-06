@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from drydock.cli.destroy import destroy
 from drydock.core import WsError
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 from drydock.output.formatter import Output
 
 
@@ -48,7 +48,7 @@ def env(tmp_path):
     overlay_file = overlay_dir / "test.json"
     overlay_file.write_text("{}")
 
-    ws = Workspace(
+    ws = Drydock(
         name="test-ws",
         project="proj",
         repo_path=str(repo),
@@ -57,7 +57,7 @@ def env(tmp_path):
         container_id="cid_abc",
         config={"overlay_path": str(overlay_file)},
     )
-    registry.create_workspace(ws)
+    registry.create_drydock(ws)
 
     out = Output(force_json=True)
     return {
@@ -79,10 +79,10 @@ def _invoke_destroy(env, name="test-ws"):
     )
 
 
-# All tests must bypass the daemon routing (tests run without wsd).
+# All tests must bypass the daemon routing (tests run without daemon).
 _DAEMON_UNAVAILABLE = patch(
     "drydock.cli.destroy.call_daemon",
-    side_effect=__import__("drydock.cli._wsd_client", fromlist=["DaemonUnavailable"]).DaemonUnavailable("no_socket"),
+    side_effect=__import__("drydock.cli._daemon_client", fromlist=["DaemonUnavailable"]).DaemonUnavailable("no_socket"),
 )
 
 _NO_TAILNET_CLEANUP = patch(
@@ -113,7 +113,7 @@ class TestDestroyWorktree:
 
         result = _invoke_destroy(env)
         assert result.exit_code == 0
-        assert env["registry"].get_workspace("test-ws") is None
+        assert env["registry"].get_drydock("test-ws") is None
 
     def test_registry_row_removed_on_cleanup_failure(self, _MockCLI, _mock_tn, _mock_daemon, env, monkeypatch):
         def fail_remove(*args, **kwargs):
@@ -128,7 +128,7 @@ class TestDestroyWorktree:
 
         result = _invoke_destroy(env)
         assert result.exit_code == 0
-        assert env["registry"].get_workspace("test-ws") is None
+        assert env["registry"].get_drydock("test-ws") is None
 
 
 @_DAEMON_UNAVAILABLE
@@ -157,7 +157,7 @@ class TestDestroyContainerStop:
 
         result = _invoke_destroy(env)
         assert result.exit_code == 0
-        assert env["registry"].get_workspace("test-ws") is None
+        assert env["registry"].get_drydock("test-ws") is None
         assert not env["wt_path"].exists()
 
     @patch("drydock.cli.destroy.DevcontainerCLI")
@@ -194,8 +194,8 @@ class TestDestroyTailnetDeviceDelete:
     @patch("drydock.cli.destroy.tailnet_api")
     def test_deletes_device_when_credentials_present(self, mock_tn, _MockCLI, _mock_daemon, env):
         mock_tn.load_admin_credentials.return_value = ("tok", "example.ts.net")
-        mock_tn.find_devices.return_value = [{"id": "dev-1", "hostname": "ws_test_ws"}]
-        mock_tn.find_device_by_hostname.return_value = {"id": "dev-1", "hostname": "ws_test_ws"}
+        mock_tn.find_devices.return_value = [{"id": "dev-1", "hostname": "dock_test_ws"}]
+        mock_tn.find_device_by_hostname.return_value = {"id": "dev-1", "hostname": "dock_test_ws"}
 
         result = _invoke_destroy(env)
         assert result.exit_code == 0
@@ -214,7 +214,7 @@ class TestDestroyTailnetDeviceDelete:
         mock_tn.find_devices.assert_not_called()
 
     # Contract: tailnet API failure must NOT roll back destroy. The
-    # workspace is already gone from drydock's registry; the orphan record
+    # drydock is already gone from drydock's registry; the orphan record
     # is recoverable via `ws tailnet prune`. Audit captures the failure.
     @patch("drydock.cli.destroy.tailnet_api")
     def test_tailnet_failure_does_not_block_destroy(self, mock_tn, _MockCLI, _mock_daemon, env):
@@ -224,4 +224,4 @@ class TestDestroyTailnetDeviceDelete:
 
         result = _invoke_destroy(env)
         assert result.exit_code == 0
-        assert env["registry"].get_workspace("test-ws") is None
+        assert env["registry"].get_drydock("test-ws") is None

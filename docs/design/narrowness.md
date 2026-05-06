@@ -69,7 +69,7 @@ Subset compares tuples, never raw strings. `"source=/a,target=/x,type=bind"` and
 
 ### Secret names
 
-Already restricted to `[A-Za-z0-9_.\-]{1,64}` by `ws secret set`. Validator treats them as opaque strings.
+Already restricted to `[A-Za-z0-9_.\-]{1,64}` by `drydock secret set`. Validator treats them as opaque strings.
 
 ### Storage scopes
 
@@ -115,11 +115,11 @@ At spawn time, a rejection emits:
 ```json
 {
   "event": "desk.spawn_rejected",
-  "principal": "ws_parent",
+  "principal": "dock_parent",
   "method": "SpawnChild",
   "result": "error",
   "details": {
-    "parent_desk_id": "ws_parent",
+    "parent_desk_id": "dock_parent",
     "reject": {
       "rule": "firewall_narrowness",
       "offending_item": "evil.example.com"
@@ -151,6 +151,6 @@ Two empty-list conventions exist in the codebase, both deliberate:
 - **Permissive-when-empty** (storage, provision) preserves pre-narrowness behavior — a desk granted `request_X_leases` keeps working until the principal narrows it. Chosen to avoid breaking existing desks when narrowness was added post-hoc.
 - **Deny-all-when-empty** (network-reach, and the future default for any narrowness field added going forward) — opening egress to a never-listed domain is the kind of expansion that should require explicit declaration. Newer designs default this way; the older permissive defaults are grandfathered.
 
-The `matches_*` functions live in `src/drydock/core/policy.py`. The `_check_capability` + `_policy_list` helpers in `src/drydock/wsd/capability_handlers.py` are the single read-side surface for all of these — every capability handler uses them, so changes propagate without touching per-handler code.
+The `matches_*` functions live in `src/drydock/core/policy.py`. The `_check_capability` + `_policy_list` helpers in `src/drydock/daemon/capability_handlers.py` are the single read-side surface for all of these — every capability handler uses them, so changes propagate without touching per-handler code.
 
 Workload registration ([resource-ceilings.md](resource-ceilings.md) §3) extends this model with *temporary* narrowness lifts: a `WorkloadLease` widens select fields for a declared duration, then they snap back. The schema for that lives in resource-ceilings.md and isn't re-listed here.

@@ -1,6 +1,15 @@
 # The principal–Harbormaster–Dockworker triangle
 
-**Status:** position paper · **Pulls together:** [vision.md](../vision.md), [capability-broker.md](capability-broker.md), [narrowness.md](narrowness.md), [employee-worker.md](employee-worker.md), [auth-broker.md](auth-broker.md), [harbor-monitor.md](harbor-monitor.md), [network-reach.md](network-reach.md), [deskwatch.md](deskwatch.md), [tailnet-identity.md](tailnet-identity.md)
+**Status:** ARCHIVED 2026-05-06 · superseded by the V3 split. Retained for historical reference and the §3 prior-art survey.
+
+> **Why archived:** this paper unified auth-broker / harbor-monitor / network-reach / resource-ceilings under a single "Harbormaster" role. The V3 architectural reframe (see [vocabulary.md](../vocabulary.md)) split that role into:
+> - **Authority** — deterministic rule enforcer (capability broker, lease minting, deadman). See [harbor-authority.md](../harbor-authority.md).
+> - **Auditor** — LLM observation + bucket-2 defensive actions. See [port-auditor.md](../port-auditor.md).
+> - **Harbormaster** — deferred future manager role (cross-Authority/Auditor coordination, principal-facing summaries). Not implemented in V3.
+>
+> The substantive content has been absorbed into the per-feature design docs. The §3 prior-art table is the unique residue worth re-reading. Wherever this doc says "Harbormaster," mentally substitute "Authority + Auditor" for V1/V2 implementation, or "deferred manager" where the prose discusses cross-cutting judgment.
+
+---
 
 This document is the umbrella over the recent run of design work (auth-broker, harbor-monitor, network-reach). Those each solve a concrete problem; this one names what they're collectively *building toward* — and what's missing before the picture closes.
 

@@ -42,7 +42,7 @@ def _drydock_state_dirs() -> dict[str, dict]:
         "daemon-secrets": {"path": home / ".drydock" / "daemon-secrets", "mode": 0o700},
         "logs": {"path": home / ".drydock" / "logs", "mode": 0o755},
         "bin": {"path": home / ".drydock" / "bin", "mode": 0o755},
-        # Dedicated dir for the wsd socket so the overlay can bind-mount
+        # Dedicated dir for the drydock daemon socket so the overlay can bind-mount
         # the dir (not the socket file) into drydock containers — durable
         # across daemon restarts.
         "run": {"path": home / ".drydock" / "run", "mode": 0o755},
@@ -71,7 +71,7 @@ def _install_drydock_rpc(bin_dir: Path) -> str | None:
 
     The overlay bind-mounts this file into every drydock container at
     /usr/local/bin/drydock-rpc, giving workers a tiny stdlib-only JSON-RPC
-    client for wsd. See docs/v2-design-protocol.md §1.
+    client for daemon. See docs/v2-design-protocol.md §1.
 
     Idempotent — no-op when the target already matches the source byte-for-byte.
     Returns a short action string on change, None otherwise.
@@ -117,6 +117,15 @@ def host_init(ctx):
         if actual_mode != mode:
             os.chmod(path, mode)
             actions.append(f"chmod {oct(mode)} {path}")
+
+    # One-time vocabulary migration: legacy ws_<slug> filesystem artifacts
+    # (secrets dirs, worktrees, overlays) renamed to dock_<slug>. Idempotent.
+    from drydock.core.migrate_v1_artifacts import migrate_v1_artifacts
+    fs_summary = migrate_v1_artifacts(Path.home() / ".drydock")
+    for entry in fs_summary["renamed"]:
+        actions.append(f"v1-migrate: {entry}")
+    for entry in fs_summary["skipped"]:
+        actions.append(f"v1-migrate skipped: {entry}")
 
     # Devcontainer template bind-mounts ${HOME}/.gitconfig; on Linux without it
     # docker hard-fails with "bind source path does not exist". Touch a stub.
@@ -369,7 +378,7 @@ def _format_audit_human(audit: dict) -> list[str]:
         mark = "✓" if running and d.get("health_responsive") else ("⚠" if running else "✗")
         state = "running + responsive" if (running and d.get("health_responsive")) \
             else ("running but socket unresponsive" if running else "NOT RUNNING")
-        lines.append(f"  [{mark}] wsd: {state}")
+        lines.append(f"  [{mark}] daemon: {state}")
         if d.get("pid"):
             lines.append(f"      pid={d['pid']}  uptime={d.get('uptime_human', '?')}")
         lines.append(f"      socket={d.get('socket_path')}  present={d.get('socket_present')}")

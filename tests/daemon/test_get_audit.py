@@ -4,7 +4,7 @@ Pin contracts:
 - Empty file → empty result (not error).
 - Newest-first ordering.
 - Pagination cursor (`next_before_ts`) when more events than limit.
-- Filters: event, principal (matches v1 workspace_id too), before_ts.
+- Filters: event, principal (matches v1 drydock_id too), before_ts.
 - Filter validation: limit bounds, type checks.
 - v1 + v2 entries coexist in the same response.
 - Malformed JSONL lines are skipped, not fatal.
@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from drydock.wsd.audit_handlers import DEFAULT_LIMIT, MAX_LIMIT, get_audit
-from drydock.wsd.server import _RpcError
+from drydock.daemon.audit_handlers import DEFAULT_LIMIT, MAX_LIMIT, get_audit
+from drydock.daemon.server import _RpcError
 
 
 def _write_log(path: Path, entries: list[dict]) -> None:
@@ -36,8 +36,8 @@ def _v2(event, ts, principal=None, **details):
     }
 
 
-def _v1(event, ts, workspace_id):
-    return {"timestamp": ts, "event": event, "workspace_id": workspace_id}
+def _v1(event, ts, drydock_id):
+    return {"timestamp": ts, "event": event, "drydock_id": drydock_id}
 
 
 class TestGetAudit:
@@ -54,18 +54,18 @@ class TestGetAudit:
     def test_returns_newest_first(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v2("desk.created", "2026-04-16T10:00:00+00:00"),
-            _v2("desk.destroyed", "2026-04-16T11:00:00+00:00"),
+            _v2("drydock.created", "2026-04-16T10:00:00+00:00"),
+            _v2("drydock.destroyed", "2026-04-16T11:00:00+00:00"),
             _v2("lease.issued", "2026-04-16T09:00:00+00:00"),
         ])
         result = get_audit(None, None, None, log_path=log)
         names = [e["event"] for e in result["events"]]
-        assert names == ["desk.destroyed", "desk.created", "lease.issued"]
+        assert names == ["drydock.destroyed", "drydock.created", "lease.issued"]
 
     def test_pagination_cursor_when_over_limit(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v2("desk.created", f"2026-04-16T10:0{i}:00+00:00") for i in range(5)
+            _v2("drydock.created", f"2026-04-16T10:0{i}:00+00:00") for i in range(5)
         ])
         result = get_audit({"limit": 3}, None, None, log_path=log)
         assert len(result["events"]) == 3
@@ -76,16 +76,16 @@ class TestGetAudit:
 
     def test_no_cursor_when_within_limit(self, tmp_path):
         log = tmp_path / "audit.log"
-        _write_log(log, [_v2("desk.created", "2026-04-16T10:00:00+00:00")])
+        _write_log(log, [_v2("drydock.created", "2026-04-16T10:00:00+00:00")])
         result = get_audit({"limit": 100}, None, None, log_path=log)
         assert result["next_before_ts"] is None
 
     def test_event_filter(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v2("desk.created", "2026-04-16T10:00:00+00:00"),
+            _v2("drydock.created", "2026-04-16T10:00:00+00:00"),
             _v2("lease.issued", "2026-04-16T11:00:00+00:00"),
-            _v2("desk.destroyed", "2026-04-16T12:00:00+00:00"),
+            _v2("drydock.destroyed", "2026-04-16T12:00:00+00:00"),
         ])
         result = get_audit({"event": "lease.issued"}, None, None, log_path=log)
         assert len(result["events"]) == 1
@@ -94,31 +94,31 @@ class TestGetAudit:
     def test_principal_filter_matches_v2_principal(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v2("desk.created", "2026-04-16T10:00:00+00:00", principal="ws_alpha"),
-            _v2("desk.created", "2026-04-16T11:00:00+00:00", principal="ws_beta"),
+            _v2("drydock.created", "2026-04-16T10:00:00+00:00", principal="dock_alpha"),
+            _v2("drydock.created", "2026-04-16T11:00:00+00:00", principal="dock_beta"),
         ])
-        result = get_audit({"principal": "ws_alpha"}, None, None, log_path=log)
+        result = get_audit({"principal": "dock_alpha"}, None, None, log_path=log)
         assert len(result["events"]) == 1
-        assert result["events"][0]["principal"] == "ws_alpha"
+        assert result["events"][0]["principal"] == "dock_alpha"
 
-    # Cross-shape compat: v1 entries use `workspace_id` not `principal`.
+    # Cross-shape compat: v1 entries use `drydock_id` not `principal`.
     # Filtering by principal should still match them — same conceptual field.
     def test_principal_filter_matches_v1_workspace_id(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v1("workspace.created", "2026-04-16T10:00:00+00:00", "ws_alpha"),
-            _v1("workspace.created", "2026-04-16T11:00:00+00:00", "ws_beta"),
+            _v1("drydock.created", "2026-04-16T10:00:00+00:00", "dock_alpha"),
+            _v1("drydock.created", "2026-04-16T11:00:00+00:00", "dock_beta"),
         ])
-        result = get_audit({"principal": "ws_alpha"}, None, None, log_path=log)
+        result = get_audit({"principal": "dock_alpha"}, None, None, log_path=log)
         assert len(result["events"]) == 1
-        assert result["events"][0]["workspace_id"] == "ws_alpha"
+        assert result["events"][0]["drydock_id"] == "dock_alpha"
 
     def test_before_ts_filter(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v2("desk.created", "2026-04-16T10:00:00+00:00"),
-            _v2("desk.created", "2026-04-16T11:00:00+00:00"),
-            _v2("desk.created", "2026-04-16T12:00:00+00:00"),
+            _v2("drydock.created", "2026-04-16T10:00:00+00:00"),
+            _v2("drydock.created", "2026-04-16T11:00:00+00:00"),
+            _v2("drydock.created", "2026-04-16T12:00:00+00:00"),
         ])
         result = get_audit(
             {"before_ts": "2026-04-16T11:00:00+00:00"},
@@ -131,8 +131,8 @@ class TestGetAudit:
     def test_v1_and_v2_coexist_in_response(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v1("workspace.created", "2026-04-16T10:00:00+00:00", "ws_a"),
-            _v2("desk.created", "2026-04-16T11:00:00+00:00"),
+            _v1("drydock.created", "2026-04-16T10:00:00+00:00", "dock_a"),
+            _v2("drydock.created", "2026-04-16T11:00:00+00:00"),
         ])
         result = get_audit(None, None, None, log_path=log)
         assert len(result["events"]) == 2
@@ -143,9 +143,9 @@ class TestGetAudit:
     def test_malformed_json_skipped(self, tmp_path):
         log = tmp_path / "audit.log"
         log.write_text(
-            json.dumps(_v2("desk.created", "2026-04-16T10:00:00+00:00")) + "\n"
+            json.dumps(_v2("drydock.created", "2026-04-16T10:00:00+00:00")) + "\n"
             + "not valid json\n"
-            + json.dumps(_v2("desk.destroyed", "2026-04-16T11:00:00+00:00")) + "\n"
+            + json.dumps(_v2("drydock.destroyed", "2026-04-16T11:00:00+00:00")) + "\n"
         )
         result = get_audit(None, None, None, log_path=log)
         assert len(result["events"]) == 2
@@ -165,7 +165,7 @@ class TestGetAudit:
     def test_default_limit_when_omitted(self, tmp_path):
         log = tmp_path / "audit.log"
         _write_log(log, [
-            _v2("desk.created", f"2026-04-16T10:00:0{i}+00:00") for i in range(150)
+            _v2("drydock.created", f"2026-04-16T10:00:0{i}+00:00") for i in range(150)
         ])
         result = get_audit(None, None, None, log_path=log)
         assert len(result["events"]) == DEFAULT_LIMIT

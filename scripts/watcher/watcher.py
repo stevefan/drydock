@@ -119,7 +119,7 @@ def detect_transitions(prior: dict, current: dict) -> list[str]:
         was = prior.get(name)
         now = current.get(name)
         if now is None:
-            notes.append(f"- `{name}` disappeared from `ws list`")
+            notes.append(f"- `{name}` disappeared from `drydock list`")
             continue
         if was is None:
             if now["healthy"]:

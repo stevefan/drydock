@@ -38,7 +38,7 @@ def main() -> int:
         sys.exit("empty message — refusing to send")
 
     if not TOKEN_PATH.exists():
-        sys.exit(f"missing {TOKEN_PATH}: run `ws secret set <desk> telegram_bot_token`")
+        sys.exit(f"missing {TOKEN_PATH}: run `drydock secret set <desk> telegram_bot_token`")
     if not CHAT_ID_PATH.exists():
         sys.exit(
             f"no pinned chat at {CHAT_ID_PATH}. The bot pins on first message; "

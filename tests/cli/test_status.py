@@ -12,15 +12,15 @@ from drydock.cli.status import (
     _probe_ipset,
     _probe_refresh_supervisor,
     _probe_trust_accepted,
-    _probe_workspace,
+    _probe_drydock,
     status,
 )
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 from drydock.output.formatter import Output
 
 
 def _make_ws(name="test-ws", state="running", worktree_path="/tmp/wt", overlay_path=""):
-    return Workspace(
+    return Drydock(
         name=name,
         project="proj",
         repo_path="/tmp/repo",
@@ -44,7 +44,7 @@ def _invoke(registry):
 
 def test_status_empty_registry():
     registry = MagicMock()
-    registry.list_workspaces.return_value = []
+    registry.list_drydocks.return_value = []
     result = _invoke(registry)
     assert result.exit_code == 0
 
@@ -108,13 +108,13 @@ def test_status_ipset_null_when_absent(MockCLI):
 @patch("drydock.cli.status.DevcontainerCLI")
 def test_status_trust_accepted_true_when_claude_json_has_entry(MockCLI, tmp_path):
     overlay = tmp_path / "overlay.json"
-    overlay.write_text(json.dumps({"workspaceFolder": "/workspace"}))
+    overlay.write_text(json.dumps({"drydockFolder": "/drydock"}))
     ws = _make_ws(overlay_path=str(overlay))
     devc = MockCLI.return_value
     devc.exec_command.return_value = subprocess.CompletedProcess(
         args=[],
         returncode=0,
-        stdout=json.dumps({"trustedWorkspaces": {"/workspace": {"trusted": True}}}),
+        stdout=json.dumps({"trustedWorkspaces": {"/drydock": {"trusted": True}}}),
         stderr="",
     )
 
@@ -124,7 +124,7 @@ def test_status_trust_accepted_true_when_claude_json_has_entry(MockCLI, tmp_path
 @patch("drydock.cli.status.DevcontainerCLI")
 def test_status_trust_accepted_false_when_claude_json_missing_entry(MockCLI, tmp_path):
     overlay = tmp_path / "overlay.json"
-    overlay.write_text(json.dumps({"workspaceFolder": "/workspace"}))
+    overlay.write_text(json.dumps({"drydockFolder": "/drydock"}))
     ws = _make_ws(overlay_path=str(overlay))
     devc = MockCLI.return_value
     devc.exec_command.return_value = subprocess.CompletedProcess(
@@ -164,7 +164,7 @@ def test_status_base_image_null_when_container_absent():
 @patch("drydock.cli.status._docker_container_id", return_value="")
 def test_status_gracefully_handles_container_not_running(mock_docker):
     ws = _make_ws(state="suspended")
-    row = _probe_workspace(ws)
+    row = _probe_drydock(ws)
 
     assert row["state"] == "suspended"
     assert row["container"] == "not found"
@@ -196,7 +196,7 @@ def test_status_preserves_existing_fields(
     mock_base,
 ):
     ws = _make_ws()
-    row = _probe_workspace(ws)
+    row = _probe_drydock(ws)
 
     assert row["name"] == "test-ws"
     assert row["state"] == "running"
@@ -218,7 +218,7 @@ def test_status_preserves_existing_fields(
 @patch("drydock.cli.status._probe_supervisor", return_value=False)
 @patch("drydock.cli.status._probe_tailscale", return_value=True)
 @patch("drydock.cli.status._docker_container_id", return_value="ctr-abc")
-def test_status_multiple_workspaces(
+def test_status_multiple_drydocks(
     mock_docker,
     mock_ts,
     mock_sup,
@@ -229,7 +229,7 @@ def test_status_multiple_workspaces(
     mock_base,
 ):
     registry = MagicMock()
-    registry.list_workspaces.return_value = [
+    registry.list_drydocks.return_value = [
         _make_ws(name="ws-a"),
         _make_ws(name="ws-b", state="suspended", worktree_path=""),
     ]

@@ -10,11 +10,11 @@ You are managing workspaces via the `ws` CLI. Output is JSON when piped (which i
 ## Commands
 
 ```
-ws create <project> [name]        Create a workspace (name defaults to project)
-ws list [--project P] [--state S] List workspaces
-ws inspect <name>                 Full workspace details
-ws stop <name>                    Stop a running workspace
-ws destroy <name> --force         Remove a workspace (requires --force)
+drydock create <project> [name]        Create a workspace (name defaults to project)
+drydock list [--project P] [--state S] List workspaces
+drydock inspect <name>                 Full workspace details
+drydock stop <name>                    Stop a running workspace
+drydock destroy <name> --force         Remove a workspace (requires --force)
 ```
 
 ## Global flags
@@ -28,17 +28,17 @@ ws --dry-run <command>  Preview what would happen without doing it
 
 **Create a workspace:**
 ```bash
-ws create myproject
+drydock create myproject
 ```
 
 **Create for a specific user:**
 ```bash
-ws create myproject --owner alice
+drydock create myproject --owner alice
 ```
 
 **Check what's running:**
 ```bash
-ws list --state running
+drydock list --state running
 ```
 
 **Preview a destructive action:**
@@ -48,20 +48,20 @@ ws --dry-run destroy old-workspace
 
 **Then execute it:**
 ```bash
-ws destroy old-workspace --force
+drydock destroy old-workspace --force
 ```
 
 ## Error handling
 
 All errors return JSON with `error` and `fix` fields:
 ```json
-{"error": "Workspace 'foo' not found", "fix": "Run 'ws list' to see available workspaces"}
+{"error": "Workspace 'foo' not found", "fix": "Run 'drydock list' to see available workspaces"}
 ```
 
 Read the `fix` field and follow its instruction. Do not guess or retry without reading the error.
 
 ## Notes
 
-- `ws create` is idempotent — if the workspace exists, it reports the conflict and tells you what to do
-- `ws destroy` requires `--force` — always use `--dry-run` first to preview
+- `drydock create` is idempotent — if the workspace exists, it reports the conflict and tells you what to do
+- `drydock destroy` requires `--force` — always use `--dry-run` first to preview
 - Output is always JSON in non-TTY contexts (which is how you invoke it)

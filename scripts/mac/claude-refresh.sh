@@ -98,7 +98,7 @@ while IFS= read -r line; do
     fi
 
     log "pushing to $ssh_target desk=$desk"
-    if echo "$CREDS" | ssh "$ssh_target" "ws secret set $desk claude_credentials" >/dev/null 2>&1; then
+    if echo "$CREDS" | ssh "$ssh_target" "drydock secret set $desk claude_credentials" >/dev/null 2>&1; then
         log "  claude_credentials: OK"
     else
         log "  ERROR: claude_credentials push failed"
@@ -107,7 +107,7 @@ while IFS= read -r line; do
     fi
 
     if [ "$HAS_STATE" = 1 ]; then
-        if ssh "$ssh_target" "ws secret set $desk claude_account_state" < "$STATE_FILE" >/dev/null 2>&1; then
+        if ssh "$ssh_target" "drydock secret set $desk claude_account_state" < "$STATE_FILE" >/dev/null 2>&1; then
             log "  claude_account_state: OK"
         else
             log "  ERROR: claude_account_state push failed"

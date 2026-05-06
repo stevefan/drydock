@@ -1,8 +1,8 @@
 # Harbor bootstrap — provisioning a fresh Linux box as a Drydock Harbor
 
-Captures everything a fresh Linux box (Hetzner, EC2, bare metal, anything that can run Docker) needs before `ws create` will work. Tested on Ubuntu 24.04 LTS; Debian-family should be straightforward; other distros need adapter steps.
+Captures everything a fresh Linux box (Hetzner, EC2, bare metal, anything that can run Docker) needs before `drydock create` will work. Tested on Ubuntu 24.04 LTS; Debian-family should be straightforward; other distros need adapter steps.
 
-A **Harbor** is the machine that runs `wsd` and hosts drydocks (see [../design/vocabulary.md](../design/vocabulary.md)). This doc is about standing up that Linux host so it can become a Harbor. Low-level "host" terminology (linux host, docker host, host uid, `ws host init/check`) stays — those are OS-level concepts. "Harbor" is the product-level role the host plays.
+A **Harbor** is the machine that runs `drydock daemon` and hosts drydocks (see [../design/vocabulary.md](../design/vocabulary.md)). This doc is about standing up that Linux host so it can become a Harbor. Low-level "host" terminology (linux host, docker host, host uid, `drydock host init/check`) stays — those are OS-level concepts. "Harbor" is the product-level role the host plays.
 
 Everything deterministic is scripted at [`scripts/bootstrap-linux-host.sh`](../../scripts/bootstrap-linux-host.sh). One script covers apt deps, drydock install, state dirs, and systemd unit installation — no second script to remember. Auth (Tailscale, GitHub, Claude) is interactive *unless* you pre-inject credentials via env vars (see "Unattended bootstrap" below).
 
@@ -23,7 +23,7 @@ GH_TOKEN=ghp_xxx \
 | `HARBOR_HOSTNAME` | Tailnet hostname for this Harbor (defaults to `hostname -s`) |
 | `GH_TOKEN` | `gh` respects natively; skip the interactive `gh auth login` |
 
-With all three set, a fresh EC2 instance reaches "Harbor ready for `ws create`" in one user-data block.
+With all three set, a fresh EC2 instance reaches "Harbor ready for `drydock create`" in one user-data block.
 
 ---
 
@@ -42,12 +42,12 @@ Idempotent. Safe to re-run.
 1. Installs apt packages: `docker-ce` + buildx, `tailscale`, `python3` + `pipx`, `git`, `curl`, `gh`, `nodejs`/`npm`.
 2. Installs `@devcontainers/cli` globally via npm.
 3. Clones drydock into `/root/drydock` and `pipx install --editable` it. `ws` lands at `/root/.local/bin/ws`.
-4. Runs `ws host init` — creates state directories (`/root/.drydock/{projects,secrets,worktrees,overlays,daemon-secrets,logs}`, `secrets` and `daemon-secrets` at `0700`), `/var/log/drydock/`, and a `/root/.gitconfig` stub (the base devcontainer template bind-mounts `${HOME}/.gitconfig` and Linux docker hard-fails on missing mount sources).
-5. Installs systemd units via `scripts/install-linux-services.sh` — `drydock-wsd.service` (daemon) and `drydock-desks.service` (resume-on-boot). Enables both.
-6. Starts `drydock-wsd.service`.
+4. Runs `drydock host init` — creates state directories (`/root/.drydock/{projects,secrets,worktrees,overlays,daemon-secrets,logs}`, `secrets` and `daemon-secrets` at `0700`), `/var/log/drydock/`, and a `/root/.gitconfig` stub (the base devcontainer template bind-mounts `${HOME}/.gitconfig` and Linux docker hard-fails on missing mount sources).
+5. Installs systemd units via `scripts/install-linux-services.sh` — `drydock.service` (daemon) and `drydock-desks.service` (resume-on-boot). Enables both.
+6. Starts `drydock.service`.
 7. If `TAILSCALE_AUTHKEY` is set, runs `tailscale up` with `--ssh` non-interactively.
 
-After the script, `which ws && ws --version` works and `ws daemon status` reports healthy. `ws host check` will flag any remaining gaps (e.g. Tailscale not joined, gh not authed).
+After the script, `which ws && ws --version` works and `drydock daemon status` reports healthy. `drydock host check` will flag any remaining gaps (e.g. Tailscale not joined, gh not authed).
 
 ## Interactive steps (one-time per Harbor)
 
@@ -62,7 +62,7 @@ tailscale up --hostname=<box-name>
 gh auth login --hostname github.com --git-protocol https --web
 gh auth setup-git    # configures git's credential helper
 
-# Claude Code (after your first ws create) — persists to the
+# Claude Code (after your first drydock create) — persists to the
 # `claude-code-config` named volume; subsequent drydocks on this Harbor inherit
 docker exec -u node <container-id-of-any-drydock> claude /login
 # (device flow)
@@ -84,27 +84,27 @@ The account-state file `~/.claude.json` (contains `organizationUuid`, selected m
 
 ```bash
 # On your Mac — extract credentials from macOS Keychain (always has the freshest tokens):
-security find-generic-password -s "Claude Code-credentials" -w | ws secret set <drydock> claude_credentials
+security find-generic-password -s "Claude Code-credentials" -w | drydock secret set <drydock> claude_credentials
 
 # Account state still lives on disk:
-ws secret set <drydock> claude_account_state < ~/.claude.json
+drydock secret set <drydock> claude_account_state < ~/.claude.json
 
 # Push both to the remote Harbor:
-ws secret push <drydock> --to root@<host>
+drydock secret push <drydock> --to root@<host>
 ```
 
 **Token refresh — empirical result (2026-04-17):** the container's `claude remote-control` refreshes tokens **in memory only** — the process stays alive past the file's `expiresAt`, but `.credentials.json` is NOT updated on disk. File-based consumers (other drydocks via `RequestCapability`, any process reading `/run/secrets/claude_credentials`) get stale tokens after ~8 hours.
 
 **Designed refresh mechanism:** periodic re-extraction from Mac keychain:
 ```bash
-security find-generic-password -s "Claude Code-credentials" -w | ws secret set <drydock> claude_credentials
-ws secret push <drydock> --to root@<host>
+security find-generic-password -s "Claude Code-credentials" -w | drydock secret set <drydock> claude_credentials
+drydock secret push <drydock> --to root@<host>
 ```
 Run every 6 hours via Mac launchd, or manually when remote-control auth errors surface. The Mac is the credential source of truth for file-based consumers. Remote-control itself self-sustains and doesn't need this.
 
 **Why not `claude auth login` inside the container?** `claude auth login` requires Ink raw-mode TTY support. Most SSH and `docker exec` PTY combinations do not satisfy this — the login flow hangs or renders garbled output. The keychain-extraction pattern above bypasses this limitation entirely.
 
-After the first container restart (or `ws create --force`) the drydock registers with claude.ai. The `claude-code-config` volume is shared across all drydocks on a Harbor, so any sibling drydock gets the auth for free.
+After the first container restart (or `drydock create --force`) the drydock registers with claude.ai. The `claude-code-config` volume is shared across all drydocks on a Harbor, so any sibling drydock gets the auth for free.
 
 **Per-drydock?** Technically the secrets are per-drydock in drydock's store, but the materialized auth lives in the Harbor-shared `claude-code-config` volume. So you only *need* to do it once per Harbor — on any drydock — and all drydocks on that Harbor share the login. Putting it on the first drydock you create each Harbor is the simplest mental model.
 
@@ -112,7 +112,7 @@ After the first container restart (or `ws create --force`) the drydock registers
 
 ## Optional: Tailscale admin API token
 
-For `ws tailnet prune` (cleanup of orphan tailnet device records) and the eventual v2 daemon-side device cleanup on `ws destroy`:
+For `drydock tailnet prune` (cleanup of orphan tailnet device records) and the eventual v2 daemon-side device cleanup on `drydock destroy`:
 
 ```bash
 # Generate at https://login.tailscale.com → Settings → Keys → Generate API access token
@@ -153,14 +153,14 @@ extra_mounts:
 EOF
 
 # Push secrets (uid 1000 ownership is automatic when ws runs as root)
-echo -n "$ANTHROPIC_API_KEY" | ws secret set <project> anthropic_api_key
+echo -n "$ANTHROPIC_API_KEY" | drydock secret set <project> anthropic_api_key
 # ...other secrets
 
 # Provision
-ws create <project>
+drydock create <project>
 ```
 
-If the project has source-of-truth state on another Harbor (e.g. a SQLite DB on your Mac), seed the named volume before `ws create` — see `~/Notebooks/ops-personal/projects/Auction Crawl.md` (or your equivalent) for an example using `docker run --rm -v <vol>:/dst alpine cp ...`.
+If the project has source-of-truth state on another Harbor (e.g. a SQLite DB on your Mac), seed the named volume before `drydock create` — see `~/Notebooks/ops-personal/projects/Auction Crawl.md` (or your equivalent) for an example using `docker run --rm -v <vol>:/dst alpine cp ...`.
 
 ## What drydock could automate (but doesn't yet)
 
@@ -168,12 +168,12 @@ If the project has source-of-truth state on another Harbor (e.g. a SQLite DB on 
 |---|---|---|
 | Provision the VM | Out of scope — IaC layer (Terraform, OpenTofu, manual). Drydock is a fabric, not a cloud broker. | Never inside drydock proper. A sibling `fleet/` repo could thinly wrap Hetzner / fly / etc. |
 | Install host deps | Chicken-and-egg — drydock has to be installed first. | This bootstrap script lives in the drydock repo as the install vector. `curl ... \| bash` it. |
-| `ws host init` | Done — bootstrap invokes it. Creates state dirs + gitconfig stub. Idempotent, safe to re-run. |
-| `ws host check` | Done — returns a structured "what's missing" report. Run after bootstrap or any time as a preflight. |
+| `drydock host init` | Done — bootstrap invokes it. Creates state dirs + gitconfig stub. Idempotent, safe to re-run. |
+| `drydock host check` | Done — returns a structured "what's missing" report. Run after bootstrap or any time as a preflight. |
 | Tailscale device API token | Must be generated in the tailnet admin UI (no programmatic flow today). | Could prompt with the URL when the token file is missing; eventually OAuth client tokens auto-rotate. |
-| Claude `/login` | Interactive device flow inside the container. | Could prompt "Run `claude /login` in this container before ws exec --interactive"; not much more drydock can add. |
+| Claude `/login` | Interactive device flow inside the container. | Could prompt "Run `claude /login` in this container before drydock exec --interactive"; not much more drydock can add. |
 
-The honest split: drydock owns drydock lifecycle. Harbor setup is one layer below. The bootstrap script bridges that gap, and `ws host init` / `ws host check` would be the modest drydock-side extensions worth landing in v1.x or v2.
+The honest split: drydock owns drydock lifecycle. Harbor setup is one layer below. The bootstrap script bridges that gap, and `drydock host init` / `drydock host check` would be the modest drydock-side extensions worth landing in v1.x or v2.
 
 ## Reference deployment
 

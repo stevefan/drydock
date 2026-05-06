@@ -10,7 +10,7 @@ Run via:
 
 For production, deploy under systemd (Linux) or launchd (Mac); the
 units are TODO — for now just run with `ws auditor watch-loop &`
-or under nohup. Logging goes to wsd's standard logging facility
+or under nohup. Logging goes to the daemon's standard logging facility
 (stderr by default).
 
 Failure modes:

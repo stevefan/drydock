@@ -29,7 +29,7 @@ RUN python3 -m venv /opt/telegram-bot-venv && \
       "python-telegram-bot[ext]>=21" "httpx>=0.27"
 
 # Bot state lives at /workspace/telegram (named-volume-backed via
-# project YAML so messages survive `ws stop && ws create`).
+# project YAML so messages survive `drydock stop && drydock create`).
 RUN mkdir -p /workspace/telegram && chown -R node:node /workspace/telegram
 
 USER node

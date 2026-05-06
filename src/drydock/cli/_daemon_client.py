@@ -1,4 +1,4 @@
-"""Minimal wsd JSON-RPC client per docs/v2-design-protocol.md §1."""
+"""Minimal daemon JSON-RPC client per docs/v2-design-protocol.md §1."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from pathlib import Path
 
 
 def _default_socket_path() -> Path:
-    value = os.environ.get("DRYDOCK_WSD_SOCKET")
+    value = os.environ.get("DRYDOCK_DAEMON_SOCKET")
     if value:
         return Path(value)
-    return Path.home() / ".drydock" / "run" / "wsd.sock"
+    return Path.home() / ".drydock" / "run" / "daemon.sock"
 
 
 class DaemonUnavailable(Exception):

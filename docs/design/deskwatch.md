@@ -6,7 +6,7 @@
 
 Drydock tells you the container is running. It doesn't tell you the workload is healthy.
 
-Today: `ws list` shows `running`, `ws status` shows every infra probe green. Meanwhile the daily-crawl cron has been crashing for four days, the data file hasn't moved, no alert has fired. You only find out by looking.
+Today: `drydock list` shows `running`, `drydock status` shows every infra probe green. Meanwhile the daily-crawl cron has been crashing for four days, the data file hasn't moved, no alert has fired. You only find out by looking.
 
 Drydock's scope ends at "put the workload in a correctly-configured box." What's missing is a thin layer above that says "the workload did its job today."
 
@@ -51,9 +51,9 @@ All three sections optional. A desk with no `deskwatch:` block gets no workload-
 ### CLI
 
 ```bash
-ws deskwatch <name>          # one desk's status
-ws deskwatch                 # all desks, table form
-ws deskwatch <name> --json   # for scripting / piping to alert sinks
+drydock deskwatch <name>          # one desk's status
+drydock deskwatch                 # all desks, table form
+drydock deskwatch <name> --json   # for scripting / piping to alert sinks
 ```
 
 Output (human):
@@ -71,7 +71,7 @@ auction-crawl
 overall: UNHEALTHY (2 violations)
 ```
 
-Exit code: 0 if healthy, 1 if unhealthy (enables `ws deskwatch foo && echo ok || alert`).
+Exit code: 0 if healthy, 1 if unhealthy (enables `drydock deskwatch foo && echo ok || alert`).
 
 ### State
 
@@ -79,27 +79,27 @@ Deskwatch keeps its own SQLite table in the existing registry DB:
 
 ```sql
 CREATE TABLE deskwatch_events (
-  desk_id       TEXT NOT NULL,
+  drydock_id       TEXT NOT NULL,
   kind          TEXT NOT NULL,      -- 'job_run', 'probe_result', 'output_check'
   name          TEXT NOT NULL,      -- job name / probe name / output path
   timestamp     TEXT NOT NULL,
   status        TEXT NOT NULL,      -- 'ok', 'failed', 'missing'
   detail        TEXT,               -- exit code, stderr tail, file size, etc.
-  PRIMARY KEY (desk_id, kind, name, timestamp)
+  PRIMARY KEY (drydock_id, kind, name, timestamp)
 );
 ```
 
-Job-run events are populated by wrapping the scheduler's existing cron/launchd lines: `ws schedule sync` already writes `0 13 * * * ws exec ...` entries; deskwatch changes the wrapper to `ws exec ...; ws deskwatch-record <desk> <job> $?`. Zero runtime cost when healthy, a row when anything fires.
+Job-run events are populated by wrapping the scheduler's existing cron/launchd lines: `drydock schedule sync` already writes `0 13 * * * drydock exec ...` entries; deskwatch changes the wrapper to `drydock exec ...; drydock deskwatch-record <desk> <job> $?`. Zero runtime cost when healthy, a row when anything fires.
 
-Output-freshness and probes run when `ws deskwatch` is invoked (lazy probing), OR when a periodic `ws deskwatch --scan` is scheduled (a systemd timer or cron). Lazy is cheaper; scan is needed for proactive alerting.
+Output-freshness and probes run when `drydock deskwatch` is invoked (lazy probing), OR when a periodic `drydock deskwatch --scan` is scheduled (a systemd timer or cron). Lazy is cheaper; scan is needed for proactive alerting.
 
 ## How alerts reach the human
 
 Orthogonal concern. Three layers:
 
-1. **`ws deskwatch` exit code** — for cron/systemd wrappers to alert themselves.
-2. **`ws deskwatch --json`** — structured output for piping to whatever (Slack webhook, email, claude prompt).
-3. **A drydock employee pattern (future).** A long-running "watcher" desk whose job is to `ws deskwatch --json` every 15min, decide whether to escalate, and post to wherever Steven reads. That's the natural home for judgment ("crawl failed once — not yet worth paging; three times — page").
+1. **`drydock deskwatch` exit code** — for cron/systemd wrappers to alert themselves.
+2. **`drydock deskwatch --json`** — structured output for piping to whatever (Slack webhook, email, claude prompt).
+3. **A drydock employee pattern (future).** A long-running "watcher" desk whose job is to `drydock deskwatch --json` every 15min, decide whether to escalate, and post to wherever Steven reads. That's the natural home for judgment ("crawl failed once — not yet worth paging; three times — page").
 
 Ship layers 1 + 2 first. Layer 3 piggybacks on the existing drydock-employee pattern (`project_drydock_employee_pattern.md` in memory) and doesn't need deskwatch-specific plumbing.
 
@@ -119,10 +119,10 @@ Ship layers 1 + 2 first. Layer 3 piggybacks on the existing drydock-employee pat
 
 ## Ship plan
 
-1. Schema + `ws deskwatch-record` (internal helper invoked by scheduled wrappers).
-2. `ws deskwatch` read-side (jobs from events table, outputs via `docker exec stat`, probes run at request time).
+1. Schema + `drydock deskwatch-record` (internal helper invoked by scheduled wrappers).
+2. `drydock deskwatch` read-side (jobs from events table, outputs via `docker exec stat`, probes run at request time).
 3. Project YAML parsing for the `deskwatch:` block.
-4. Scheduler wrapper update — existing `ws schedule sync` appends the record call.
-5. Smoke scenario: a desk with a guaranteed-failing job → `ws deskwatch` reports UNHEALTHY with exit 1.
+4. Scheduler wrapper update — existing `drydock schedule sync` appends the record call.
+5. Smoke scenario: a desk with a guaranteed-failing job → `drydock deskwatch` reports UNHEALTHY with exit 1.
 
 Rough size: 300-500 LOC + tests. One session.

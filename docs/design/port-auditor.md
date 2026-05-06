@@ -61,7 +61,7 @@ A dedicated DryDock on each Harbor — `port-auditor` Drydock. Its Fleet contain
 - The watch-loop scheduler (cron-like; calls Haiku-class model every minute)
 - The deep-analysis dispatcher (called on demand by watch-loop or amendment queue)
 - A bind-mount of the audit log (read-only)
-- A bind-mount of `~/.drydock/run/wsd.sock` (broker access for action calls)
+- A bind-mount of `~/.drydock/run/daemon.sock` (broker access for action calls)
 - A bearer token with scope `auditor:read + auditor:defensive_action`
 - Telegram bot credentials (via secret) for principal channel
 
@@ -185,18 +185,21 @@ This phasing is conservative on purpose. PA0 is pure code (no LLM, no judgment).
 
 ## Bootstrapping
 
-The first Auditor is principal-created via `ws auditor designate <drydock-name>`. This:
+The first Auditor is principal-created via `drydock auditor designate <drydock-name>`. This:
 - Creates the `port-auditor` Drydock with the right base image + secrets
 - Issues an `auditor:read + auditor:defensive_action`-scoped bearer token
-- Records in `harbormaster_desks` (or a more-correctly-named-now `auditor_desks`) registry table that this Drydock holds the Auditor scope
+- Records in the `auditor_desks` registry table that this Drydock holds the Auditor scope
 - Refuses if there's already an Auditor on this Harbor (one per Harbor by design)
 
-The principal can later destroy / re-create the Auditor; on destroy, audits all pending amendments/escalations move to a no-Auditor state where they queue but can't be processed (visible warning in `ws host audit`).
+The principal can later destroy / re-create the Auditor; on destroy, audits all pending amendments/escalations move to a no-Auditor state where they queue but can't be processed (visible warning in `drydock host audit`).
 
-## Open questions
+## Resolved decisions and open questions
 
-1. **One Auditor per Harbor or one per archipelago?** Probably per-Harbor (each Harbor's Authority is local; cross-Harbor visibility comes via peer-RPC). A meta-Auditor that sees all Harbors could exist later — that's closer to the deferred Harbormaster role.
-2. **What happens during Auditor restart / down?** Authority continues enforcing Bucket-1 deterministically; Bucket-2 actions just don't happen until Auditor returns; escalations queue; daily summaries miss. Acceptable degraded state.
-3. **Does the Auditor's LLM have memory across decisions?** Probably yes (Claude Code has session continuity). But the *measurements* are queried fresh each time — no caching of stale facts.
-4. **Should the Auditor itself be subject to friction?** If the Auditor proposes a large bucket-2 action (e.g., throttle a whole Yard), should that be confirmed or auto? Lean auto for genuinely-defensive actions; the friction is on the principal's overrides.
-5. **Cross-Auditor coordination (multi-Harbor).** If Hetzner's Auditor sees a token-leak signal that affects a Mac Dock, how does it coordinate? Probably via the peer-RPC channel to Mac's Auditor; both are notified, both can act on their own jurisdiction.
+**Resolved:**
+- **One Auditor per Harbor.** Each Harbor's Authority is local; cross-Harbor visibility comes via peer-RPC. A meta-Auditor across Harbors could exist later — that's closer to the deferred Harbormaster role.
+- **Auditor restart / down.** Acceptable degraded state. Authority continues enforcing Bucket-1 deterministically; Bucket-2 actions just don't happen until the Auditor returns; escalations queue; daily summaries miss.
+- **LLM memory.** Yes, session continuity. Measurements are queried fresh each cycle — no caching of stale facts.
+
+**Still open:**
+1. **Should the Auditor itself be subject to friction?** If the Auditor proposes a large bucket-2 action (e.g., throttle a whole Yard), should that be confirmed or auto? Lean auto for genuinely-defensive actions; the friction is on the principal's overrides.
+2. **Cross-Auditor coordination (multi-Harbor).** If Hetzner's Auditor sees a token-leak signal that affects a Mac Dock, how does it coordinate? Probably via the peer-RPC channel to Mac's Auditor; both are notified, both can act on their own jurisdiction.

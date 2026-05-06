@@ -1,4 +1,4 @@
-"""ws upgrade — bump a workspace's drydock-base tag and recreate the desk."""
+"""ws upgrade — bump a drydock's drydock-base tag and recreate the desk."""
 
 import logging
 import re
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from drydock.cli._wsd_client import DaemonRpcError, DaemonUnavailable, call_daemon
+from drydock.cli._daemon_client import DaemonRpcError, DaemonUnavailable, call_daemon
 from drydock.core import WsError
 from drydock.core.project_config import ProjectConfig, load_project_config
 
@@ -78,7 +78,7 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
 @click.option("--to", "to_tag", default=None, help="Target drydock-base tag (e.g. v1.0.7)")
 @click.pass_context
 def upgrade(ctx, name, to_tag):
-    """Bump a workspace's drydock-base tag and recreate the desk."""
+    """Bump a drydock's drydock-base tag and recreate the desk."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
     dry_run = ctx.obj["dry_run"]
@@ -87,9 +87,9 @@ def upgrade(ctx, name, to_tag):
         out.error(WsError("--to <tag> is required", fix="ws upgrade <name> --to v1.0.7"))
         return
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if not ws:
-        out.error(WsError(f"Workspace '{name}' not found", fix="ws list"))
+        out.error(WsError(f"Drydock '{name}' not found", fix="ws list"))
         return
 
     try:
@@ -119,7 +119,7 @@ def upgrade(ctx, name, to_tag):
     if old_tag == to_tag:
         out.success(
             {"name": name, "tag": to_tag, "changed": False},
-            human_lines=[f"workspace '{name}' already on drydock-base:{to_tag}"],
+            human_lines=[f"drydock '{name}' already on drydock-base:{to_tag}"],
         )
         return
 
@@ -151,8 +151,8 @@ def upgrade(ctx, name, to_tag):
         call_daemon("DestroyDesk", {"name": name, "force": True}, timeout=120.0)
     except DaemonUnavailable:
         out.error(WsError(
-            "wsd daemon required for ws upgrade",
-            fix="Start the daemon: ws daemon start",
+            "drydock daemon required for ws upgrade",
+            fix="Start the daemon: drydock daemon start",
         ))
         return
     except DaemonRpcError as exc:
@@ -175,8 +175,8 @@ def upgrade(ctx, name, to_tag):
         result = call_daemon("CreateDesk", daemon_params, timeout=900.0)
     except DaemonUnavailable:
         out.error(WsError(
-            "wsd daemon went away mid-upgrade",
-            fix=f"Inspect: ws daemon status; recreate manually: ws create {ws.project} {name}",
+            "drydock daemon went away mid-upgrade",
+            fix=f"Inspect: drydock daemon status; recreate manually: ws create {ws.project} {name}",
         ))
         return
     except DaemonRpcError as exc:
@@ -186,7 +186,7 @@ def upgrade(ctx, name, to_tag):
     out.success(
         {**result, "from_tag": old_tag, "to_tag": to_tag},
         human_lines=[
-            f"workspace '{name}' upgraded :{old_tag} → :{to_tag}",
+            f"drydock '{name}' upgraded :{old_tag} → :{to_tag}",
             f"  container_id: {result.get('container_id', '?')}",
         ],
     )

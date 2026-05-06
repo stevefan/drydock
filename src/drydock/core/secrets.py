@@ -4,7 +4,7 @@ Per docs/v2-design-capability-broker.md §7: V2 ships only `FileBackend`
 as a concrete `SecretsBackend`. The Protocol is reserved for additive
 future backends (1Password via `op`, HashiCorp Vault, cloud SMs); the
 RPC surface (`RequestCapability(type=SECRET, ...)`) is backend-independent
-so adding a backend is a new class + a wsd.toml entry, no protocol churn.
+so adding a backend is a new class + a daemon.toml entry, no protocol churn.
 
 Backend-fetch contract is bytes-not-path so network-sourced backends
 return the same shape as file-backed.
@@ -44,14 +44,14 @@ class SecretsBackend(Protocol):
     """Plugin interface for capability-broker secrets backends.
 
     See docs/v2-design-capability-broker.md §7. New backends are additive:
-    a class implementing this Protocol + a wsd.toml `[secrets] backend`
+    a class implementing this Protocol + a daemon.toml `[secrets] backend`
     entry. The daemon dispatches via this Protocol; lease materialization
     and the RPC surface are backend-independent.
     """
 
     name: str
 
-    def fetch(self, secret_name: str, desk_id: str) -> bytes | None:
+    def fetch(self, secret_name: str, drydock_id: str) -> bytes | None:
         """Return secret bytes, or None if not found.
 
         Sync-first: V2 ships only the file-backed backend (stat + read,
@@ -72,7 +72,7 @@ class SecretsBackend(Protocol):
 
 
 class FileBackend:
-    """Read secrets from `~/.drydock/secrets/<desk_id>/<name>` (file-backed).
+    """Read secrets from `~/.drydock/secrets/<drydock_id>/<name>` (file-backed).
 
     Phase-1 convention shipped with `ws secret set/list/rm/push`. The
     daemon's lease handler reads bytes via `fetch()` and materializes them
@@ -93,11 +93,11 @@ class FileBackend:
     def __init__(self, root: Path):
         self.root = Path(root)
 
-    def _path_for(self, secret_name: str, desk_id: str) -> Path:
-        return self.root / desk_id / secret_name
+    def _path_for(self, secret_name: str, drydock_id: str) -> Path:
+        return self.root / drydock_id / secret_name
 
-    def fetch(self, secret_name: str, desk_id: str) -> bytes | None:
-        path = self._path_for(secret_name, desk_id)
+    def fetch(self, secret_name: str, drydock_id: str) -> bytes | None:
+        path = self._path_for(secret_name, drydock_id)
         if not path.exists():
             return None
         try:

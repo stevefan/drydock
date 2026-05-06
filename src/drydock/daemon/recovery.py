@@ -1,4 +1,4 @@
-"""Crash recovery for `wsd` startup per `docs/v2-design-state.md` §3."""
+"""Crash recovery for `drydock daemon` startup per `docs/v2-design-state.md` §3."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from drydock.core.checkout import DEFAULT_CHECKOUT_BASE
 from drydock.core.overlay import remove_overlay
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 logger = logging.getLogger(__name__)
 
@@ -56,28 +56,28 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
                 _finish_task_log(registry, request_id, "failed", outcome)
                 unknown_method += 1
                 logger.info(
-                    "wsd: recovered request_id=%s method=%s status=failed",
+                    "daemon: recovered request_id=%s method=%s status=failed",
                     request_id,
                     method,
                 )
                 continue
 
             spec = _load_spec(row["spec_json"])
-            workspace_name = _expected_workspace_name(spec)
+            drydock_name = _expected_drydock_name(spec)
             if method == "DestroyDesk":
-                from drydock.wsd.handlers import _destroy_tree
+                from drydock.daemon.handlers import _destroy_tree
 
-                workspace = _expected_destroy_workspace(registry, spec)
-                if workspace is None:
+                drydock = _expected_destroy_drydock(registry, spec)
+                if drydock is None:
                     outcome = {
                         "destroyed": True,
-                        "desk_id": _expected_destroy_desk_id(spec),
+                        "drydock_id": _expected_destroy_desk_id(spec),
                         "recovered": True,
                     }
                     _finish_task_log(registry, request_id, "completed", outcome)
                     completed += 1
                     logger.info(
-                        "wsd: recovered request_id=%s method=%s status=completed workspace=%s",
+                        "daemon: recovered request_id=%s method=%s status=completed drydock=%s",
                         request_id,
                         method,
                         _expected_destroy_desk_id(spec),
@@ -86,7 +86,7 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
 
                 cascaded: list[str] = []
                 partial_failures = _destroy_tree(
-                    workspace,
+                    drydock,
                     registry=registry,
                     secrets_root=Path.home() / ".drydock" / "secrets",
                     dry_run=False,
@@ -95,7 +95,7 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
                 )
                 outcome = {
                     "destroyed": True,
-                    "desk_id": workspace.id,
+                    "drydock_id": drydock.id,
                     "cascaded": cascaded,
                     "recovered": True,
                 }
@@ -109,29 +109,29 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
                 else:
                     rolled_back += 1
                 logger.info(
-                    "wsd: recovered request_id=%s method=%s status=%s workspace=%s",
+                    "daemon: recovered request_id=%s method=%s status=%s drydock=%s",
                     request_id,
                     method,
                     status,
-                    workspace.name,
+                    drydock.name,
                 )
                 continue
 
-            workspace = registry.get_workspace(workspace_name) if workspace_name else None
+            drydock = registry.get_drydock(drydock_name) if drydock_name else None
 
-            if workspace is not None and workspace.state == "running" and workspace.container_id:
-                outcome = _desk_ref(registry, workspace, spec)
+            if drydock is not None and drydock.state == "running" and drydock.container_id:
+                outcome = _desk_ref(registry, drydock, spec)
                 _finish_task_log(registry, request_id, "completed", outcome)
                 completed += 1
                 logger.info(
-                    "wsd: recovered request_id=%s method=%s status=completed workspace=%s",
+                    "daemon: recovered request_id=%s method=%s status=completed drydock=%s",
                     request_id,
                     method,
-                    workspace.name,
+                    drydock.name,
                 )
                 continue
 
-            reason = _rollback_partial_create(registry, workspace_name, workspace)
+            reason = _rollback_partial_create(registry, drydock_name, drydock)
             outcome = {
                 "code": -32000,
                 "message": "crashed_during_create",
@@ -140,10 +140,10 @@ def recover_in_progress(registry_path: Path) -> RecoveryReport:
             _finish_task_log(registry, request_id, "failed", outcome)
             rolled_back += 1
             logger.info(
-                "wsd: recovered request_id=%s method=%s status=failed workspace=%s",
+                "daemon: recovered request_id=%s method=%s status=failed drydock=%s",
                 request_id,
                 method,
-                workspace_name or "<unknown>",
+                drydock_name or "<unknown>",
             )
     finally:
         registry.close()
@@ -179,7 +179,7 @@ def _load_spec(spec_json: str) -> dict[str, object]:
     return spec if isinstance(spec, dict) else {}
 
 
-def _expected_workspace_name(spec: dict[str, object]) -> str:
+def _expected_drydock_name(spec: dict[str, object]) -> str:
     name = spec.get("name")
     if isinstance(name, str) and name:
         return name
@@ -192,112 +192,112 @@ def _expected_workspace_name(spec: dict[str, object]) -> str:
 def _expected_destroy_desk_id(spec: dict[str, object]) -> str:
     name = spec.get("name")
     if isinstance(name, str) and name:
-        return Workspace(name=name, project=name, repo_path="").id
-    desk_id = spec.get("desk_id")
-    if isinstance(desk_id, str) and desk_id:
-        return desk_id
+        return Drydock(name=name, project=name, repo_path="").id
+    drydock_id = spec.get("drydock_id")
+    if isinstance(drydock_id, str) and drydock_id:
+        return drydock_id
     return ""
 
 
-def _expected_destroy_workspace(registry: Registry, spec: dict[str, object]) -> Workspace | None:
+def _expected_destroy_drydock(registry: Registry, spec: dict[str, object]) -> Drydock | None:
     name = spec.get("name")
     if isinstance(name, str) and name:
-        return registry.get_workspace(name)
+        return registry.get_drydock(name)
 
-    desk_id = spec.get("desk_id")
-    if not isinstance(desk_id, str) or not desk_id:
+    drydock_id = spec.get("drydock_id")
+    if not isinstance(drydock_id, str) or not drydock_id:
         return None
     row = registry._conn.execute(
-        "SELECT * FROM workspaces WHERE id = ?",
-        (desk_id,),
+        "SELECT * FROM drydocks WHERE id = ?",
+        (drydock_id,),
     ).fetchone()
     if row is None:
         return None
-    return registry._row_to_workspace(row)
+    return registry._row_to_drydock(row)
 
 
-def _workspace_id(workspace_name: str) -> str:
-    return Workspace(name=workspace_name, project=workspace_name, repo_path="").id
+def _workspace_id(drydock_name: str) -> str:
+    return Drydock(name=drydock_name, project=drydock_name, repo_path="").id
 
 
-def _desk_ref(registry: Registry, workspace: Workspace, spec: dict[str, object]) -> dict[str, object]:
-    branch = workspace.branch or f"ws/{workspace.name}"
-    project = workspace.project
+def _desk_ref(registry: Registry, drydock: Drydock, spec: dict[str, object]) -> dict[str, object]:
+    branch = drydock.branch or f"ws/{drydock.name}"
+    project = drydock.project
     spec_project = spec.get("project")
     if isinstance(spec_project, str) and spec_project:
         project = spec_project
     result = {
-        "desk_id": workspace.id,
-        "name": workspace.name,
+        "drydock_id": drydock.id,
+        "name": drydock.name,
         "project": project,
         "branch": branch,
         "state": "running",
-        "container_id": workspace.container_id,
-        "worktree_path": workspace.worktree_path,
+        "container_id": drydock.container_id,
+        "worktree_path": drydock.worktree_path,
     }
-    parent_desk_id = _workspace_parent_desk_id(registry, workspace.name)
-    if parent_desk_id:
-        result["parent_desk_id"] = parent_desk_id
+    parent_drydock_id = _drydock_parent_desk_id(registry, drydock.name)
+    if parent_drydock_id:
+        result["parent_drydock_id"] = parent_drydock_id
     return result
 
 
 def _rollback_partial_create(
     registry: Registry,
-    workspace_name: str,
-    workspace: Workspace | None,
+    drydock_name: str,
+    drydock: Drydock | None,
 ) -> str:
-    if workspace is None:
-        if workspace_name:
-            _remove_worktree_best_effort(DEFAULT_CHECKOUT_BASE / _workspace_id(workspace_name))
+    if drydock is None:
+        if drydock_name:
+            _remove_worktree_best_effort(DEFAULT_CHECKOUT_BASE / _workspace_id(drydock_name))
             _remove_overlay_best_effort(
-                Path.home() / ".drydock" / "overlays" / f"{_workspace_id(workspace_name)}.devcontainer.json"
+                Path.home() / ".drydock" / "overlays" / f"{_workspace_id(drydock_name)}.devcontainer.json"
             )
-        return "workspace_missing"
+        return "drydock_missing"
 
-    if workspace.worktree_path:
-        _remove_worktree_best_effort(Path(workspace.worktree_path))
+    if drydock.worktree_path:
+        _remove_worktree_best_effort(Path(drydock.worktree_path))
     else:
-        logger.warning("wsd: recovery found no worktree_path for workspace %s", workspace.name)
+        logger.warning("daemon: recovery found no worktree_path for drydock %s", drydock.name)
 
-    overlay_path = workspace.config.get("overlay_path")
+    overlay_path = drydock.config.get("overlay_path")
     if isinstance(overlay_path, str) and overlay_path:
         _remove_overlay_best_effort(Path(overlay_path))
     else:
         _remove_overlay_best_effort(
-            Path.home() / ".drydock" / "overlays" / f"{workspace.id}.devcontainer.json"
+            Path.home() / ".drydock" / "overlays" / f"{drydock.id}.devcontainer.json"
         )
 
-    registry.delete_workspace(workspace.name)
-    return f"workspace_partial_state:{workspace.state or 'unknown'}"
+    registry.delete_drydock(drydock.name)
+    return f"drydock_partial_state:{drydock.state or 'unknown'}"
 
 
-def _workspace_parent_desk_id(registry: Registry, name: str) -> str | None:
+def _drydock_parent_desk_id(registry: Registry, name: str) -> str | None:
     row = registry._conn.execute(
-        "SELECT parent_desk_id FROM workspaces WHERE name = ?",
+        "SELECT parent_drydock_id FROM drydocks WHERE name = ?",
         (name,),
     ).fetchone()
     if row is None:
         return None
-    value = row["parent_desk_id"]
+    value = row["parent_drydock_id"]
     return value if isinstance(value, str) and value else None
 
 
 def _remove_worktree_best_effort(path: Path) -> None:
     if not path.exists():
-        logger.warning("wsd: recovery worktree path absent: %s", path)
+        logger.warning("daemon: recovery worktree path absent: %s", path)
         return
     shutil.rmtree(path, ignore_errors=True)
     if path.exists():
-        logger.warning("wsd: recovery failed to remove worktree path: %s", path)
+        logger.warning("daemon: recovery failed to remove worktree path: %s", path)
 
 
 def _remove_overlay_best_effort(path: Path) -> None:
     if not path.exists():
-        logger.warning("wsd: recovery overlay path absent: %s", path)
+        logger.warning("daemon: recovery overlay path absent: %s", path)
         return
     try:
         remove_overlay(str(path))
     except FileNotFoundError:
-        logger.warning("wsd: recovery overlay path absent: %s", path)
+        logger.warning("daemon: recovery overlay path absent: %s", path)
     except Exception as exc:
-        logger.warning("wsd: recovery failed to remove overlay %s: %s", path, exc)
+        logger.warning("daemon: recovery failed to remove overlay %s: %s", path, exc)

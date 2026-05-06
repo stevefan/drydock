@@ -1,7 +1,7 @@
 """Compute SHA-256 of a project YAML file's content.
 
 Phase 0 of project-dock-ontology.md: the daemon stores `pinned_yaml_sha256`
-on each Workspace at create + reload time. `ws host audit` compares it to
+on each Drydock at create + reload time. `ws host audit` compares it to
 the current YAML's SHA — divergence = silent drift between what's on disk
 and what's pinned to the running Dock.
 

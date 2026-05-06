@@ -9,8 +9,8 @@ from pathlib import Path
 
 from drydock.core.registry import Registry
 from drydock.core import checkout
-from drydock.wsd import handlers, server
-from drydock.wsd.auth import validate_token
+from drydock.daemon import handlers, server
+from drydock.daemon.auth import validate_token
 
 
 def _init_repo(path: Path, *, with_devcontainer: bool = True) -> None:
@@ -54,7 +54,7 @@ def _create_desk(tmp_path: Path, registry_path: Path, secrets_root: Path, *, nam
         secrets_root=secrets_root,
         dry_run=True,
     )
-    token = (secrets_root / result["desk_id"] / "drydock-token").read_text(encoding="utf-8").strip()
+    token = (secrets_root / result["drydock_id"] / "drydock-token").read_text(encoding="utf-8").strip()
     return result, token
 
 
@@ -83,7 +83,7 @@ def _create_parent_with_child(tmp_path: Path, registry_path: Path, secrets_root:
             "firewall_extra_domains": ["example.com"],
         },
         "spawn-child",
-        str(parent["desk_id"]),
+        str(parent["drydock_id"]),
         registry_path=registry_path,
         secrets_root=secrets_root,
         dry_run=True,
@@ -110,17 +110,17 @@ def test_destroy_desk_happy_path(tmp_path, monkeypatch):
         monkeypatch=monkeypatch,
     )
 
-    assert response == {"destroyed": True, "desk_id": result["desk_id"], "cascaded": []}
+    assert response == {"destroyed": True, "drydock_id": result["drydock_id"], "cascaded": []}
 
     conn = _connect(registry_path)
-    workspace = conn.execute("SELECT * FROM workspaces WHERE name = ?", ("desk-destroy",)).fetchone()
-    token_row = conn.execute("SELECT * FROM tokens WHERE desk_id = ?", (result["desk_id"],)).fetchone()
+    drydock = conn.execute("SELECT * FROM drydocks WHERE name = ?", ("desk-destroy",)).fetchone()
+    token_row = conn.execute("SELECT * FROM tokens WHERE drydock_id = ?", (result["drydock_id"],)).fetchone()
     conn.close()
 
-    assert workspace is None
+    assert drydock is None
     assert token_row is None
 
-    token_path = secrets_root / result["desk_id"] / "drydock-token"
+    token_path = secrets_root / result["drydock_id"] / "drydock-token"
     assert not token_path.exists()
     assert not token_path.parent.exists() or not any(token_path.parent.iterdir())
 
@@ -135,9 +135,9 @@ def test_destroy_desk_cascades_to_children(tmp_path, monkeypatch):
     order: list[str] = []
     original = handlers._destroy_one
 
-    def record_order(workspace, registry, secrets_root, dry_run):
-        order.append(workspace.id)
-        return original(workspace, registry, secrets_root, dry_run)
+    def record_order(drydock, registry, secrets_root, dry_run):
+        order.append(drydock.id)
+        return original(drydock, registry, secrets_root, dry_run)
 
     monkeypatch.setattr(handlers, "_destroy_one", record_order)
     response = handlers.destroy_desk(
@@ -150,15 +150,15 @@ def test_destroy_desk_cascades_to_children(tmp_path, monkeypatch):
     )
 
     assert response["destroyed"] is True
-    assert response["desk_id"] == parent["desk_id"]
-    assert response["cascaded"] == [child["desk_id"]]
-    assert order == [child["desk_id"], parent["desk_id"]]
+    assert response["drydock_id"] == parent["drydock_id"]
+    assert response["cascaded"] == [child["drydock_id"]]
+    assert order == [child["drydock_id"], parent["drydock_id"]]
 
     conn = _connect(registry_path)
-    parent_row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (parent["desk_id"],)).fetchone()
-    child_row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (child["desk_id"],)).fetchone()
-    parent_token = conn.execute("SELECT * FROM tokens WHERE desk_id = ?", (parent["desk_id"],)).fetchone()
-    child_token = conn.execute("SELECT * FROM tokens WHERE desk_id = ?", (child["desk_id"],)).fetchone()
+    parent_row = conn.execute("SELECT * FROM drydocks WHERE id = ?", (parent["drydock_id"],)).fetchone()
+    child_row = conn.execute("SELECT * FROM drydocks WHERE id = ?", (child["drydock_id"],)).fetchone()
+    parent_token = conn.execute("SELECT * FROM tokens WHERE drydock_id = ?", (parent["drydock_id"],)).fetchone()
+    child_token = conn.execute("SELECT * FROM tokens WHERE drydock_id = ?", (child["drydock_id"],)).fetchone()
     conn.close()
 
     assert parent_row is None
@@ -181,7 +181,7 @@ def test_destroy_desk_not_found(tmp_path, monkeypatch):
     except server._RpcError as exc:
         assert exc.code == -32001
         assert exc.message == "desk_not_found"
-        assert exc.data == {"desk_id": "ws_missing_destroy"}
+        assert exc.data == {"drydock_id": "dock_missing_destroy"}
     else:
         assert False, "expected desk_not_found"
 
@@ -195,11 +195,11 @@ def test_destroy_desk_idempotent_by_request_id(tmp_path, monkeypatch):
     second = _call_destroy("r1", params=params, registry_path=registry_path, secrets_root=secrets_root, monkeypatch=monkeypatch)
 
     assert second == first
-    assert first["desk_id"] == result["desk_id"]
+    assert first["drydock_id"] == result["drydock_id"]
 
     conn = _connect(registry_path)
-    workspace_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM workspaces WHERE name = ?",
+    drydock_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM drydocks WHERE name = ?",
         ("desk-idem-destroy",),
     ).fetchone()["n"]
     task_count = conn.execute(
@@ -208,14 +208,14 @@ def test_destroy_desk_idempotent_by_request_id(tmp_path, monkeypatch):
     ).fetchone()["n"]
     conn.close()
 
-    assert workspace_count == 0
+    assert drydock_count == 0
     assert task_count == 1
 
 
 def test_destroy_desk_revokes_token_and_removes_secret_file(tmp_path, monkeypatch):
     registry_path, secrets_root = _setup_env(tmp_path, monkeypatch)
     result, token = _create_desk(tmp_path, registry_path, secrets_root, name="desk-revoke", request_id="create-revoke")
-    token_path = secrets_root / result["desk_id"] / "drydock-token"
+    token_path = secrets_root / result["drydock_id"] / "drydock-token"
 
     _call_destroy(
         "destroy-revoke",
@@ -227,7 +227,7 @@ def test_destroy_desk_revokes_token_and_removes_secret_file(tmp_path, monkeypatc
 
     registry = Registry(db_path=registry_path)
     try:
-        assert registry.get_token_info(str(result["desk_id"])) is None
+        assert registry.get_token_info(str(result["drydock_id"])) is None
         assert validate_token(token, registry) is None
     finally:
         registry.close()
@@ -242,8 +242,8 @@ def test_destroy_desk_replayed_request_after_target_gone(tmp_path, monkeypatch):
     second, _ = _create_desk(tmp_path, registry_path, secrets_root, name="desk-recreate", request_id="create-recreate-2")
     destroy2 = _call_destroy("r2", params={"name": "desk-recreate"}, registry_path=registry_path, secrets_root=secrets_root, monkeypatch=monkeypatch)
 
-    assert destroy1["desk_id"] == first["desk_id"]
-    assert destroy2["desk_id"] == second["desk_id"]
+    assert destroy1["drydock_id"] == first["drydock_id"]
+    assert destroy2["drydock_id"] == second["drydock_id"]
 
     conn = _connect(registry_path)
     tasks = conn.execute(
@@ -272,12 +272,12 @@ def test_destroy_desk_revokes_active_capability_leases(tmp_path, monkeypatch):
     try:
         reg.insert_lease(CapabilityLease(
             lease_id="ls_active",
-            desk_id=desk["desk_id"],
+            drydock_id=desk["drydock_id"],
             type=CapabilityType.SECRET,
             scope={"secret_name": "anthropic_api_key"},
             issued_at=datetime.now(timezone.utc),
             expiry=None,
-            issuer="wsd",
+            issuer="daemon",
         ))
     finally:
         reg.close()

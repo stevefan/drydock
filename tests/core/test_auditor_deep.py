@@ -72,7 +72,7 @@ def _snapshot() -> HarborSnapshot:
         drydock_count=1,
         drydocks=[{
             "name": "auction-crawl",
-            "id": "ws_auction_crawl",
+            "id": "dock_auction_crawl",
             "state": "running",
             "metrics": {"cpu_pct": 5.0, "mem_used_bytes": 100_000_000},
             "leases": {"active_total": 0, "by_type": {}},

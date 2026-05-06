@@ -29,7 +29,7 @@ from pathlib import Path
 import click
 
 from drydock.core import WsError
-from drydock.core.overlay import regenerate_overlay_from_workspace
+from drydock.core.overlay import regenerate_overlay_from_drydock
 from drydock.core.project_config import ProjectConfig, load_project_config
 
 
@@ -73,7 +73,7 @@ def project_reload(ctx, name, no_regenerate):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if ws is None:
         out.error(
             WsError(
@@ -110,7 +110,7 @@ def project_reload(ctx, name, no_regenerate):
             continue
         new_config[field] = value
 
-    registry.update_workspace(name, config=new_config)
+    registry.update_drydock(name, config=new_config)
 
     # Update V2 policy columns via the dedicated method so we get the
     # same JSON-encoding + column-writing path `_perform_create` uses.
@@ -133,14 +133,14 @@ def project_reload(ctx, name, no_regenerate):
     from drydock.core.project_yaml_sha import compute_project_yaml_sha
     new_sha = compute_project_yaml_sha(ws.project)
     if new_sha:
-        registry.update_workspace(name, pinned_yaml_sha256=new_sha)
+        registry.update_drydock(name, pinned_yaml_sha256=new_sha)
 
     overlay_path: Path | None = None
     if not no_regenerate:
         # Re-fetch so the overlay regen sees the updated config JSON.
-        refreshed = registry.get_workspace(name)
+        refreshed = registry.get_drydock(name)
         try:
-            overlay_path = regenerate_overlay_from_workspace(refreshed)
+            overlay_path = regenerate_overlay_from_drydock(refreshed)
         except WsError as e:
             out.error(e)
             return

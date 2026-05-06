@@ -1,4 +1,4 @@
-"""Per-project YAML configuration for workspace orchestration defaults."""
+"""Per-project YAML configuration for drydock orchestration defaults."""
 
 from dataclasses import dataclass, field
 from pathlib import Path

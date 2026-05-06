@@ -4,7 +4,7 @@
 # - Config lives in /var/lib/syncthing (named volume, survives rebuild)
 # - Vault data lives in /vault (named volume, exposed to sibling desks)
 # - GUI bound to 0.0.0.0:8384 so the Tailscale-served port is reachable
-#   from the harbor's tailnet (ws attach / port-forward)
+#   from the harbor's tailnet (drydock attach / port-forward)
 # - No restart loop — drydock's supervisor watches for process health
 #
 # First run writes a fresh config. Subsequent runs reuse it. To reset

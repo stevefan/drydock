@@ -28,15 +28,15 @@ def registry(tmp_path):
     reg.close()
 
 
-def _lease(lease_id="ls_a", desk_id="ws_alpha", secret="sk", revoked=False, reason=None):
+def _lease(lease_id="ls_a", drydock_id="dock_alpha", secret="sk", revoked=False, reason=None):
     return CapabilityLease(
         lease_id=lease_id,
-        desk_id=desk_id,
+        drydock_id=drydock_id,
         type=CapabilityType.SECRET,
         scope={"secret_name": secret},
         issued_at=datetime(2026, 4, 16, 10, tzinfo=timezone.utc),
         expiry=None,
-        issuer="wsd",
+        issuer="daemon",
         revoked=revoked,
         revocation_reason=reason,
     )
@@ -44,7 +44,7 @@ def _lease(lease_id="ls_a", desk_id="ws_alpha", secret="sk", revoked=False, reas
 
 class TestLeasePersistence:
     def test_insert_then_get_roundtrip(self, registry):
-        original = _lease(lease_id="ls_1", desk_id="ws_a", secret="anthropic_api_key")
+        original = _lease(lease_id="ls_1", drydock_id="dock_a", secret="anthropic_api_key")
         registry.insert_lease(original)
         loaded = registry.get_lease("ls_1")
         assert loaded == original
@@ -71,11 +71,11 @@ class TestLeasePersistence:
         assert loaded.revocation_reason == "manual"
 
     def test_revoke_leases_for_desk_cascades(self, registry):
-        registry.insert_lease(_lease(lease_id="ls_a", desk_id="ws_alpha", secret="k1"))
-        registry.insert_lease(_lease(lease_id="ls_b", desk_id="ws_alpha", secret="k2"))
-        registry.insert_lease(_lease(lease_id="ls_c", desk_id="ws_beta", secret="k3"))
+        registry.insert_lease(_lease(lease_id="ls_a", drydock_id="dock_alpha", secret="k1"))
+        registry.insert_lease(_lease(lease_id="ls_b", drydock_id="dock_alpha", secret="k2"))
+        registry.insert_lease(_lease(lease_id="ls_c", drydock_id="dock_beta", secret="k3"))
 
-        revoked = registry.revoke_leases_for_desk("ws_alpha", "desk_destroyed")
+        revoked = registry.revoke_leases_for_desk("dock_alpha", "desk_destroyed")
         assert revoked == 2
         assert registry.get_lease("ls_a").revoked is True
         assert registry.get_lease("ls_b").revoked is True
@@ -83,14 +83,14 @@ class TestLeasePersistence:
         assert registry.get_lease("ls_c").revoked is False
 
     def test_find_active_secret_lease_matches_per_secret(self, registry):
-        registry.insert_lease(_lease(lease_id="ls_a", desk_id="ws_alpha", secret="anthropic"))
-        registry.insert_lease(_lease(lease_id="ls_b", desk_id="ws_alpha", secret="tailscale"))
+        registry.insert_lease(_lease(lease_id="ls_a", drydock_id="dock_alpha", secret="anthropic"))
+        registry.insert_lease(_lease(lease_id="ls_b", drydock_id="dock_alpha", secret="tailscale"))
 
-        assert registry.find_active_secret_lease("ws_alpha", "anthropic").lease_id == "ls_a"
-        assert registry.find_active_secret_lease("ws_alpha", "tailscale").lease_id == "ls_b"
-        assert registry.find_active_secret_lease("ws_alpha", "missing") is None
+        assert registry.find_active_secret_lease("dock_alpha", "anthropic").lease_id == "ls_a"
+        assert registry.find_active_secret_lease("dock_alpha", "tailscale").lease_id == "ls_b"
+        assert registry.find_active_secret_lease("dock_alpha", "missing") is None
 
     def test_find_active_secret_lease_ignores_revoked(self, registry):
-        registry.insert_lease(_lease(lease_id="ls_a", desk_id="ws_alpha", secret="k"))
+        registry.insert_lease(_lease(lease_id="ls_a", drydock_id="dock_alpha", secret="k"))
         registry.revoke_lease("ls_a", "released")
-        assert registry.find_active_secret_lease("ws_alpha", "k") is None
+        assert registry.find_active_secret_lease("dock_alpha", "k") is None

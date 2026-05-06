@@ -13,12 +13,12 @@ from drydock.core.overlay import (
     write_overlay,
 )
 from drydock.core.project_config import load_project_config
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 
 @pytest.fixture
 def ws():
-    return Workspace(
+    return Drydock(
         name="payments-refactor",
         project="app",
         repo_path="/srv/code/app",
@@ -49,11 +49,11 @@ class TestGenerateOverlay:
         second = generate_overlay(ws)["containerEnv"]["TAILSCALE_HOSTNAME"]
         assert first == second
 
-    def test_tailscale_hostname_differs_across_workspaces(self):
-        ws_a = Workspace(name="app-foo", project="proj", repo_path="/x", branch="b")
-        ws_b = Workspace(name="app-bar", project="proj", repo_path="/x", branch="b")
-        a = generate_overlay(ws_a)["containerEnv"]["TAILSCALE_HOSTNAME"]
-        b = generate_overlay(ws_b)["containerEnv"]["TAILSCALE_HOSTNAME"]
+    def test_tailscale_hostname_differs_across_drydocks(self):
+        dock_a = Drydock(name="app-foo", project="proj", repo_path="/x", branch="b")
+        dock_b = Drydock(name="app-bar", project="proj", repo_path="/x", branch="b")
+        a = generate_overlay(dock_a)["containerEnv"]["TAILSCALE_HOSTNAME"]
+        b = generate_overlay(dock_b)["containerEnv"]["TAILSCALE_HOSTNAME"]
         assert a != b
 
     def test_tailscale_hostname_override(self, ws):
@@ -97,40 +97,40 @@ class TestGenerateOverlay:
         assert overlay["containerEnv"]["DRYDOCK_PROJECT"] == "overridden"
 
     def test_workspace_subdir_included_when_set(self):
-        ws = Workspace(
+        ws = Drydock(
             name="sub", project="mono", repo_path="/srv/code/mono",
             branch="ws/sub", workspace_subdir="apps/frontend",
         )
         overlay = generate_overlay(ws)
         assert overlay["containerEnv"]["DRYDOCK_WORKSPACE_SUBDIR"] == "apps/frontend"
 
-    def test_workspace_subdir_sets_workspaceFolder(self):
+    def test_workspace_subdir_sets_drydockFolder(self):
         """Regression: a subdir desk's cron jobs failed with exit 127
-        because workspaceFolder stayed at /workspace (repo root) and
+        because drydockFolder stayed at /drydock (repo root) and
         `ws exec desk -- bash deploy/run.sh` looked for deploy/run.sh
         relative to the root, not the subdir. Overlay must push the
-        workspaceFolder down to /workspace/<subdir> so the container's
+        drydockFolder down to /drydock/<subdir> so the container's
         default WORKDIR and downstream `ws exec -w` land inside the
         subproject."""
-        ws = Workspace(
+        ws = Drydock(
             name="auction", project="mono", repo_path="/srv/code/mono",
             branch="ws/auction", workspace_subdir="auction-crawl",
         )
         overlay = generate_overlay(ws)
-        assert overlay["workspaceFolder"] == "/workspace/auction-crawl"
+        assert overlay["drydockFolder"] == "/drydock/auction-crawl"
 
-    def test_workspace_subdir_unset_leaves_workspaceFolder_absent(self):
+    def test_workspace_subdir_unset_leaves_drydockFolder_absent(self):
         """Without workspace_subdir we let the project's own
-        devcontainer.json dictate workspaceFolder — overriding would be
+        devcontainer.json dictate drydockFolder — overriding would be
         a breaking change for single-project desks."""
-        ws = Workspace(
+        ws = Drydock(
             name="rootdesk", project="proj", repo_path="/srv/code/proj",
             branch="ws/rootdesk",
         )
         overlay = generate_overlay(ws)
-        assert "workspaceFolder" not in overlay
+        assert "drydockFolder" not in overlay
 
-    def test_secrets_mount_uses_workspace_scoped_path(self, ws):
+    def test_secrets_mount_uses_drydock_scoped_path(self, ws):
         expected_host_dir = str(Path.home() / ".drydock" / "secrets")
         overlay = generate_overlay(ws)
         mounts = overlay["mounts"]
@@ -156,7 +156,7 @@ class TestGenerateOverlay:
         mounts = overlay["mounts"]
         assert len(mounts) == 10
         assert "/run/secrets" in mounts[0]
-        assert "target=/run/drydock" in mounts[1]  # wsd run directory
+        assert "target=/run/drydock" in mounts[1]  # daemon run directory
         assert "drydock-rpc" in mounts[2]
         assert "claude-code-config" in mounts[3]
         assert "claude-code-bashhistory" in mounts[4]
@@ -182,7 +182,7 @@ class TestGenerateOverlay:
         assert len(mounts) == 11
         assert mounts[-1] == "source=/data,target=/data,type=bind"
 
-    # V2 in-desk RPC: the overlay bind-mounts the wsd run *directory*
+    # V2 in-desk RPC: the overlay bind-mounts the drydock daemon run *directory*
     # (not the socket file) + drydock-rpc client so a worker inside the
     # drydock can call the daemon — and survives daemon restarts that
     # recreate the socket inode.
@@ -197,14 +197,14 @@ class TestGenerateOverlay:
         assert "readonly" not in run_mount
         # Source is the run directory, not the socket file.
         assert ".drydock/run" in run_mount
-        assert "wsd.sock" not in run_mount.split(",")[0]  # source isn't the file itself
+        assert "daemon.sock" not in run_mount.split(",")[0]  # source isn't the file itself
 
         rpc_mount = next(m for m in mounts if "drydock-rpc" in m)
         assert "target=/usr/local/bin/drydock-rpc" in rpc_mount
         assert "readonly" in rpc_mount
-        assert overlay["containerEnv"]["DRYDOCK_WSD_SOCKET"] == "/run/drydock/wsd.sock"
+        assert overlay["containerEnv"]["DRYDOCK_DAEMON_SOCKET"] == "/run/drydock/daemon.sock"
 
-    # Ability to opt out (e.g. a drydock created before wsd is up on a
+    # Ability to opt out (e.g. a drydock created before the daemon is up on a
     # fresh Harbor, or a test fixture that doesn't care about RPC).
     def test_in_desk_rpc_mounts_opt_out(self, ws):
         config = OverlayConfig(
@@ -215,7 +215,7 @@ class TestGenerateOverlay:
         mounts = overlay["mounts"]
         assert not any("/run/drydock" in m for m in mounts if "drydock-rpc" not in m)
         assert not any("drydock-rpc" in m for m in mounts)
-        assert "DRYDOCK_WSD_SOCKET" not in overlay.get("containerEnv", {})
+        assert "DRYDOCK_DAEMON_SOCKET" not in overlay.get("containerEnv", {})
 
     def test_forward_ports_included_when_set(self, ws):
         config = OverlayConfig(forward_ports=[8000])

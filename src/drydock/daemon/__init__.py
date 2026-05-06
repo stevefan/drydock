@@ -1,4 +1,4 @@
-"""Drydock workspace daemon (wsd) — V2.
+"""Drydock drydock daemon (daemon) — V2.
 
 V2's sole control plane for desk lifecycle operations. V1 host-mode CLI
 keeps working unchanged; the daemon is opt-in. See docs/v2-scope.md and

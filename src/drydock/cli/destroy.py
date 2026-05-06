@@ -1,11 +1,11 @@
-"""ws destroy — remove a workspace."""
+"""ws destroy — remove a drydock."""
 
 import logging
 from pathlib import Path
 
 import click
 
-from drydock.cli._wsd_client import DaemonRpcError, DaemonUnavailable, call_daemon
+from drydock.cli._daemon_client import DaemonRpcError, DaemonUnavailable, call_daemon
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core import WsError
 from drydock.core.audit import log_event
@@ -57,7 +57,7 @@ def _delete_tailnet_device_best_effort(ws):
 @click.option("--force", is_flag=True, help="Required for destructive operation")
 @click.pass_context
 def destroy(ctx, name, force):
-    """Destroy a workspace and remove its registry entry.
+    """Destroy a drydock and remove its registry entry.
 
     Requires --force flag. Use --dry-run to preview.
     """
@@ -66,19 +66,19 @@ def destroy(ctx, name, force):
     dry_run = ctx.obj["dry_run"]
 
     if dry_run:
-        ws = registry.get_workspace(name)
+        ws = registry.get_drydock(name)
         if not ws:
             out.error(
                 WsError(
-                    f"Workspace '{name}' not found",
-                    fix="Run 'ws list' to see available workspaces",
+                    f"Drydock '{name}' not found",
+                    fix="Run 'ws list' to see available drydocks",
                 )
             )
             return
         out.success(
-            {"dry_run": True, "action": "destroy", "workspace": ws.to_dict()},
+            {"dry_run": True, "action": "destroy", "drydock": ws.to_dict()},
             human_lines=[
-                f"Would destroy workspace '{name}':",
+                f"Would destroy drydock '{name}':",
                 "  Remove registry entry",
                 f"  Remove worktree at {ws.worktree_path}" if ws.worktree_path else "",
                 f"  Stop container {ws.container_id}" if ws.container_id else "",
@@ -105,16 +105,16 @@ def destroy(ctx, name, force):
     else:
         out.success(
             {"destroyed": name},
-            human_lines=[f"workspace '{name}' destroyed"],
+            human_lines=[f"drydock '{name}' destroyed"],
         )
         return
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if not ws:
         out.error(
             WsError(
-                f"Workspace '{name}' not found",
-                fix="Run 'ws list' to see available workspaces",
+                f"Drydock '{name}' not found",
+                fix="Run 'ws list' to see available drydocks",
             )
         )
         return
@@ -151,18 +151,18 @@ def destroy(ctx, name, force):
         except Exception as exc:
             logger.warning("Failed to remove overlay %s: %s", overlay_path, exc)
 
-    log_event("workspace.destroyed", ws.id)
-    registry.delete_workspace(name)
+    log_event("drydock.destroyed", ws.id)
+    registry.delete_drydock(name)
 
     # Best-effort tailnet device-record cleanup. Failure here does not roll
-    # back destroy — workspace is gone from drydock's state regardless; an
+    # back destroy — drydock is gone from drydock's state regardless; an
     # orphan tailnet record is recoverable via `ws tailnet prune --apply`.
     # See docs/v2-design-tailnet-identity.md §5.1.
     _delete_tailnet_device_best_effort(ws)
 
     out.success(
         {"destroyed": name},
-        human_lines=[f"workspace '{name}' destroyed"],
+        human_lines=[f"drydock '{name}' destroyed"],
     )
 
 

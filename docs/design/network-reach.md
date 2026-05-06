@@ -10,20 +10,20 @@ Today, when an in-desk agent needs a domain that isn't in the allowlist:
 
 1. Connection is REJECTed.
 2. Human edits `FIREWALL_EXTRA_DOMAINS` (project YAML or `.env.devcontainer`).
-3. `ws stop && ws create` — full container recreate.
+3. `drydock stop && drydock create` — full container recreate.
 4. Agent retries.
 
 This is friction at exactly the wrong moment (an agent has just discovered it needs a new dependency) and dynamics-killing for any worker pattern that does open-ended research.
 
 ## Goal
 
-A drydock can request "open egress to `<domain>:<port>`" via `wsd` RPC. If the drydock is entitled, the daemon adds the domain to the live allowlist without restart. If not, the request is denied (and audited).
+A drydock can request "open egress to `<domain>:<port>`" via `drydock daemon` RPC. If the drydock is entitled, the daemon adds the domain to the live allowlist without restart. If not, the request is denied (and audited).
 
 ## Design
 
 ### Capability type
 
-Reuse the reserved `NETWORK_REACH` capability slot in the existing broker (`src/drydock/core/capability.py` + `wsd/capability_handlers.py`).
+Reuse the reserved `NETWORK_REACH` capability slot in the existing broker (`src/drydock/core/capability.py` + `daemon/capability_handlers.py`).
 
 Request shape:
 ```
@@ -67,7 +67,7 @@ Port allowlist: optional `network_reach_ports` list per drydock (default `[80, 4
 
 ### Materialization
 
-`wsd` handler invokes the container-side helper synchronously:
+`drydock daemon` handler invokes the container-side helper synchronously:
 
 ```
 docker exec -u root <container_id> /usr/local/bin/add-allowed-domain.sh <domain> <port>
@@ -94,7 +94,7 @@ TTL + per-IP revocation lands as part of [resource-ceilings.md](resource-ceiling
 
 Every grant + every denial is audited via the existing `emit_audit` channel:
 ```
-{event: "capability.network_reach", desk_id, domain, port, decision: "granted"|"denied", reason}
+{event: "capability.network_reach", drydock_id, domain, port, decision: "granted"|"denied", reason}
 ```
 Hot allowlist becomes a forensic asset: "what domains did `auction-crawl` open last week?"
 
@@ -102,9 +102,9 @@ Hot allowlist becomes a forensic asset: "what domains did `auction-crawl` open l
 
 | Command | Purpose |
 |---|---|
-| `ws reach list <desk>` | Show entitled `network_reach` patterns + currently-opened (live) entries. |
-| `ws reach add <desk> <domain> [--port N]` | Manually open from the Harbor (debug / one-off). Same path as the RPC. |
-| `ws reach grants <desk>` | Audit query: recent capability.network_reach events. |
+| `drydock reach list <desk>` | Show entitled `network_reach` patterns + currently-opened (live) entries. |
+| `drydock reach add <desk> <domain> [--port N]` | Manually open from the Harbor (debug / one-off). Same path as the RPC. |
+| `drydock reach grants <desk>` | Audit query: recent capability.network_reach events. |
 
 Worker-side: `drydock-rpc RequestCapability type=NETWORK_REACH scope.domain=foo.com scope.port=443` (already works once the handler dispatches NETWORK_REACH).
 
@@ -115,9 +115,12 @@ Worker-side: `drydock-rpc RequestCapability type=NETWORK_REACH scope.domain=foo.
 - **Container not running:** denied with `desk_not_running`.
 - **`add-allowed-domain.sh` exits non-zero:** lease denied; audit captures stderr tail.
 
-## Open questions
+## Resolved decisions and open questions
 
-1. Should the wildcard `*` entitlement still constrain *ports* (so even a wildcard desk can't open arbitrary :22)? Lean yes — wildcard domains, default port allowlist.
-2. Project YAML schema: nest under `narrowness:` (matches existing capability vocabulary) or add top-level `firewall:`? Lean `narrowness:` for consistency.
-3. IPv6: current firewall already has `FIREWALL_IPV6_HOSTS` env. Helper should resolve AAAA and add to a v6 ipset symmetrically. Defer if no immediate use case.
-4. Egress audit at packet level (vs. capability grants): out of scope for V1 — that's the exit-node design's job.
+**Resolved:**
+- **Wildcard ports.** Wildcard `*` constrains domains; default port allowlist still applies. Even a wildcard desk can't open arbitrary :22.
+- **Schema location.** Under `narrowness:` for consistency with the existing capability vocabulary; no top-level `firewall:`.
+
+**Still open:**
+1. **IPv6 symmetric path.** Current firewall has `FIREWALL_IPV6_HOSTS` env. Helper should resolve AAAA and add to a v6 ipset symmetrically. Defer until an immediate use case.
+2. **Packet-level egress audit.** Out of scope for V1 — that's the exit-node design's job.

@@ -68,7 +68,7 @@ def test_create_failure_transitions_to_error(MockCLI, tmp_path, monkeypatch):
 
     from drydock.core.registry import Registry
     reg = Registry(db_path=tmp_path / ".drydock" / "registry.db")
-    ws = reg.get_workspace("ws-fail")
+    ws = reg.get_drydock("ws-fail")
     assert ws is not None
     assert ws.state == "error"
     reg.close()
@@ -207,7 +207,7 @@ def test_preflight_raises_when_devcontainer_json_missing(MockCLI, tmp_path, monk
 
     from drydock.core.registry import Registry
     reg = Registry(db_path=tmp_path / ".drydock" / "registry.db")
-    ws = reg.get_workspace("ws-ndc")
+    ws = reg.get_drydock("ws-ndc")
     assert ws is not None
     assert ws.state == "error"
     reg.close()
@@ -242,7 +242,7 @@ def test_create_with_lifecycle_warning_still_running(MockCLI, tmp_path, monkeypa
 
     from drydock.core.registry import Registry
     reg = Registry(db_path=tmp_path / ".drydock" / "registry.db")
-    ws = reg.get_workspace("ws-warn")
+    ws = reg.get_drydock("ws-warn")
     assert ws.state == "running"
     assert "postAttachCommand failed" in ws.config.get("lifecycle_warning", "")
     reg.close()

@@ -19,7 +19,7 @@ from pathlib import Path
 import click
 
 from drydock.core import WsError
-from drydock.core.overlay import regenerate_overlay_from_workspace
+from drydock.core.overlay import regenerate_overlay_from_drydock
 
 
 @click.group()
@@ -40,7 +40,7 @@ def overlay_regenerate(ctx, name):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(name)
+    ws = registry.get_drydock(name)
     if ws is None:
         out.error(
             WsError(
@@ -52,7 +52,7 @@ def overlay_regenerate(ctx, name):
         return
 
     try:
-        path = regenerate_overlay_from_workspace(ws)
+        path = regenerate_overlay_from_drydock(ws)
     except WsError as e:
         out.error(e)
         return

@@ -1,6 +1,6 @@
 # Drydock — Capability Broker
 
-**Purpose.** The `wsd` daemon is the sole issuer of time-bounded, scoped grants called **capability leases**. A worker inside a drydock asks the daemon for a lease; the daemon checks entitlements, mints backend state, materializes the result into the drydock, and records an audit event. Revocation is symmetric.
+**Purpose.** The `drydock daemon` is the sole issuer of time-bounded, scoped grants called **capability leases**. A worker inside a drydock asks the daemon for a lease; the daemon checks entitlements, mints backend state, materializes the result into the drydock, and records an audit event. Revocation is symmetric.
 
 This is the trust boundary. Workers hold no long-lived credentials out-of-band. The daemon translates declared entitlements into backend-specific state (a file on disk, an STS session) and back.
 
@@ -14,12 +14,12 @@ See [vocabulary.md](vocabulary.md) for Harbor / DryDock / Worker.
 @dataclass(frozen=True)
 class CapabilityLease:
     lease_id: str                      # ls_<uuid4>; new id each issuance
-    desk_id: str                       # subject; derived from bearer token
+    drydock_id: str                       # subject; derived from bearer token
     type: CapabilityType               # SECRET | STORAGE_MOUNT | INFRA_PROVISION | (reserved)
     scope: dict                        # type-specific JSON
     issued_at: datetime                # UTC
     expiry: datetime | None            # UTC; None = live until release/destroy
-    issuer: str                        # always "wsd"
+    issuer: str                        # always "daemon"
     revoked: bool = False
     revocation_reason: str | None = None
 ```
@@ -34,25 +34,25 @@ Persisted 1:1 in the `leases` SQLite table. Mutability after issuance is limited
 
 ## 2. RPC surface
 
-Two methods on the JSON-RPC socket at `~/.drydock/run/wsd.sock`:
+Two methods on the JSON-RPC socket at `~/.drydock/run/daemon.sock`:
 
 ```
 RequestCapability(type, scope)          → CapabilityLease
 ReleaseCapability(lease_id)             → {lease_id, revoked}
 ```
 
-The subject drydock is **always derived from the caller's bearer token** via the auth middleware — never taken as an argument. This avoids a confused-deputy class of bugs where one drydock could request a lease aimed at another. The daemon maps `token → desk_id` against the SHA-256 of the token in the registry.
+The subject drydock is **always derived from the caller's bearer token** via the auth middleware — never taken as an argument. This avoids a confused-deputy class of bugs where one drydock could request a lease aimed at another. The daemon maps `token → drydock_id` against the SHA-256 of the token in the registry.
 
 Clients MUST send a `request_id` on `RequestCapability` — without it, retry would double-issue.
 
-Handler entry points: `request_capability()` and `release_capability()` in `src/drydock/wsd/capability_handlers.py`.
+Handler entry points: `request_capability()` and `release_capability()` in `src/drydock/daemon/capability_handlers.py`.
 
 ### Scope shapes
 
 `SECRET`:
 ```json
 {"secret_name": "anthropic_api_key"}
-{"secret_name": "shared_key", "source_desk_id": "ws_other"}   // cross-desk
+{"secret_name": "shared_key", "source_desk_id": "dock_other"}   // cross-desk
 ```
 
 `STORAGE_MOUNT`:
@@ -88,22 +88,22 @@ Two backends, one pattern: the daemon dispatches the request to a Protocol-typed
 ```python
 class SecretsBackend(Protocol):
     name: str
-    def fetch(self, secret_name: str, desk_id: str) -> bytes | None: ...
+    def fetch(self, secret_name: str, drydock_id: str) -> bytes | None: ...
     def supports_rotation(self) -> bool: ...
     def rotate(self, secret_name: str) -> bytes | None: ...
 ```
 
-Current implementation: **`FileBackend`**. Reads from `~/.drydock/secrets/<desk_id>/<name>` (mode 0400, owned by the Harbor user). The same file tree that `ws secret set` writes.
+Current implementation: **`FileBackend`**. Reads from `~/.drydock/secrets/<drydock_id>/<name>` (mode 0400, owned by the Harbor user). The same file tree that `drydock secret set` writes.
 
-Raises `BackendPermissionDenied` / `BackendUnavailable` for the daemon to translate into RPC errors. Rotation not supported; future network backends (1Password via `op`, Vault, cloud SMs) plug in as additive classes plus a `[secrets] backend = ...` entry in `wsd.toml`. Sync-first: network backends should add `fetch_async` additively.
+Raises `BackendPermissionDenied` / `BackendUnavailable` for the daemon to translate into RPC errors. Rotation not supported; future network backends (1Password via `op`, Vault, cloud SMs) plug in as additive classes plus a `[secrets] backend = ...` entry in `daemon.toml`. Sync-first: network backends should add `fetch_async` additively.
 
 ### `StorageBackend` (`src/drydock/core/storage.py`)
 
 ```python
 class StorageBackend(Protocol):
     name: str
-    def mint(self, *, desk_id, bucket, prefix, mode) -> StorageCredential: ...
-    def mint_provision(self, *, desk_id, actions) -> StorageCredential: ...
+    def mint(self, *, drydock_id, bucket, prefix, mode) -> StorageCredential: ...
+    def mint_provision(self, *, drydock_id, actions) -> StorageCredential: ...
 ```
 
 Current implementations:
@@ -115,7 +115,7 @@ Both session-policy builders are pure functions. Storage-mount mode vocabulary: 
 
 ## 5. Materialization
 
-The daemon writes lease bytes into `~/.drydock/secrets/<desk_id>/` on the Harbor, which the overlay bind-mounts read-only at `/run/secrets/` inside the drydock container. Files are chowned to the container's node uid (1000) and `chmod 0400`; the daemon runs as root on Linux Harbors but the worker is uid 1000, so a root-owned 0400 file would be unreadable.
+The daemon writes lease bytes into `~/.drydock/secrets/<drydock_id>/` on the Harbor, which the overlay bind-mounts read-only at `/run/secrets/` inside the drydock container. Files are chowned to the container's node uid (1000) and `chmod 0400`; the daemon runs as root on Linux Harbors but the worker is uid 1000, so a root-owned 0400 file would be unreadable.
 
 Per-type mapping:
 
@@ -128,7 +128,7 @@ Per-type mapping:
 
 The four `aws_*` filenames match the `drydock-base` `sync-aws-auth.sh` convention — a worker reads them directly or exports them as env vars. Writes are not atomic across the four files; workers poll `aws_session_expiration` for freshness.
 
-On release the daemon deletes the files it materialized. For same-desk file-backed secrets (owned by `ws secret set`, not the daemon) nothing is removed. Cross-desk materializations are removed only after the last active lease for that `(desk_id, secret_name)` pair is revoked.
+On release the daemon deletes the files it materialized. For same-desk file-backed secrets (owned by `drydock secret set`, not the daemon) nothing is removed. Cross-desk materializations are removed only after the last active lease for that `(drydock_id, secret_name)` pair is revoked.
 
 ## 6. Cross-drydock delegation
 
@@ -155,12 +155,12 @@ Every issue and release emits an event via `emit_audit()` in `src/drydock/core/a
 ```json
 {
   "event": "lease.issued",
-  "principal": "ws_scraper",
+  "principal": "dock_scraper",
   "method": "RequestCapability",
   "result": "ok",
   "details": {
     "lease_id": "ls_...",
-    "desk_id": "ws_scraper",
+    "drydock_id": "dock_scraper",
     "type": "STORAGE_MOUNT",
     "scope": {"bucket": "my-data", "prefix": "exports", "mode": "rw"},
     "expiry": "2026-04-18T12:00:00+00:00"
@@ -182,12 +182,12 @@ All errors return the standard `{error, message, fix?, data?}` JSON-RPC envelope
 | -32006 | `narrowness_violated` | Requested scope not in caller's delegatable set; `data.rule` identifies which |
 | -32007 | `backend_permission_denied` | Backend rejected the fetch/mint |
 | -32008 | `backend_unavailable` | Transient backend failure; `data.retry = true` |
-| -32009 | `backend_missing_secret` | Backend resolved but no secret under that name; `fix` echoes the `ws secret set` command |
+| -32009 | `backend_missing_secret` | Backend resolved but no secret under that name; `fix` echoes the `drydock secret set` command |
 | -32010 | `desk_not_running` | Caller's container isn't up; can't materialize |
 | -32011 | `materialization_failed` | File write / `docker exec` failed after mint |
 | -32012 | `lease_not_found` | `ReleaseCapability` against unknown or foreign lease_id |
 | -32013 | `capability_unsupported` | Reserved type (`COMPUTE_QUOTA`, `NETWORK_REACH`) |
-| -32015 | `storage_backend_not_configured` | `STORAGE_MOUNT` or `INFRA_PROVISION` requested but no backend in `wsd.toml` |
+| -32015 | `storage_backend_not_configured` | `STORAGE_MOUNT` or `INFRA_PROVISION` requested but no backend in `daemon.toml` |
 | -32016 | `storage_backend_config_error` | Backend present but misconfigured (missing role ARN, etc.) |
 | -32602 | `invalid_params` | Malformed scope; `data.reason` describes the defect |
 

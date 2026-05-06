@@ -1,4 +1,4 @@
-"""wsd Unix-socket server — Slice 1b JSON-RPC dispatcher.
+"""daemon Unix-socket server — Slice 1b JSON-RPC dispatcher.
 
 Binds a Unix stream socket at the configured path, accepts connections
 (threaded, one per client), reads a single newline-delimited JSON-RPC 2.0
@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from drydock.core.registry import Registry
-from drydock.wsd.auth import validate_token
-from drydock.wsd.recovery import recover_in_progress
+from drydock.daemon.auth import validate_token
+from drydock.daemon.recovery import recover_in_progress
 
 logger = logging.getLogger(__name__)
 _JSON_RPC_VERSION = "2.0"
@@ -53,18 +53,18 @@ class MethodSpec:
 def _health(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     del params
     del request_id
-    del caller_desk_id
+    del caller_drydock_id
     return {"ok": True, "pid": os.getpid(), "version": "v2-slice1b"}
 
 
 def _create_desk(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None:
         raise _RpcError(code=-32603, message="Internal error")
@@ -76,7 +76,7 @@ def _create_desk(
             message="Invalid Request",
             data={"reason": "request_id_required"},
         )
-    del caller_desk_id
+    del caller_drydock_id
 
     request_key = str(request_id)
     registry = Registry(db_path=_REGISTRY_PATH)
@@ -112,7 +112,7 @@ def _create_desk(
         registry._conn.commit()
 
         try:
-            from drydock.wsd.handlers import create_desk
+            from drydock.daemon.handlers import create_desk
             result = create_desk(
                 params,
                 request_id,
@@ -137,7 +137,7 @@ def _create_desk(
 def _spawn_child(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None:
         raise _RpcError(code=-32603, message="Internal error")
@@ -184,11 +184,11 @@ def _spawn_child(
         registry._conn.commit()
 
         try:
-            from drydock.wsd.handlers import spawn_child
+            from drydock.daemon.handlers import spawn_child
             result = spawn_child(
                 params,
                 request_id,
-                caller_desk_id,
+                caller_drydock_id,
                 registry_path=_REGISTRY_PATH,
                 secrets_root=_SECRETS_ROOT,
                 dry_run=_DRY_RUN,
@@ -209,7 +209,7 @@ def _spawn_child(
 def _destroy_desk(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None:
         raise _RpcError(code=-32603, message="Internal error")
@@ -256,11 +256,11 @@ def _destroy_desk(
         registry._conn.commit()
 
         try:
-            from drydock.wsd.handlers import destroy_desk
+            from drydock.daemon.handlers import destroy_desk
             result = destroy_desk(
                 params,
                 request_id,
-                caller_desk_id,
+                caller_drydock_id,
                 registry_path=_REGISTRY_PATH,
                 secrets_root=_SECRETS_ROOT,
                 dry_run=_DRY_RUN,
@@ -282,17 +282,17 @@ def _destroy_desk(
 def _whoami(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
-    from drydock.wsd.handlers import whoami
+    from drydock.daemon.handlers import whoami
 
-    return whoami(params, request_id, caller_desk_id)
+    return whoami(params, request_id, caller_drydock_id)
 
 
 def _request_capability(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None or _SECRETS_ROOT is None:
         raise _RpcError(code=-32603, message="Internal error")
@@ -335,11 +335,11 @@ def _request_capability(
         registry._conn.commit()
 
         try:
-            from drydock.wsd.capability_handlers import request_capability
+            from drydock.daemon.capability_handlers import request_capability
             result = request_capability(
                 params,
                 request_id,
-                caller_desk_id,
+                caller_drydock_id,
                 registry_path=_REGISTRY_PATH,
                 secrets_root=_SECRETS_ROOT,
                 backend_name=_SECRETS_BACKEND_NAME,
@@ -361,17 +361,17 @@ def _request_capability(
 def _release_capability(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None or _SECRETS_ROOT is None:
         raise _RpcError(code=-32603, message="Internal error")
     # Naturally idempotent per §3 — repeats by lease_id are safe; no
     # task_log entry needed.
-    from drydock.wsd.capability_handlers import release_capability
+    from drydock.daemon.capability_handlers import release_capability
     return release_capability(
         params,
         request_id,
-        caller_desk_id,
+        caller_drydock_id,
         registry_path=_REGISTRY_PATH,
         secrets_root=_SECRETS_ROOT,
     )
@@ -380,15 +380,15 @@ def _release_capability(
 def _stop_desk(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None:
         raise _RpcError(code=-32603, message="Internal error")
-    from drydock.wsd.handlers import stop_desk
+    from drydock.daemon.handlers import stop_desk
     return stop_desk(
         params,
         request_id,
-        caller_desk_id,
+        caller_drydock_id,
         registry_path=_REGISTRY_PATH,
         dry_run=_DRY_RUN,
     )
@@ -397,15 +397,15 @@ def _stop_desk(
 def _list_desks(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None:
         raise _RpcError(code=-32603, message="Internal error")
-    from drydock.wsd.handlers import list_desks
+    from drydock.daemon.handlers import list_desks
     return list_desks(
         params,
         request_id,
-        caller_desk_id,
+        caller_drydock_id,
         registry_path=_REGISTRY_PATH,
     )
 
@@ -413,15 +413,15 @@ def _list_desks(
 def _list_children(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None:
         raise _RpcError(code=-32603, message="Internal error")
-    from drydock.wsd.handlers import list_children
+    from drydock.daemon.handlers import list_children
     return list_children(
         params,
         request_id,
-        caller_desk_id,
+        caller_drydock_id,
         registry_path=_REGISTRY_PATH,
     )
 
@@ -429,15 +429,15 @@ def _list_children(
 def _inspect_desk(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     if _REGISTRY_PATH is None:
         raise _RpcError(code=-32603, message="Internal error")
-    from drydock.wsd.handlers import inspect_desk
+    from drydock.daemon.handlers import inspect_desk
     return inspect_desk(
         params,
         request_id,
-        caller_desk_id,
+        caller_drydock_id,
         registry_path=_REGISTRY_PATH,
     )
 
@@ -445,16 +445,16 @@ def _inspect_desk(
 def _get_audit(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
 ) -> dict[str, object]:
     # Read-only introspection per protocol §2; no task_log idempotency
     # needed. Reads the audit.log file directly. requires_auth=False.
     from drydock.core.audit import DEFAULT_LOG_PATH
-    from drydock.wsd.audit_handlers import get_audit
+    from drydock.daemon.audit_handlers import get_audit
     return get_audit(
         params,
         request_id,
-        caller_desk_id,
+        caller_drydock_id,
         log_path=DEFAULT_LOG_PATH,
     )
 
@@ -512,8 +512,8 @@ _METHODS: dict[str, MethodSpec] = {
     "ListChildren": MethodSpec(handler=_list_children, requires_auth=True),
     "InspectDesk": MethodSpec(handler=_inspect_desk, requires_auth=False),
     "GetAudit": MethodSpec(handler=_get_audit, requires_auth=False),
-    "wsd.health": MethodSpec(handler=_health, requires_auth=False),
-    "wsd.whoami": MethodSpec(handler=_whoami, requires_auth=True),
+    "daemon.health": MethodSpec(handler=_health, requires_auth=False),
+    "daemon.whoami": MethodSpec(handler=_whoami, requires_auth=True),
 }
 
 
@@ -601,8 +601,8 @@ class _Handler(socketserver.StreamRequestHandler):
             )
 
         try:
-            caller_desk_id = self._resolve_caller(spec, auth)
-            result = spec.handler(params, request_id, caller_desk_id)
+            caller_drydock_id = self._resolve_caller(spec, auth)
+            result = spec.handler(params, request_id, caller_drydock_id)
         except _RpcError as exc:
             return _error_response(
                 request_id,
@@ -611,7 +611,7 @@ class _Handler(socketserver.StreamRequestHandler):
                 data=exc.data,
             )
         except Exception:
-            logger.exception("wsd: internal error handling %s", method_name)
+            logger.exception("daemon: internal error handling %s", method_name)
             return _error_response(
                 request_id,
                 code=-32603,
@@ -633,16 +633,16 @@ class _Handler(socketserver.StreamRequestHandler):
 
         registry = Registry(db_path=_REGISTRY_PATH)
         try:
-            caller_desk_id = validate_token(auth, registry)
+            caller_drydock_id = validate_token(auth, registry)
         finally:
             registry.close()
-        if caller_desk_id is None and spec.requires_auth:
+        if caller_drydock_id is None and spec.requires_auth:
             raise _RpcError(
                 code=-32004,
                 message="unauthenticated",
                 data={"reason": "invalid_token"},
             )
-        return caller_desk_id
+        return caller_drydock_id
 
 
 class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -667,7 +667,7 @@ def serve(
     parent directories if missing. Cleans up the socket file on exit.
 
     `secrets_backend` selects the SecretsBackend used by RequestCapability
-    (Slice 3). Default is "file"; the wsd.toml [secrets] loader resolves
+    (Slice 3). Default is "file"; the daemon.toml [secrets] loader resolves
     the value before serve() is called and rejects unknown names with
     `unknown_secrets_backend` so the daemon never starts misconfigured.
 
@@ -690,7 +690,7 @@ def serve(
             source_profile=storage_source_profile,
             session_duration_seconds=storage_session_duration_seconds,
         )
-        logger.info("wsd: storage backend = %s", storage_backend)
+        logger.info("daemon: storage backend = %s", storage_backend)
     else:
         _STORAGE_BACKEND = None
     socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -700,10 +700,10 @@ def serve(
         try:
             report = recover_in_progress(_REGISTRY_PATH)
         except Exception:
-            logger.exception("wsd: startup recovery failed for %s", _REGISTRY_PATH)
+            logger.exception("daemon: startup recovery failed for %s", _REGISTRY_PATH)
             raise
         logger.info(
-            "wsd: recovery report — completed=%d rolled_back=%d unknown_method=%d",
+            "daemon: recovery report — completed=%d rolled_back=%d unknown_method=%d",
             report.completed,
             report.rolled_back,
             report.unknown_method,
@@ -714,12 +714,12 @@ def serve(
         try:
             evicted = registry.evict_old_task_log()
             if evicted:
-                logger.info("wsd: evicted %d old task_log entries", evicted)
+                logger.info("daemon: evicted %d old task_log entries", evicted)
         finally:
             registry.close()
     with _Server(str(socket_path), _Handler) as server:
         # Socket must be connect()-able by workers inside drydock containers,
-        # which run as uid 1000 (node). wsd runs as Harbor root. Unix-socket
+        # which run as uid 1000 (node). daemon runs as Harbor root. Unix-socket
         # connect() requires write permission on the socket file; the default
         # umask leaves it at 0755, which blocks non-root callers.
         #
@@ -729,12 +729,12 @@ def serve(
         try:
             os.chmod(socket_path, 0o666)
         except OSError as exc:
-            logger.warning("wsd: failed to chmod socket to 0o666: %s", exc)
-        logger.info("wsd: listening on %s (mode 0o666)", socket_path)
+            logger.warning("daemon: failed to chmod socket to 0o666: %s", exc)
+        logger.info("daemon: listening on %s (mode 0o666)", socket_path)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
-            logger.info("wsd: interrupted, shutting down")
+            logger.info("daemon: interrupted, shutting down")
         finally:
             try:
                 socket_path.unlink()

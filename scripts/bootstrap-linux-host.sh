@@ -17,13 +17,13 @@
 # Idempotent — safe to re-run. Tested on Ubuntu 24.04 LTS.
 #
 # Handles: apt deps (docker, tailscale, gh, node/npm, pipx), @devcontainers/cli,
-# drydock clone + editable install, `ws host init`, systemd units (wsd + resume),
+# drydock clone + editable install, `drydock host init`, systemd units (daemon + resume),
 # optional unattended tailnet join.
 #
 # Still interactive after bootstrap (if env vars not set):
 #   - tailscale up --hostname=<box>               (device flow)
 #   - gh auth login                                (device flow, unless GH_TOKEN set)
-#   - (after first ws create) docker exec … claude /login
+#   - (after first drydock create) docker exec … claude /login
 #   - (optional) tailscale admin API token → /root/.drydock/daemon-secrets/
 #
 # See docs/operations/harbor-bootstrap.md for the full walkthrough.
@@ -110,10 +110,10 @@ if [ ! -d "$DRYDOCK_DIR/.git" ]; then
 fi
 pipx install --force --editable "$DRYDOCK_DIR" >/dev/null
 
-log "ws host init (state dirs + gitconfig stub)"
-ws host init
+log "drydock host init (state dirs + gitconfig stub)"
+drydock host init
 
-log "systemd units (wsd + resume-on-boot)"
+log "systemd units (daemon + resume-on-boot)"
 bash "$DRYDOCK_DIR/scripts/install-linux-services.sh"
 
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
@@ -124,7 +124,7 @@ else
     log "tailscale: no TAILSCALE_AUTHKEY; run interactively below"
 fi
 
-systemctl start drydock-wsd.service || true
+systemctl start drydock.service || true
 
 echo
 log "versions"
@@ -132,7 +132,7 @@ docker --version
 tailscale --version | head -1
 devcontainer --version
 gh --version | head -1
-ws --version 2>&1 | head -1 || ws --help 2>&1 | head -1
+drydock --version 2>&1 | head -1 || drydock --help 2>&1 | head -1
 
 echo
 log "bootstrap done. Remaining interactive steps (skip any already satisfied):"
@@ -146,8 +146,8 @@ cat <<EOF
   gh auth setup-git
 
   # 3. Verify:
-  ws host check
-  ws daemon status
+  drydock host check
+  drydock daemon status
 
   # Per-project, when you're ready:
   git clone https://github.com/<you>/<project>.git /root/src/<project>
@@ -157,8 +157,8 @@ cat <<EOF
   firewall_extra_domains:
     - <hosts the drydock legitimately needs>
   YAML
-  echo -n "<value>" | ws secret set <project> <key>
-  ws create <project>
+  echo -n "<value>" | drydock secret set <project> <key>
+  drydock create <project>
 
 See docs/operations/harbor-bootstrap.md for the full walkthrough.
 EOF

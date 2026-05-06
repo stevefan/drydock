@@ -4,7 +4,7 @@ Drydock is a host-side CLI (`ws`) that provisions sandboxed Claude Code drydocks
 
 A *drydock* is a durable addressable place where a Worker (an agent) does work — not a throwaway container. It has a stable name, a scoped policy, a git worktree, and (once the container is up) a Claude Code session you can attach to from anywhere on your tailnet. The container can come and go; the drydock persists.
 
-Your laptop or server running `wsd` is the **Harbor**; each drydock you create lives on that Harbor. See [design/vocabulary.md](design/vocabulary.md) for the full vocabulary.
+Your laptop or server running `drydock daemon` is the **Harbor**; each drydock you create lives on that Harbor. See [design/vocabulary.md](design/vocabulary.md) for the full vocabulary.
 
 This guide walks you from zero to a running drydock. If you're using Drydock for a monorepo with heterogeneous sub-projects, the per-project YAML section is the part that matters most.
 
@@ -26,16 +26,16 @@ You'll also want:
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/ | Claude Code inside the drydock |
 | `TAILSCALE_AUTHKEY` | https://login.tailscale.com/admin/settings/keys | Auto-joining the tailnet |
 
-**How secrets reach the drydock.** Use `ws secret` to manage per-drydock secrets. They're stored at `~/.drydock/secrets/<workspace_id>/` on the Harbor and mounted at `/run/secrets/` (readonly) inside the container.
+**How secrets reach the drydock.** Use `drydock secret` to manage per-drydock secrets. They're stored at `~/.drydock/secrets/<drydock_id>/` on the Harbor and mounted at `/run/secrets/` (readonly) inside the container.
 
 ```bash
-ws secret set myproject anthropic_api_key    # prompts for value (stdin)
-ws secret set myproject tailscale_authkey
-ws secret list myproject                     # show what's set
-ws secret push myproject --to root@host      # sync to a remote Harbor
+drydock secret set myproject anthropic_api_key    # prompts for value (stdin)
+drydock secret set myproject tailscale_authkey
+drydock secret list myproject                     # show what's set
+drydock secret push myproject --to root@host      # sync to a remote Harbor
 ```
 
-The drydock id is `ws_<name_slug>` — deterministic from the `ws create` args (dashes and spaces in the name become underscores). Secret names are validated (alphanumeric + underscores only). See [operations/secrets.md](operations/secrets.md) for the operator's guide and [design/capability-broker.md](design/capability-broker.md) for the lease model.
+The drydock id is `ws_<name_slug>` — deterministic from the `drydock create` args (dashes and spaces in the name become underscores). Secret names are validated (alphanumeric + underscores only). See [operations/secrets.md](operations/secrets.md) for the operator's guide and [design/capability-broker.md](design/capability-broker.md) for the lease model.
 
 ## Install `ws`
 
@@ -68,44 +68,44 @@ Drydock works on two things: a **project** (a source repo + YAML description) an
 Minimal path — no per-project config:
 
 ```bash
-ws create myproject --repo-path /path/to/myproject
+drydock create myproject --repo-path /path/to/myproject
 ```
 
 This:
 
 1. Creates a new branch `ws/myproject` off the project's HEAD
-2. Clones the project into `~/.drydock/worktrees/ws_myproject/` as a standalone git repo with its own `.git` directory (uses `git clone --reference --dissociate` for disk efficiency; fully self-contained at runtime)
-3. Writes a composite devcontainer.json at `~/.drydock/overlays/ws_myproject.devcontainer.json` by merging the project's own `.devcontainer/devcontainer.json` with drydock's per-drydock overlay (identity env vars, scoped secrets mount, firewall extras, Tailscale hostname, shared volumes)
+2. Clones the project into `~/.drydock/worktrees/dock_myproject/` as a standalone git repo with its own `.git` directory (uses `git clone --reference --dissociate` for disk efficiency; fully self-contained at runtime)
+3. Writes a composite devcontainer.json at `~/.drydock/overlays/dock_myproject.devcontainer.json` by merging the project's own `.devcontainer/devcontainer.json` with drydock's per-drydock overlay (identity env vars, scoped secrets mount, firewall extras, Tailscale hostname, shared volumes)
 4. Runs `devcontainer up` with the composite to launch the container
 5. Records everything in `~/.drydock/registry.db` and logs the event to `~/.drydock/audit.log`
 
 Interact with it:
 
 ```bash
-ws list                   # all drydocks
-ws inspect myproject      # full state for one
-ws status                 # Harbor health: tailscale, supervisor, firewall, per-drydock
-ws attach myproject --editor cursor   # open in editor
-ws exec myproject         # shell inside the drydock
-ws exec myproject pytest  # run a command inside
+drydock list                   # all drydocks
+drydock inspect myproject      # full state for one
+drydock status                 # Harbor health: tailscale, supervisor, firewall, per-drydock
+drydock attach myproject --editor cursor   # open in editor
+drydock exec myproject         # shell inside the drydock
+drydock exec myproject pytest  # run a command inside
 ```
 
-Stop it (container down; volume state preserved so next `ws create` reuses session history):
+Stop it (container down; volume state preserved so next `drydock create` reuses session history):
 
 ```bash
-ws stop myproject
+drydock stop myproject
 ```
 
 Destroy it (container removed, checkout `rm -rf`'d, overlay deleted, registry row gone; Tailscale node logged out before stop so your tailnet admin stays clean):
 
 ```bash
 ws --dry-run destroy myproject   # preview first
-ws destroy myproject --force
+drydock destroy myproject --force
 ```
 
 ## Per-project configuration
 
-For anything beyond the simplest case, create `~/.drydock/projects/<project>.yaml`. `ws create <project>` reads this config and uses its values as defaults. CLI flags still win.
+For anything beyond the simplest case, create `~/.drydock/projects/<project>.yaml`. `drydock create <project>` reads this config and uses its values as defaults. CLI flags still win.
 
 Example — `~/.drydock/projects/myproject.yaml`:
 
@@ -194,7 +194,7 @@ firewall_extra_domains:
 ```
 
 ```bash
-ws create myapp
+drydock create myapp
 ```
 
 Step 2 — narrow-scope drydock for the high-risk sub-project:
@@ -211,25 +211,25 @@ firewall_extra_domains:
 ```
 
 ```bash
-ws create myapp-scraper
+drydock create myapp-scraper
 ```
 
 The two drydocks are fully independent: different firewalls, different tailnet hostnames, different worktrees, different containers. A bug in the scraper's automation can't reach anything beyond the hosts listed above.
 
 ## Schedules
 
-Projects can declare scheduled jobs in `deploy/schedule.yaml`. The `ws schedule sync` command materializes these into the Harbor's native cron system:
+Projects can declare scheduled jobs in `deploy/schedule.yaml`. The `drydock schedule sync` command materializes these into the Harbor's native cron system:
 
 ```bash
-ws schedule sync myproject        # install/update cron entries from schedule.yaml
-ws schedule list myproject        # show current schedule state
+drydock schedule sync myproject        # install/update cron entries from schedule.yaml
+drydock schedule list myproject        # show current schedule state
 ```
 
 See the auction-crawl project for a working example with three scheduled jobs.
 
 ## The v2 daemon
 
-The `wsd` daemon mediates every lifecycle operation, enforces narrowness, brokers capability leases, and audits. Workers inside drydocks reach it via a bind-mounted socket + the embedded `drydock-rpc` client. See [design/in-desk-rpc.md](design/in-desk-rpc.md) and [design/capability-broker.md](design/capability-broker.md).
+The `drydock daemon` mediates every lifecycle operation, enforces narrowness, brokers capability leases, and audits. Workers inside drydocks reach it via a bind-mounted socket + the embedded `drydock-rpc` client. See [design/in-desk-rpc.md](design/in-desk-rpc.md) and [design/capability-broker.md](design/capability-broker.md).
 
 ### What is *not* yet shipped
 
@@ -241,11 +241,11 @@ The `wsd` daemon mediates every lifecycle operation, enforces narrowness, broker
 
 ## Troubleshooting
 
-**`ws create` fails with `devcontainer CLI not found`:**
+**`drydock create` fails with `devcontainer CLI not found`:**
 Install it: `npm install -g @devcontainers/cli`. The `ws` CLI shells out to `devcontainer up`.
 
-**`ws create` fails with `Workspace 'X' already exists (state: defined)`:**
-You have a stale registry entry from a prior failed run. Destroy it: `ws destroy X --force`.
+**`drydock create` fails with `Workspace 'X' already exists (state: defined)`:**
+You have a stale registry entry from a prior failed run. Destroy it: `drydock destroy X --force`.
 
 **`devcontainer up` succeeds but Tailscale never joins:**
 Check that `TAILSCALE_AUTHKEY` is set in your Harbor environment or in `<project>/.env.devcontainer`. The drydock sources these at start.
@@ -253,7 +253,7 @@ Check that `TAILSCALE_AUTHKEY` is set in your Harbor environment or in `<project
 **The drydock's firewall is blocking something legitimate:**
 Add the domain to `firewall_extra_domains` in the project YAML, destroy, and recreate. The firewall is rebuilt from scratch at container start.
 
-**Python says `ws not found`:**
+**Python says `drydock not found`:**
 If installed via `pipx`, check `pipx list`. If using a venv, ensure `.venv/bin/` is on your PATH.
 
 **Tests aren't passing:**
@@ -268,5 +268,5 @@ Reinstall: `pip install -e ".[dev]" --force-reinstall`. The editable install cac
 - [design/in-desk-rpc.md](design/in-desk-rpc.md) — how workers reach the daemon
 - [design/persistence.md](design/persistence.md) — state ownership, reboot recovery, audit event schema
 - [operations/harbor-bootstrap.md](operations/harbor-bootstrap.md) — standing up a fresh Linux Harbor
-- [operations/systemd-units.md](operations/systemd-units.md) — `drydock-wsd` + `drydock-desks` service lifecycle
+- [operations/systemd-units.md](operations/systemd-units.md) — `drydock-daemon` + `drydock-desks` service lifecycle
 - [operations/secrets.md](operations/secrets.md) — operator's guide to secret files and refresh flows

@@ -1,4 +1,4 @@
-"""Bearer-token helpers for `wsd` per `docs/v2-design-protocol.md` §5."""
+"""Bearer-token helpers for `drydock daemon` per `docs/v2-design-protocol.md` §5."""
 
 from __future__ import annotations
 
@@ -26,27 +26,27 @@ def hash_token(plaintext: str) -> str:
 
 
 def issue_token_for_desk(
-    desk_id: str,
+    drydock_id: str,
     secrets_root: Path = DEFAULT_SECRETS_ROOT,
     registry: Registry | None = None,
 ) -> str:
     if registry is None:
         raise ValueError("registry is required")
 
-    token_info = registry.get_token_info(desk_id)
-    token_path = Path(secrets_root) / desk_id / TOKEN_FILENAME
+    token_info = registry.get_token_info(drydock_id)
+    token_path = Path(secrets_root) / drydock_id / TOKEN_FILENAME
     if token_info is not None:
         try:
             return token_path.read_text(encoding="utf-8").strip()
         except FileNotFoundError as exc:
-            from drydock.wsd.server import _RpcError
+            from drydock.daemon.server import _RpcError
 
             raise _RpcError(code=-32603, message="token_exists_no_plaintext") from exc
 
     plaintext = generate_token()
     _write_secret_atomic(token_path, plaintext)
     registry.insert_token(
-        desk_id=desk_id,
+        drydock_id=drydock_id,
         token_sha256=hash_token(plaintext),
         issued_at=datetime.now(timezone.utc),
     )

@@ -6,7 +6,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from drydock.cli.tailnet import tailnet
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 from drydock.output.formatter import Output
 
 
@@ -22,7 +22,7 @@ def _invoke(args, registry):
 
 class TestPruneDryRun:
     # Contract: given devices on the tailnet that don't match any live
-    # workspace, dry-run lists them as candidates without calling delete.
+    # drydock, dry-run lists them as candidates without calling delete.
     # This is the core of the prune UX — the operator must see what WOULD
     # happen before --apply.
     def test_lists_orphans_no_live_desks(self, registry):
@@ -51,13 +51,13 @@ class TestPruneDryRun:
         assert "MyLaptop" not in candidate_hostnames
         mock_tn.delete_tailnet_device.assert_not_called()
 
-    # Contract: a device whose hostname matches a live workspace is NOT
+    # Contract: a device whose hostname matches a live drydock is NOT
     # a candidate. The match considers ws.id, ws.name, and the explicit
     # config tailscale_hostname. Skipping any of these risks deleting a
     # live desk's record.
-    def test_skips_devices_matching_live_workspace(self, registry):
-        registry.create_workspace(
-            Workspace(name="auction-crawl", project="p", repo_path="/r")
+    def test_skips_devices_matching_live_drydock(self, registry):
+        registry.create_drydock(
+            Drydock(name="auction-crawl", project="p", repo_path="/r")
         )
         fake_devices = [
             {"id": "dev-live", "hostname": "auction-crawl", "lastSeen": "now"},

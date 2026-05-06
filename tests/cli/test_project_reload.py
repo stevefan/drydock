@@ -17,7 +17,7 @@ from click.testing import CliRunner
 from drydock.cli.main import cli
 from drydock.core.policy import CapabilityKind
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 
 def _init_repo(path: Path, with_devcontainer: bool = True) -> None:
@@ -46,7 +46,7 @@ def _seed(tmp_path, project_yaml: str) -> None:
 
     registry = Registry(db_path=drydock_home / "registry.db")
     try:
-        ws = Workspace(
+        ws = Drydock(
             name="myws",
             project="myproj",
             repo_path=str(worktree),
@@ -55,11 +55,11 @@ def _seed(tmp_path, project_yaml: str) -> None:
             state="suspended",
             container_id="cid_old",
             config={
-                "overlay_path": str(drydock_home / "overlays" / "ws_myws.devcontainer.json"),
+                "overlay_path": str(drydock_home / "overlays" / "dock_myws.devcontainer.json"),
                 "firewall_extra_domains": ["old.example.com"],
             },
         )
-        registry.create_workspace(ws)
+        registry.create_drydock(ws)
     finally:
         registry.close()
 
@@ -80,7 +80,7 @@ def test_project_reload_updates_firewall_from_yaml(tmp_path, monkeypatch):
     assert data["registry_updated"] is True
 
     registry = Registry(db_path=tmp_path / ".drydock" / "registry.db")
-    cfg = registry.get_workspace("myws").config
+    cfg = registry.get_drydock("myws").config
     assert cfg["firewall_extra_domains"] == ["new.example.com", "also-new.example.com"]
     registry.close()
 
@@ -104,7 +104,7 @@ def test_project_reload_updates_v2_policy_columns(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
 
     registry = Registry(db_path=tmp_path / ".drydock" / "registry.db")
-    policy = registry.load_desk_policy("ws_myws")
+    policy = registry.load_desk_policy("dock_myws")
     assert policy is not None
     assert set(json.loads(policy["capabilities"])) == {
         "request_secret_leases", "request_storage_leases",
@@ -193,7 +193,7 @@ def test_overlay_regenerate_writes_file(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     _seed(tmp_path, "repo_path: /srv/code/myproj\n")
 
-    overlay_path = tmp_path / ".drydock" / "overlays" / "ws_myws.devcontainer.json"
+    overlay_path = tmp_path / ".drydock" / "overlays" / "dock_myws.devcontainer.json"
     assert not overlay_path.exists()
 
     runner = CliRunner()

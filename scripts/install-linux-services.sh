@@ -10,7 +10,19 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-install -m 0644 "${REPO_ROOT}/base/drydock-wsd.service"   /etc/systemd/system/drydock-wsd.service
+# Old-name unit cleanup (from the V1 → drydock vocab rename).
+# The legacy unit was named with the historical daemon-binary suffix.
+# DO NOT run this block through any vocab-sweep tooling — the literal
+# 'drydock-' + suffix pair is the on-disk filename we are cleaning up.
+LEGACY_SUFFIX="wsd"
+LEGACY_UNIT="drydock-${LEGACY_SUFFIX}.service"
+if [ -f "/etc/systemd/system/${LEGACY_UNIT}" ]; then
+    systemctl stop "${LEGACY_UNIT}" 2>/dev/null || true
+    systemctl disable "${LEGACY_UNIT}" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${LEGACY_UNIT}"
+fi
+
+install -m 0644 "${REPO_ROOT}/base/drydock.service"       /etc/systemd/system/drydock.service
 install -m 0644 "${REPO_ROOT}/base/drydock-desks.service" /etc/systemd/system/drydock-desks.service
 install -m 0755 "${REPO_ROOT}/scripts/drydock-resume-desks" /usr/local/bin/drydock-resume-desks
 install -m 0755 "${REPO_ROOT}/scripts/drydock-stop-desks"   /usr/local/bin/drydock-stop-desks
@@ -25,24 +37,24 @@ install -m 0755 "${REPO_ROOT}/scripts/drydock-rpc"          /usr/local/bin/drydo
 mkdir -p /root/.drydock/logs
 
 systemctl daemon-reload
-systemctl enable drydock-wsd.service drydock-desks.service
+systemctl enable drydock.service drydock-desks.service
 
 cat <<EOF
 drydock systemd units installed.
 
-  drydock-wsd.service    — long-running daemon
+  drydock.service        — long-running daemon
   drydock-desks.service  — one-shot resume-on-boot
 
 Enabled for boot. To start now without a reboot:
-  systemctl start drydock-wsd.service
+  systemctl start drydock.service
   systemctl start drydock-desks.service
 
 Status:
-  systemctl status drydock-wsd.service
+  systemctl status drydock.service
   systemctl status drydock-desks.service
 
 Logs:
-  journalctl -u drydock-wsd.service -n 50
-  tail -f /root/.drydock/logs/wsd-systemd.log
+  journalctl -u drydock.service -n 50
+  tail -f /root/.drydock/logs/daemon-systemd.log
   tail -f /root/.drydock/logs/desks-resume.log
 EOF

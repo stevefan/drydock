@@ -7,7 +7,7 @@ import pytest
 
 from drydock.core import WsError
 from drydock.core.checkout import create_checkout, remove_checkout
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 
 def _git(repo: Path, *args: str):
@@ -46,7 +46,7 @@ def repo_with_origin(tmp_path):
 
 @pytest.fixture
 def ws(repo):
-    return Workspace(
+    return Drydock(
         name="my-feature",
         project="app",
         repo_path=str(repo),
@@ -96,7 +96,7 @@ class TestCreateCheckout:
         assert result.stdout.strip() == ws.branch
 
     def test_origin_url_rewritten(self, repo_with_origin, tmp_path):
-        ws = Workspace(
+        ws = Drydock(
             name="feat",
             project="app",
             repo_path=str(repo_with_origin),
@@ -124,7 +124,7 @@ class TestCreateCheckout:
         assert str(ws.repo_path) in result.stdout.strip()
 
     def test_repo_missing_raises(self, tmp_path):
-        ws = Workspace(
+        ws = Drydock(
             name="bad", project="x",
             repo_path=str(tmp_path / "nonexistent"),
             branch="ws/bad",
@@ -133,7 +133,7 @@ class TestCreateCheckout:
             create_checkout(ws, base_dir=tmp_path / "co")
 
     def test_repo_missing_error_has_fix(self, tmp_path):
-        ws = Workspace(
+        ws = Drydock(
             name="bad", project="x",
             repo_path=str(tmp_path / "nonexistent"),
             branch="ws/bad",
@@ -151,7 +151,7 @@ class TestCreateCheckout:
             create_checkout(ws, base_dir=base)
 
     def test_invalid_base_ref_raises(self, repo, tmp_path):
-        ws = Workspace(
+        ws = Drydock(
             name="bad-ref", project="app",
             repo_path=str(repo),
             branch="ws/bad-ref",

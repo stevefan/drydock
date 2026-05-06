@@ -1,6 +1,6 @@
 """_validated_spec must round-trip workspace_subdir through the RPC.
 
-Regression: without this, subdir-desk creates via wsd routed through
+Regression: without this, subdir-desk creates via daemon routed through
 the daemon landed in the repo root, merged the wrong base
 devcontainer.json, and silently lost postCreateCommand. This caused
 auction-crawl's pip-install to not run on every container rebuild,
@@ -9,7 +9,7 @@ so the project's binary was missing until somebody noticed.
 
 from __future__ import annotations
 
-from drydock.wsd.handlers import _validated_spec
+from drydock.daemon.handlers import _validated_spec
 
 
 def _minimal_params(**overrides):

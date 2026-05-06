@@ -2,7 +2,7 @@
 # Resume drydock desks that need resuming.
 #
 # Called by drydock-desks.service at boot (and manually via
-# `systemctl start drydock-desks` after wsd downtime).
+# `systemctl start drydock-desks` after daemon downtime).
 #
 # Two classes of desks get resumed:
 #
@@ -14,12 +14,12 @@
 #      skipped our ExecStop. Registry is stale; the container was
 #      killed by docker's SIGTERM cascade but we never wrote
 #      state=suspended. We detect this by cross-checking docker ps
-#      and flip the desk to suspended via `ws stop` (makes the state
+#      and flip the desk to suspended via `drydock stop` (makes the state
 #      transition authoritative) before resuming.
 #
 # Contract: best-effort per desk. A single desk's resume failure
 # does NOT abort the loop — the remaining desks still get their
-# chance. Failures are logged; `ws inspect <name>` gives the
+# chance. Failures are logged; `drydock inspect <name>` gives the
 # human-readable state afterward.
 set -u
 
@@ -28,26 +28,26 @@ export PATH
 
 echo "drydock-resume-desks: $(date -Iseconds) starting"
 
-# Give wsd up to 60s to become responsive (systemd After= is not
+# Give daemon up to 60s to become responsive (systemd After= is not
 # a readiness guarantee for a simple-type service).
 for i in $(seq 1 30); do
-    if ws daemon status >/dev/null 2>&1; then
-        echo "drydock-resume-desks: wsd ready after ${i} attempts"
+    if drydock daemon status >/dev/null 2>&1; then
+        echo "drydock-resume-desks: daemon ready after ${i} attempts"
         break
     fi
     if [ "$i" = "30" ]; then
-        echo "drydock-resume-desks: wsd not responsive after 60s; aborting"
+        echo "drydock-resume-desks: daemon not responsive after 60s; aborting"
         exit 1
     fi
     sleep 2
 done
 
-ws list 2>/dev/null | python3 -c '
+drydock list 2>/dev/null | python3 -c '
 import json, subprocess, sys
 try:
     rows = json.load(sys.stdin)
 except json.JSONDecodeError as e:
-    print(f"drydock-resume-desks: cannot parse ws list output: {e}", flush=True)
+    print(f"drydock-resume-desks: cannot parse drydock list output: {e}", flush=True)
     sys.exit(1)
 
 def container_alive(container_id):
@@ -72,7 +72,7 @@ for r in rows:
     elif state == "running" and not container_alive(cid):
         # Ungraceful shutdown: registry says running, container is gone.
         # Mark suspended first (authoritative state transition), then
-        # resume. Use ws stop — it handles the stale-container case.
+        # resume. Use drydock stop — it handles the stale-container case.
         print(f"drydock-resume-desks: {name} registry=running but container gone; marking suspended", flush=True)
         subprocess.run(["ws", "stop", name], capture_output=True, text=True)
         to_resume.append((name, "ungraceful"))

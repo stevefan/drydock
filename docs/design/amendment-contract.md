@@ -21,7 +21,7 @@ amendment:
   id: am_<uuid>
   proposed_by:
     type: principal | dockworker
-    identity: <desk_id or principal_id>
+    identity: <drydock_id or principal_id>
     timestamp: <iso8601>
   scope:
     yard: <yard_name or null>
@@ -99,7 +99,7 @@ Latency: minutes-to-hours (principal-paced). LLM in escalation path. Human in ap
 
 ### Class 1 — Principal direct
 
-1. Principal edits YAML (or runs `ws project edit`, or replies "promote evil.com to standing for auction-crawl" in Telegram)
+1. Principal edits YAML (or runs `drydock project edit`, or replies "promote evil.com to standing for auction-crawl" in Telegram)
 2. Authority creates amendment record with `proposed_by.type: principal`, `status: approved` immediately
 3. Applies. Audit logged.
 
@@ -149,18 +149,18 @@ CREATE INDEX idx_amendments_drydock ON amendments (drydock_id, proposed_at DESC)
 
 | Command | Purpose |
 |---|---|
-| `ws amendment list [--status pending] [--dock <name>]` | List amendments |
-| `ws amendment show <id>` | Show full amendment record |
-| `ws amendment approve <id> [--note <text>]` | Principal approves (Class 1 explicit) |
-| `ws amendment deny <id> --note <text>` | Principal denies |
-| `ws amendment apply-pending [--auto-only]` | Force-process pending amendments (the auto-gate) |
-| `ws amendment expire <id>` | Mark a pending amendment expired |
+| `drydock amendment list [--status pending] [--dock <name>]` | List amendments |
+| `drydock amendment show <id>` | Show full amendment record |
+| `drydock amendment approve <id> [--note <text>]` | Principal approves (Class 1 explicit) |
+| `drydock amendment deny <id> --note <text>` | Principal denies |
+| `drydock amendment apply-pending [--auto-only]` | Force-process pending amendments (the auto-gate) |
+| `drydock amendment expire <id>` | Mark a pending amendment expired |
 
 Telegram has direct surface for principal approve/deny without CLI; CLI is for review/inspection.
 
 ## Phasing
 
-**Phase A0 — schema + envelope:** `amendments` table, the envelope, basic CRUD. NO auto-approval logic yet — every amendment goes to `pending` and requires manual `ws amendment approve`. Proves the schema and audit shape.
+**Phase A0 — schema + envelope:** `amendments` table, the envelope, basic CRUD. NO auto-approval logic yet — every amendment goes to `pending` and requires manual `drydock amendment approve`. Proves the schema and audit shape.
 
 **Phase A1 — auto-approval for existing kinds:** wire `network_reach`, `secret_grant`, `storage_grant` to use the amendment envelope; the existing capability-handler validation becomes the auto-gate. Successful validation → `status: auto_approved`. Failures → `status: escalated`.
 
@@ -168,9 +168,12 @@ Telegram has direct surface for principal approve/deny without CLI; CLI is for r
 
 **Phase A3 — novel amendment kinds:** workload_register (with bounded auto-lift), resource_lift_persistent (escalate-only), narrowness_widen (escalate-only), fleet_change (escalate-only).
 
-## Open questions
+## Resolved decisions and open questions
 
-1. **Amendment expiration semantics.** Class-2 auto-approved amendments — when do they expire? For NETWORK_REACH today the answer is "container restart." For storage leases it's "TTL on the STS credential." Should there be a generic amendment expiry that drives lease lifecycle, or per-kind? Lean per-kind for V3; generic later if patterns converge.
-2. **Where do reasons get stored vs displayed?** The `reason` field is principal-readable but does it inform anything else? Maybe the Auditor uses prior reasons to calibrate "is this novel-domain request consistent with what this Dockworker has done before?" — possible Phase A2+.
-3. **Multi-Dockworker amendment proposals?** If a Yard has shared concerns and multiple Dockworkers in the Yard might propose related amendments — do they coordinate? Probably not for V3; each amendment is one-Dockworker-one-proposal.
-4. **Amendments on principal's own behalf.** When the principal directly edits YAML, does the daemon auto-create amendments to record what changed? Probably yes — even principal edits should be auditable as amendments. Otherwise the audit log has gaps.
+**Resolved:**
+- **Amendment expiration.** Per-kind for V3 (NETWORK_REACH expires on container restart; storage leases on STS TTL). Generic expiry later only if patterns converge.
+- **Multi-Dockworker proposals.** Not for V3 — each amendment is one-Dockworker-one-proposal.
+- **Principal-edit amendments.** Yes — even principal edits get recorded as amendments, otherwise the audit log has gaps.
+
+**Still open:**
+1. **Where do reasons get stored vs displayed?** The `reason` field is principal-readable but does it inform anything else? Maybe the Auditor uses prior reasons to calibrate "is this novel-domain request consistent with what this Dockworker has done before?" — possible Phase A2+.

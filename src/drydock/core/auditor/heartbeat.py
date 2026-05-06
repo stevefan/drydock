@@ -5,14 +5,14 @@ switch (separate, deterministic, Authority-side) reads the file's mtime to
 decide whether the Auditor is alive.
 
 Why a file rather than a registry table:
-- Zero coupling to wsd/SQLite. Deadman runs as a small standalone script
+- Zero coupling to daemon/SQLite. Deadman runs as a small standalone script
   (cron / systemd-timer), needs no daemon dependency.
 - Atomic mtime updates from `touch` or `Path.touch()` — no SQL transactions.
 - Trivially observable: `stat` the file and you have the answer.
-- Survives wsd restarts / SQLite migrations without coupling.
+- Survives daemon restarts / SQLite migrations without coupling.
 
 Why this matters: the deadman is the LAST line of defense for "is the LLM
-agent watching the fleet still alive." It has to work even when wsd is
+agent watching the fleet still alive." It has to work even when the daemon is
 in a bad state. File-based heartbeat keeps that separation honest.
 
 Design constraint (per port-auditor.md): the heartbeat-WRITER is the

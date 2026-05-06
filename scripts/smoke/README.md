@@ -26,7 +26,7 @@ results and fails CI-style (exit 1) if any scenario fails.
 
 - SSH access to the Harbor as root (`~/.ssh/config` alias or the
   `HARBOR_HOST` env var).
-- The Harbor already has `ws`, `wsd`, and any capability-backend
+- The Harbor already has `ws`, `drydock daemon`, and any capability-backend
   credentials wired up (drydock-runner AWS profile etc.).
 
 ## Why a separate harness

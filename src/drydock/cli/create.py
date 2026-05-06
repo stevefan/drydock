@@ -1,4 +1,4 @@
-"""ws create — provision a new workspace."""
+"""ws create — provision a new drydock."""
 
 import logging
 import os
@@ -6,15 +6,15 @@ from pathlib import Path
 
 import click
 
-from drydock.cli._wsd_client import DaemonRpcError, DaemonUnavailable, call_daemon
+from drydock.cli._daemon_client import DaemonRpcError, DaemonUnavailable, call_daemon
 from drydock.core import WsError
 from drydock.core.audit import log_event
 from drydock.core.checkout import create_checkout
 from drydock.core.devcontainer import DevcontainerCLI
 from drydock.core.overlay import OverlayConfig, write_overlay
 from drydock.core.project_config import ProjectConfig, load_project_config
-from drydock.core.trust import _read_workspace_folder_from_overlay, seed_workspace_trust
-from drydock.core.workspace import Workspace
+from drydock.core.trust import _read_workspace_folder_from_overlay, seed_drydock_trust
+from drydock.core.runtime import Drydock
 
 logger = logging.getLogger(__name__)
 DEFAULT_DEVCONTAINER_SUBPATH = ".devcontainer"
@@ -94,13 +94,13 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
 @click.option("--repo-path", default=None, help="Path to project repo")
 @click.option("--image", default=None, help="Container image override")
 @click.option("--devcontainer-subpath", default=None, help="Relative path to the devcontainer config directory")
-@click.option("--owner", default=None, help="Workspace owner (user profile name)")
+@click.option("--owner", default=None, help="Drydock owner (user profile name)")
 @click.option("--force", is_flag=True, help="Destroy existing container and rebuild fresh")
 @click.pass_context
 def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_subpath, owner, force):
-    """Create a new workspace.
+    """Create a new drydock.
 
-    PROJECT is the project name. NAME is an optional workspace name
+    PROJECT is the project name. NAME is an optional drydock name
     (defaults to PROJECT).
     """
     out = ctx.obj["output"]
@@ -148,14 +148,14 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
     _validate_devcontainer_subpath(devcontainer_subpath)
 
     if dry_run:
-        existing = registry.get_workspace(name)
+        existing = registry.get_drydock(name)
 
         if existing and existing.state == "running" and not force:
             out.error(
                 WsError(
-                    f"Workspace '{name}' is already running",
+                    f"Drydock '{name}' is already running",
                     fix=f"ws create {name} --force",
-                    code="workspace_already_running",
+                    code="drydock_already_running",
                 )
             )
             return
@@ -163,9 +163,9 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         if existing and existing.state == "error" and not force:
             out.error(
                 WsError(
-                    f"Workspace '{name}' is in state 'error'",
+                    f"Drydock '{name}' is in state 'error'",
                     fix=f"Rebuild from clean state: ws create {project} {name} --force",
-                    code="workspace_in_error_state",
+                    code="drydock_in_error_state",
                 )
             )
             return
@@ -173,9 +173,9 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         if existing and existing.state == "provisioning":
             out.error(
                 WsError(
-                    f"Workspace '{name}' is currently provisioning",
+                    f"Drydock '{name}' is currently provisioning",
                     fix=f"Wait for the in-flight operation, or investigate: ws inspect {name}",
-                    code="workspace_provisioning",
+                    code="drydock_provisioning",
                 )
             )
             return
@@ -183,12 +183,12 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         if existing and existing.state in ("suspended", "defined"):
             ws = existing
             out.success(
-                {"dry_run": True, "action": "resume", "workspace": ws.to_dict()},
-                human_lines=[f"Would resume workspace '{name}'"],
+                {"dry_run": True, "action": "resume", "drydock": ws.to_dict()},
+                human_lines=[f"Would resume drydock '{name}'"],
             )
             return
 
-        ws = Workspace(
+        ws = Drydock(
             name=name,
             project=project,
             repo_path=repo_path,
@@ -199,9 +199,9 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
             owner=owner or "",
         )
         out.success(
-            {"dry_run": True, "workspace": ws.to_dict()},
+            {"dry_run": True, "drydock": ws.to_dict()},
             human_lines=[
-                f"Would create workspace '{name}':",
+                f"Would create drydock '{name}':",
                 f"  project:  {project}",
                 f"  branch:   {branch}",
                 f"  base_ref: {base_ref}",
@@ -275,14 +275,14 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         out.success(daemon_result, human_lines=_daemon_result_human_lines(daemon_result))
         return
 
-    existing = registry.get_workspace(name)
+    existing = registry.get_drydock(name)
 
     if existing and existing.state == "running" and not force:
         out.error(
             WsError(
-                f"Workspace '{name}' is already running",
+                f"Drydock '{name}' is already running",
                 fix=f"ws create {name} --force",
-                code="workspace_already_running",
+                code="drydock_already_running",
             )
         )
         return
@@ -290,9 +290,9 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
     if existing and existing.state == "error" and not force:
         out.error(
             WsError(
-                f"Workspace '{name}' is in state 'error'",
+                f"Drydock '{name}' is in state 'error'",
                 fix=f"Rebuild from clean state: ws create {project} {name} --force",
-                code="workspace_in_error_state",
+                code="drydock_in_error_state",
             )
         )
         return
@@ -300,9 +300,9 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
     if existing and existing.state == "provisioning":
         out.error(
             WsError(
-                f"Workspace '{name}' is currently provisioning",
+                f"Drydock '{name}' is currently provisioning",
                 fix=f"Wait for the in-flight operation, or investigate: ws inspect {name}",
-                code="workspace_provisioning",
+                code="drydock_provisioning",
             )
         )
         return
@@ -322,21 +322,21 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
                     registry.update_state(name, "error")
                     raise
             registry.update_state(name, "suspended")
-            log_event("workspace.force_recreate", existing.id)
-            existing = registry.get_workspace(name)
+            log_event("drydock.force_recreate", existing.id)
+            existing = registry.get_drydock(name)
 
     if existing and existing.state in ("suspended", "defined"):
         ws = existing
     elif existing:
         out.error(
             WsError(
-                f"Workspace '{name}' is in unexpected state '{existing.state}'",
+                f"Drydock '{name}' is in unexpected state '{existing.state}'",
                 fix=f"Investigate: ws inspect {name}",
             )
         )
         return
     else:
-        ws = Workspace(
+        ws = Drydock(
             name=name,
             project=project,
             repo_path=repo_path,
@@ -348,15 +348,15 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         )
 
         try:
-            ws = registry.create_workspace(ws)
-            log_event("workspace.created", ws.id)
+            ws = registry.create_drydock(ws)
+            log_event("drydock.created", ws.id)
         except WsError as e:
             out.error(e)
 
         try:
             checkout_dir = Path.home() / ".drydock" / "worktrees"
             checkout_path = create_checkout(ws, base_dir=checkout_dir)
-            ws = registry.update_workspace(ws.name, worktree_path=str(checkout_path))
+            ws = registry.update_drydock(ws.name, worktree_path=str(checkout_path))
         except WsError as e:
             out.error(e)
 
@@ -390,7 +390,7 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         mode=0o700, parents=True, exist_ok=True,
     )
     overlay_path = write_overlay(ws, overlay_dir, overlay_config, base_devcontainer_path=devcontainer_json)
-    ws = registry.update_workspace(
+    ws = registry.update_drydock(
         ws.name, config={"overlay_path": str(overlay_path)}
     )
 
@@ -422,22 +422,22 @@ def create(ctx, project, name, base_ref, branch, repo_path, image, devcontainer_
         if lifecycle_warning:
             merged_config = {**ws.config, "lifecycle_warning": lifecycle_warning}
             update_kwargs["config"] = merged_config
-        ws = registry.update_workspace(ws.name, **update_kwargs)
-        log_event("workspace.running", ws.id)
+        ws = registry.update_drydock(ws.name, **update_kwargs)
+        log_event("drydock.running", ws.id)
     except WsError:
         registry.update_state(ws.name, "error")
-        log_event("workspace.error", ws.id)
+        log_event("drydock.error", ws.id)
         raise
 
     if container_id and not dry_run:
         in_container_folder = _read_workspace_folder_from_overlay(str(overlay_path))
-        seed_workspace_trust(container_id, in_container_folder)
+        seed_drydock_trust(container_id, in_container_folder)
 
-    human_lines = _workspace_human_lines(ws)
+    human_lines = _drydock_human_lines(ws)
     if lifecycle_warning:
         human_lines.append(f"  WARNING: {lifecycle_warning}")
 
-    out.success(_workspace_output(ws), human_lines=human_lines)
+    out.success(_drydock_output(ws), human_lines=human_lines)
 
 
 def _overlay_from_project(proj_cfg) -> OverlayConfig:
@@ -476,13 +476,13 @@ def _validate_devcontainer_subpath(devcontainer_subpath: str) -> None:
         )
 
 
-def _workspace_output(ws: Workspace) -> dict:
+def _drydock_output(ws: Drydock) -> dict:
     return ws.to_dict()
 
 
-def _workspace_human_lines(ws: Workspace) -> list[str]:
+def _drydock_human_lines(ws: Drydock) -> list[str]:
     return [
-        f"workspace '{ws.name}' created",
+        f"drydock '{ws.name}' created",
         f"  id:           {ws.id}",
         f"  project:      {ws.project}",
         f"  branch:       {ws.branch}",
@@ -493,11 +493,11 @@ def _workspace_human_lines(ws: Workspace) -> list[str]:
 
 def _daemon_result_human_lines(result: dict) -> list[str]:
     """Format a daemon CreateDesk DeskRef for human output. Mirrors
-    _workspace_human_lines so the user sees the same shape regardless of
+    _drydock_human_lines so the user sees the same shape regardless of
     which path produced the result."""
     return [
-        f"workspace '{result.get('name', '?')}' created (via daemon)",
-        f"  id:           {result.get('desk_id', '?')}",
+        f"drydock '{result.get('name', '?')}' created (via daemon)",
+        f"  id:           {result.get('drydock_id', '?')}",
         f"  project:      {result.get('project', '?')}",
         f"  branch:       {result.get('branch', '?')}",
         f"  state:        {result.get('state', '?')}",

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Lightweight daemon health check. Run on a schedule (launchd/cron).
-# Checks wsd.health via the socket; if unresponsive, logs a warning.
+# Checks daemon.health via the socket; if unresponsive, logs a warning.
 # The launchd KeepAlive on the daemon plist handles restarts — this
 # script just surfaces the problem to the log for operators.
 #
@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-SOCKET="${1:-$HOME/.drydock/wsd.sock}"
+SOCKET="${1:-$HOME/.drydock/daemon.sock}"
 LOG="$HOME/.drydock/logs/health-check.log"
 WS="${WS_BIN:-$HOME/.local/bin/ws}"
 

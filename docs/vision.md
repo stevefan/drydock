@@ -8,7 +8,7 @@ A drydock is a durable, bounded work environment — a named place with a policy
 
 Three pieces of vocabulary you'll see throughout these docs; full definitions in [design/vocabulary.md](design/vocabulary.md):
 
-- **Harbor** — the host machine (laptop, home server, cloud VM) running `wsd`. Authority lives here.
+- **Harbor** — the host machine (laptop, home server, cloud VM) running `drydock daemon`. Authority lives here.
 - **DryDock** — a durable, bounded work environment (the runtime unit — typically one per project). Many drydocks per Harbor.
 - **Worker** — the agent bound to a drydock; the thing that actually does work.
 
@@ -22,9 +22,9 @@ Drydock is the **fabric layer**: where drydocks run, how they're governed, how t
 
 These are the properties that make Drydock infrastructure rather than a convenience wrapper.
 
-1. **DryDocks as durable addressable places, not container incarnations.** A drydock has a name, a policy scope, a history, and state that outlives its current container. Rebuild the container (`ws upgrade`, base-image bump) and the worktree, state, and accumulated tooling are intact on the other side. Harbor reboot → drydocks auto-resume via systemd.
+1. **DryDocks as durable addressable places, not container incarnations.** A drydock has a name, a policy scope, a history, and state that outlives its current container. Rebuild the container (`drydock upgrade`, base-image bump) and the worktree, state, and accumulated tooling are intact on the other side. Harbor reboot → drydocks auto-resume via systemd.
 
-2. **A daemon (`wsd`) as the sole control plane on each Harbor.** Every lifecycle operation — create, spawn-child, stop, destroy — goes through the daemon. Every operation is authenticated, policy-checked, and audited. The `ws` CLI is one client; a worker inside a drydock is another; a mobile app could be a third. See [design/in-desk-rpc.md](design/in-desk-rpc.md).
+2. **A daemon (`drydock daemon`) as the sole control plane on each Harbor.** Every lifecycle operation — create, spawn-child, stop, destroy — goes through the daemon. Every operation is authenticated, policy-checked, and audited. The `ws` CLI is one client; a worker inside a drydock is another; a mobile app could be a third. See [design/in-desk-rpc.md](design/in-desk-rpc.md).
 
 3. **A policy graph with enforced narrowness.** Each drydock has declared capabilities, delegatable subsets, firewall allowances, secret entitlements, storage scopes. Children are strictly narrower than parents. A worker cannot exceed the drydock it runs in. Compromise of any single drydock cannot laterally expand authority. See [design/narrowness.md](design/narrowness.md).
 
@@ -40,14 +40,14 @@ These are the properties that make Drydock infrastructure rather than a convenie
 
 Harbor-scoped, daemon-backed (v1.0.0):
 
-- **`wsd` daemon** — 11 RPC methods (lifecycle, introspection, capability broker, audit). Bearer-token auth over a Unix socket bind-mounted into each drydock. Systemd-managed on Linux; launchd on macOS.
-- **Per-drydock devcontainer override.** `ws create` generates a JSON overlay giving each drydock its own Tailscale hostname, firewall allowlist, secrets mount, identity env vars, daemon-socket bind-mount, and embedded `drydock-rpc` client.
+- **`drydock daemon`** — 11 RPC methods (lifecycle, introspection, capability broker, audit). Bearer-token auth over a Unix socket bind-mounted into each drydock. Systemd-managed on Linux; launchd on macOS.
+- **Per-drydock devcontainer override.** `drydock create` generates a JSON overlay giving each drydock its own Tailscale hostname, firewall allowlist, secrets mount, identity env vars, daemon-socket bind-mount, and embedded `drydock-rpc` client.
 - **Git worktree per drydock.** Deterministic location; reused if the branch exists; cleaned up on destroy.
 - **Per-project YAML** at `~/.drydock/projects/{project}.yaml` with V2 capability/entitlement/delegation fields (`capabilities`, `secret_entitlements`, `delegatable_secrets`, `delegatable_storage_scopes`, `delegatable_firewall_domains`).
 - **SQLite registry** at `~/.drydock/registry.db` tracking drydock state, paths, container id, policy columns, leases, tokens, task log.
 - **Full lifecycle**: create/resume/stop/destroy; parent-child cascade; tailnet device-record cleanup on destroy.
 - **Default-deny firewall + Tailscale + Claude Code remote-control**, from the `drydock-base` image.
-- **Resume-on-`ws create`** for suspended drydocks with overlay regeneration (code-level overlay changes land without `--force`).
+- **Resume-on-`drydock create`** for suspended drydocks with overlay regeneration (code-level overlay changes land without `--force`).
 - **Reboot recovery on Linux Harbors** — systemd units + ExecStop hook + boot-sweep recover every drydock through power cycles and daemon restarts.
 - **Cross-drydock secret delegation** — `RequestCapability(type=SECRET, scope={secret_name, source_desk_id})` lets one drydock receive a secret held by another via daemon-mediated copy.
 - **Scoped cloud storage credentials** — `RequestCapability(type=STORAGE_MOUNT, scope={bucket, prefix, mode})` calls `sts:AssumeRole` with an inline session policy; materializes AWS session creds into the drydock's `/run/secrets/`.
@@ -57,20 +57,20 @@ Harbor-scoped, daemon-backed (v1.0.0):
 
 Claude (and agents in general) operate at two levels:
 
-- **Operator** — you, or a Claude on the Harbor, calls `ws create` from the host. Operator has Harbor-admin authority.
-- **Worker** — bound to a drydock, reachable via Tailscale-served remote-control or SSH. Workers ask the daemon for their own siblings (nested spawn), request scoped capabilities, or run as employees — long-lived permissioned processes that refresh credentials, hold fleet-auth state, or provision infrastructure for peer drydocks. See [design/employee-worker.md](design/employee-worker.md).
+- **Operator** — you, or a Claude on the Harbor, calls `drydock create` from the host. Operator has Harbor-admin authority.
+- **Worker** — bound to a drydock, reachable via Tailscale-served remote-control or SSH. Workers ask the daemon for their own siblings (nested spawn), request scoped capabilities, or run as employees — long-lived permissioned processes that refresh credentials, hold archipelago-wide auth state, or provision infrastructure for peer drydocks. See [design/employee-worker.md](design/employee-worker.md).
 
 ## Architecture
 
 ```
 Harbor
-├── wsd daemon           sole control plane, systemd-managed (Linux) or launchd (Mac)
+├── drydock daemon           sole control plane, systemd-managed (Linux) or launchd (Mac)
 ├── policy validator     narrowness enforcement on every spawn + lease request
 ├── registry             parent-child links, leases, tokens, task log
 ├── capability broker    SECRET + STORAGE_MOUNT leases; COMPUTE_QUOTA, NETWORK_REACH reserved
 └── audit log            stable event vocabulary, ~/.drydock/audit.log
          ▲
-         │  JSON-RPC 2.0 over ~/.drydock/run/wsd.sock (bind-mounted into every drydock)
+         │  JSON-RPC 2.0 over ~/.drydock/run/daemon.sock (bind-mounted into every drydock)
          │
     ┌─────────────────────────┐
     │ DryDock                   │

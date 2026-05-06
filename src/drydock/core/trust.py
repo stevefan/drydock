@@ -1,7 +1,7 @@
-"""Best-effort Claude workspace-trust seeding for newly-created desks.
+"""Best-effort Claude drydock-trust seeding for newly-created desks.
 
 Without this, every desk recreate forces an interactive `claude` first run
-to mark the workspace as trusted. The trust state lives at
+to mark the drydock as trusted. The trust state lives at
 /home/node/.claude/.claude.json (a shared Docker volume across desks).
 We seed it via docker exec right after the container is up.
 
@@ -24,14 +24,14 @@ PROBE_TIMEOUT = 10
 
 def _read_workspace_folder_from_overlay(overlay_path: str | Path | None) -> str:
     if not overlay_path:
-        return "/workspace"
+        return "/drydock"
     try:
         with open(overlay_path) as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return "/workspace"
-    folder = data.get("workspaceFolder")
-    return folder if isinstance(folder, str) and folder else "/workspace"
+        return "/drydock"
+    folder = data.get("drydockFolder")
+    return folder if isinstance(folder, str) and folder else "/drydock"
 
 
 def _docker_exec(container_id: str, *args: str, input_text: str | None = None,
@@ -70,13 +70,13 @@ def _already_trusted(data: dict, workspace_folder: str) -> bool:
             if isinstance(entry, str) and entry == workspace_folder:
                 return True
             if isinstance(entry, dict):
-                for key in ("path", "workspaceFolder"):
+                for key in ("path", "drydockFolder"):
                     if entry.get(key) == workspace_folder:
                         return True
     return False
 
 
-def seed_workspace_trust(container_id: str, workspace_folder: str) -> bool:
+def seed_drydock_trust(container_id: str, workspace_folder: str) -> bool:
     """Idempotently mark workspace_folder as trusted in the Dock's claude config.
 
     Returns True on success or already-trusted; False on any failure (logged).

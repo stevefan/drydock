@@ -21,7 +21,7 @@ Harbor (.aws/credentials)                   drydock (/run/secrets/)
     │                                            │
     │  drydock-runner (long-lived IAM user)      │
     ▼                                            │
- [ wsd.toml: storage.backend = "sts",            │
+ [ daemon.toml: storage.backend = "sts",            │
             role_arn,                            │
             source_profile = drydock-runner ]    │
     │                                            │
@@ -32,7 +32,7 @@ Harbor (.aws/credentials)                   drydock (/run/secrets/)
    └─ aws sts assume-role --profile drydock-runner
       --role-arn  <drydock-agent>
       --policy    <session-policy JSON>
-      --role-session-name drydock-<desk_id>
+      --role-session-name drydock-<drydock_id>
       --duration-seconds 14400
     │                                            │
     ▼                                            │
@@ -68,7 +68,7 @@ Additive scope fields (new modes, new action sets) go in without RPC changes.
 `StorageBackend` Protocol (`src/drydock/core/storage.py`):
 
 ```python
-def mint(*, desk_id, bucket, prefix, mode) -> StorageCredential
+def mint(*, drydock_id, bucket, prefix, mode) -> StorageCredential
 ```
 
 Two concrete implementations ship:
@@ -78,7 +78,7 @@ Two concrete implementations ship:
 | `StsAssumeRoleBackend` | Real AWS | `aws` CLI on Harbor, `drydock-runner` profile, `drydock-agent` role ARN |
 | `StubStorageBackend` | Tests, dev Harbors without AWS wired up | nothing |
 
-Configured via `~/.drydock/wsd.toml`:
+Configured via `~/.drydock/daemon.toml`:
 
 ```toml
 [storage]
@@ -178,7 +178,7 @@ User-declared values on those fields are preserved and deduped.
 
 ### Lifecycle
 
-`wsd` runs `setup-storage-mounts.sh` via `docker exec -u node` after `devcontainer up` returns (both on `CreateDesk` and `ResumeDesk`). This works regardless of what the project's `devcontainer.json` does at `postStartCommand` — drydock-base's script is daemon-triggered. Mount survives the life of the container; a stop → create recreates it.
+`drydock daemon` runs `setup-storage-mounts.sh` via `docker exec -u node` after `devcontainer up` returns (both on `CreateDesk` and `ResumeDesk`). This works regardless of what the project's `devcontainer.json` does at `postStartCommand` — drydock-base's script is daemon-triggered. Mount survives the life of the container; a stop → create recreates it.
 
 The script parses `STORAGE_MOUNTS_JSON`, requests one `STORAGE_MOUNT` lease per entry, and `s3fs bucket:/prefix target …` with creds from `/run/secrets/aws_*`. Errors are logged to `/tmp/storage-mounts.log` but don't fail the drydock — a misdeclared mount leaves the rest running.
 

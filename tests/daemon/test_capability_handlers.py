@@ -1,7 +1,7 @@
 """Tests for RequestCapability + ReleaseCapability handlers (Slice 3c).
 
 These pin the contracts:
-- Subject derivation from caller_desk_id (no spoofing via params).
+- Subject derivation from caller_drydock_id (no spoofing via params).
 - Capability gate (REQUEST_SECRET_LEASES required).
 - Entitlement narrowness (delegatable_secrets membership).
 - Backend dispatch + error taxonomy mapping.
@@ -19,12 +19,12 @@ import pytest
 from drydock.core.capability import CapabilityLease, CapabilityType
 from drydock.core.policy import CapabilityKind
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
-from drydock.wsd.capability_handlers import (
+from drydock.core.runtime import Drydock
+from drydock.daemon.capability_handlers import (
     release_capability,
     request_capability,
 )
-from drydock.wsd.server import _RpcError
+from drydock.daemon.server import _RpcError
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def env(tmp_path):
     secrets_root.mkdir()
 
     registry = Registry(db_path=db)
-    ws = Workspace(
+    ws = Drydock(
         name="alpha",
         project="p",
         repo_path="/tmp/repo",
@@ -43,8 +43,8 @@ def env(tmp_path):
         state="running",
         container_id="cid_alpha",
     )
-    registry.create_workspace(ws)
-    desk_id = ws.id
+    registry.create_drydock(ws)
+    drydock_id = ws.id
 
     # Grant entitlements + capability the same way SpawnChild would.
     registry.update_desk_delegations(
@@ -55,7 +55,7 @@ def env(tmp_path):
     )
 
     # Place a secret on disk for FileBackend to find.
-    desk_secrets = secrets_root / desk_id
+    desk_secrets = secrets_root / drydock_id
     desk_secrets.mkdir()
     (desk_secrets / "anthropic_api_key").write_bytes(b"sk-ant-test\n")
 
@@ -64,7 +64,7 @@ def env(tmp_path):
         "db": db,
         "secrets_root": secrets_root,
         "registry": registry,
-        "desk_id": desk_id,
+        "drydock_id": drydock_id,
     }
     registry.close()
 
@@ -87,46 +87,46 @@ class TestRequestCapability:
         # used to live in this test; shipped as a real type in 5c7f45e.)
         params = {"type": "COMPUTE_QUOTA", "scope": {}}
         with pytest.raises(_RpcError) as exc:
-            request_capability(params, "rid", env["desk_id"],
+            request_capability(params, "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "capability_unsupported"
 
     def test_rejects_invalid_type(self, env):
         with pytest.raises(_RpcError) as exc:
-            request_capability(_params(type="GARBAGE"), "rid", env["desk_id"],
+            request_capability(_params(type="GARBAGE"), "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "invalid_params"
 
     def test_rejects_invalid_secret_name(self, env):
         with pytest.raises(_RpcError) as exc:
-            request_capability(_params(secret="bad name with spaces"), "rid", env["desk_id"],
+            request_capability(_params(secret="bad name with spaces"), "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "invalid_params"
 
     def test_rejects_when_capability_not_granted(self, env):
         env["registry"].update_desk_delegations("alpha", capabilities=[])
         with pytest.raises(_RpcError) as exc:
-            request_capability(_params(), "rid", env["desk_id"],
+            request_capability(_params(), "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "capability_not_granted"
 
     def test_rejects_secret_not_in_entitlements(self, env):
         with pytest.raises(_RpcError) as exc:
-            request_capability(_params(secret="not_in_entitlements"), "rid", env["desk_id"],
+            request_capability(_params(secret="not_in_entitlements"), "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "narrowness_violated"
 
     def test_returns_backend_missing_secret_when_file_absent(self, env):
         # tailscale_authkey is in entitlements but not on disk
         with pytest.raises(_RpcError) as exc:
-            request_capability(_params(secret="tailscale_authkey"), "rid", env["desk_id"],
+            request_capability(_params(secret="tailscale_authkey"), "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "backend_missing_secret"
 
     def test_rejects_when_desk_not_running(self, env):
-        env["registry"].update_workspace("alpha", container_id="")
+        env["registry"].update_drydock("alpha", container_id="")
         with pytest.raises(_RpcError) as exc:
-            request_capability(_params(), "rid", env["desk_id"],
+            request_capability(_params(), "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "desk_not_running"
 
@@ -135,12 +135,12 @@ class TestRequestCapability:
         # a read-only bind mount from the host secret dir, so the file is
         # already visible inside the container. The handler's job is to
         # check entitlement + issue the lease (audit record).
-        result = request_capability(_params(), "rid", env["desk_id"],
+        result = request_capability(_params(), "rid", env["drydock_id"],
                                     registry_path=env["db"],
                                     secrets_root=env["secrets_root"])
         assert result["type"] == "SECRET"
         assert result["scope"]["secret_name"] == "anthropic_api_key"
-        assert result["desk_id"] == env["desk_id"]
+        assert result["drydock_id"] == env["drydock_id"]
         assert result["revoked"] is False
         assert result["lease_id"].startswith("ls_")
 
@@ -157,15 +157,15 @@ class TestRequestCapability:
 
 
 class TestReleaseCapability:
-    def _make_lease(self, registry, desk_id, lease_id="ls_x", secret="anthropic_api_key"):
+    def _make_lease(self, registry, drydock_id, lease_id="ls_x", secret="anthropic_api_key"):
         lease = CapabilityLease(
             lease_id=lease_id,
-            desk_id=desk_id,
+            drydock_id=drydock_id,
             type=CapabilityType.SECRET,
             scope={"secret_name": secret},
             issued_at=datetime.now(timezone.utc),
             expiry=None,
-            issuer="wsd",
+            issuer="daemon",
         )
         registry.insert_lease(lease)
         return lease
@@ -178,22 +178,22 @@ class TestReleaseCapability:
 
     def test_missing_lease_id(self, env):
         with pytest.raises(_RpcError) as exc:
-            release_capability({}, "rid", env["desk_id"],
+            release_capability({}, "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "invalid_params"
 
     def test_lease_not_found(self, env):
         with pytest.raises(_RpcError) as exc:
-            release_capability({"lease_id": "ls_unknown"}, "rid", env["desk_id"],
+            release_capability({"lease_id": "ls_unknown"}, "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "lease_not_found"
 
     # Cross-Dock access must return the same code as not-found so we
     # don't leak existence of leases to other desks.
     def test_cross_desk_access_returns_lease_not_found(self, env):
-        self._make_lease(env["registry"], desk_id="ws_other", lease_id="ls_other")
+        self._make_lease(env["registry"], drydock_id="dock_other", lease_id="ls_other")
         with pytest.raises(_RpcError) as exc:
-            release_capability({"lease_id": "ls_other"}, "rid", env["desk_id"],
+            release_capability({"lease_id": "ls_other"}, "rid", env["drydock_id"],
                                registry_path=env["db"], secrets_root=env["secrets_root"])
         assert exc.value.message == "lease_not_found"
         # Lease NOT revoked (caller wasn't authorized)
@@ -203,19 +203,19 @@ class TestReleaseCapability:
         # File-backed: no docker-exec removal on release (bind mount is
         # read-only; lease is an audit/authorization record, not physical
         # access control). The test verifies the lease record is revoked.
-        self._make_lease(env["registry"], env["desk_id"], lease_id="ls_one")
-        result = release_capability({"lease_id": "ls_one"}, "rid", env["desk_id"],
+        self._make_lease(env["registry"], env["drydock_id"], lease_id="ls_one")
+        result = release_capability({"lease_id": "ls_one"}, "rid", env["drydock_id"],
                                     registry_path=env["db"],
                                     secrets_root=env["secrets_root"])
         assert result == {"lease_id": "ls_one", "revoked": True}
         assert env["registry"].get_lease("ls_one").revoked is True
 
     def test_double_release_is_idempotent(self, env):
-        self._make_lease(env["registry"], env["desk_id"], lease_id="ls_dup")
-        first = release_capability({"lease_id": "ls_dup"}, "rid", env["desk_id"],
+        self._make_lease(env["registry"], env["drydock_id"], lease_id="ls_dup")
+        first = release_capability({"lease_id": "ls_dup"}, "rid", env["drydock_id"],
                                    registry_path=env["db"],
                                    secrets_root=env["secrets_root"])
-        second = release_capability({"lease_id": "ls_dup"}, "rid", env["desk_id"],
+        second = release_capability({"lease_id": "ls_dup"}, "rid", env["drydock_id"],
                                     registry_path=env["db"],
                                     secrets_root=env["secrets_root"])
         assert first["revoked"] is True
@@ -225,7 +225,7 @@ class TestReleaseCapability:
 # --- V2.1: Cross-Dock secret delegation tests ---
 
 class TestCrossDeskDelegation:
-    """RequestCapability with source_desk_id reads from the source desk's
+    """RequestCapability with source_drydock_id reads from the source desk's
     secret dir and materializes into the caller's host secret dir so the
     caller's bind mount picks it up.
     """
@@ -239,7 +239,7 @@ class TestCrossDeskDelegation:
         registry = Registry(db_path=db)
 
         # Source desk (fleet-auth) — holds the secret
-        source = Workspace(
+        source = Drydock(
             name="fleet-auth",
             project="infra",
             repo_path="/tmp/repo",
@@ -248,11 +248,11 @@ class TestCrossDeskDelegation:
             state="running",
             container_id="cid_fleet",
         )
-        registry.create_workspace(source)
+        registry.create_drydock(source)
         source_id = source.id
 
         # Caller desk (worker) — wants to read the source's secret
-        caller = Workspace(
+        caller = Drydock(
             name="worker",
             project="p",
             repo_path="/tmp/repo",
@@ -261,7 +261,7 @@ class TestCrossDeskDelegation:
             state="running",
             container_id="cid_worker",
         )
-        registry.create_workspace(caller)
+        registry.create_drydock(caller)
         caller_id = caller.id
 
         # Grant caller the entitlement + capability
@@ -289,7 +289,7 @@ class TestCrossDeskDelegation:
         result = request_capability(
             {"type": "SECRET", "scope": {
                 "secret_name": "shared_cred",
-                "source_desk_id": cross_env["source_id"],
+                "source_drydock_id": cross_env["source_id"],
             }},
             "rid-cross",
             cross_env["caller_id"],
@@ -297,7 +297,7 @@ class TestCrossDeskDelegation:
             secrets_root=cross_env["secrets_root"],
         )
         assert result["type"] == "SECRET"
-        assert result["scope"]["source_desk_id"] == cross_env["source_id"]
+        assert result["scope"]["source_drydock_id"] == cross_env["source_id"]
         assert result["scope"]["secret_name"] == "shared_cred"
 
         # Secret materialized in CALLER's host secret dir
@@ -314,7 +314,7 @@ class TestCrossDeskDelegation:
             request_capability(
                 {"type": "SECRET", "scope": {
                     "secret_name": "shared_cred",
-                    "source_desk_id": cross_env["source_id"],
+                    "source_drydock_id": cross_env["source_id"],
                 }},
                 "rid",
                 cross_env["caller_id"],
@@ -328,7 +328,7 @@ class TestCrossDeskDelegation:
             request_capability(
                 {"type": "SECRET", "scope": {
                     "secret_name": "shared_cred",
-                    "source_desk_id": "ws_nonexistent",
+                    "source_drydock_id": "dock_nonexistent",
                 }},
                 "rid",
                 cross_env["caller_id"],
@@ -341,7 +341,7 @@ class TestCrossDeskDelegation:
         result = request_capability(
             {"type": "SECRET", "scope": {
                 "secret_name": "shared_cred",
-                "source_desk_id": cross_env["source_id"],
+                "source_drydock_id": cross_env["source_id"],
             }},
             "rid-rel",
             cross_env["caller_id"],
@@ -370,7 +370,7 @@ class TestCrossDeskDelegation:
         assert source_file.read_bytes() == b"cross-Dock-value\n"
 
     def test_same_desk_source_id_is_noop(self, cross_env):
-        """Passing source_desk_id == caller_desk_id is treated as same-desk."""
+        """Passing source_drydock_id == caller_drydock_id is treated as same-desk."""
         # Place the secret in the caller's own dir
         caller_secrets = cross_env["secrets_root"] / cross_env["caller_id"]
         caller_secrets.mkdir(exist_ok=True)
@@ -379,14 +379,14 @@ class TestCrossDeskDelegation:
         result = request_capability(
             {"type": "SECRET", "scope": {
                 "secret_name": "shared_cred",
-                "source_desk_id": cross_env["caller_id"],
+                "source_drydock_id": cross_env["caller_id"],
             }},
             "rid-self",
             cross_env["caller_id"],
             registry_path=cross_env["db"],
             secrets_root=cross_env["secrets_root"],
         )
-        # No source_desk_id in scope when same-desk? Actually it IS there since
+        # No source_drydock_id in scope when same-desk? Actually it IS there since
         # we passed it. That's fine — scope includes whatever was passed.
         assert result["type"] == "SECRET"
 
@@ -408,7 +408,7 @@ class TestStorageMount:
         secrets_root.mkdir()
 
         registry = Registry(db_path=db)
-        ws = Workspace(
+        ws = Drydock(
             name="storage-worker",
             project="p",
             repo_path="/tmp/repo",
@@ -417,7 +417,7 @@ class TestStorageMount:
             state="running",
             container_id="cid_sw",
         )
-        registry.create_workspace(ws)
+        registry.create_drydock(ws)
 
         registry.update_desk_delegations(
             ws.name,
@@ -432,7 +432,7 @@ class TestStorageMount:
             "db": db,
             "secrets_root": secrets_root,
             "registry": registry,
-            "desk_id": ws.id,
+            "drydock_id": ws.id,
             "backend": backend,
         }
         registry.close()
@@ -444,7 +444,7 @@ class TestStorageMount:
         result = request_capability(
             self._storage_params(),
             "rid-storage-1",
-            storage_env["desk_id"],
+            storage_env["drydock_id"],
             registry_path=storage_env["db"],
             secrets_root=storage_env["secrets_root"],
             storage_backend=storage_env["backend"],
@@ -455,7 +455,7 @@ class TestStorageMount:
         assert result["scope"]["mode"] == "ro"
         assert result["expiry"] is not None  # storage leases always have expiry
 
-        desk_dir = storage_env["secrets_root"] / storage_env["desk_id"]
+        desk_dir = storage_env["secrets_root"] / storage_env["drydock_id"]
         assert (desk_dir / "aws_access_key_id").read_bytes().decode().startswith("STUB-")
         assert (desk_dir / "aws_secret_access_key").exists()
         assert (desk_dir / "aws_session_token").exists()
@@ -466,7 +466,7 @@ class TestStorageMount:
             request_capability(
                 self._storage_params(),
                 "rid",
-                storage_env["desk_id"],
+                storage_env["drydock_id"],
                 registry_path=storage_env["db"],
                 secrets_root=storage_env["secrets_root"],
                 storage_backend=None,
@@ -481,7 +481,7 @@ class TestStorageMount:
             request_capability(
                 self._storage_params(),
                 "rid",
-                storage_env["desk_id"],
+                storage_env["drydock_id"],
                 registry_path=storage_env["db"],
                 secrets_root=storage_env["secrets_root"],
                 storage_backend=storage_env["backend"],
@@ -495,7 +495,7 @@ class TestStorageMount:
             request_capability(
                 self._storage_params(bucket=bucket),
                 "rid",
-                storage_env["desk_id"],
+                storage_env["drydock_id"],
                 registry_path=storage_env["db"],
                 secrets_root=storage_env["secrets_root"],
                 storage_backend=storage_env["backend"],
@@ -507,7 +507,7 @@ class TestStorageMount:
             request_capability(
                 self._storage_params(mode="admin"),
                 "rid",
-                storage_env["desk_id"],
+                storage_env["drydock_id"],
                 registry_path=storage_env["db"],
                 secrets_root=storage_env["secrets_root"],
                 storage_backend=storage_env["backend"],
@@ -522,7 +522,7 @@ class TestStorageMount:
         result = request_capability(
             self._storage_params(bucket="anything", prefix="at-all", mode="ro"),
             "rid-empty",
-            storage_env["desk_id"],
+            storage_env["drydock_id"],
             registry_path=storage_env["db"],
             secrets_root=storage_env["secrets_root"],
             storage_backend=storage_env["backend"],
@@ -537,7 +537,7 @@ class TestStorageMount:
         result = request_capability(
             self._storage_params(bucket="lab-data", prefix="scraped/2026", mode="ro"),
             "rid-ok",
-            storage_env["desk_id"],
+            storage_env["drydock_id"],
             registry_path=storage_env["db"],
             secrets_root=storage_env["secrets_root"],
             storage_backend=storage_env["backend"],
@@ -553,7 +553,7 @@ class TestStorageMount:
             request_capability(
                 self._storage_params(bucket="other-bucket", prefix="x", mode="ro"),
                 "rid-deny",
-                storage_env["desk_id"],
+                storage_env["drydock_id"],
                 registry_path=storage_env["db"],
                 secrets_root=storage_env["secrets_root"],
                 storage_backend=storage_env["backend"],
@@ -572,7 +572,7 @@ class TestStorageMount:
             request_capability(
                 self._storage_params(bucket="lab-data", prefix="scraped", mode="rw"),
                 "rid-rw-deny",
-                storage_env["desk_id"],
+                storage_env["drydock_id"],
                 registry_path=storage_env["db"],
                 secrets_root=storage_env["secrets_root"],
                 storage_backend=storage_env["backend"],
@@ -584,19 +584,19 @@ class TestStorageMount:
         result = request_capability(
             self._storage_params(),
             "rid-storage-rel",
-            storage_env["desk_id"],
+            storage_env["drydock_id"],
             registry_path=storage_env["db"],
             secrets_root=storage_env["secrets_root"],
             storage_backend=storage_env["backend"],
         )
         lease_id = result["lease_id"]
-        desk_dir = storage_env["secrets_root"] / storage_env["desk_id"]
+        desk_dir = storage_env["secrets_root"] / storage_env["drydock_id"]
         assert (desk_dir / "aws_access_key_id").exists()
 
         release_capability(
             {"lease_id": lease_id},
             "rid-storage-rel-2",
-            storage_env["desk_id"],
+            storage_env["drydock_id"],
             registry_path=storage_env["db"],
             secrets_root=storage_env["secrets_root"],
         )
@@ -624,7 +624,7 @@ class TestInfraProvision:
         secrets_root.mkdir()
 
         registry = Registry(db_path=db)
-        ws = Workspace(
+        ws = Drydock(
             name="infra-worker",
             project="p",
             repo_path="/tmp/repo",
@@ -633,7 +633,7 @@ class TestInfraProvision:
             state="running",
             container_id="cid_iw",
         )
-        registry.create_workspace(ws)
+        registry.create_drydock(ws)
         registry.update_desk_delegations(
             ws.name,
             capabilities=[CapabilityKind.REQUEST_PROVISION_LEASES.value],
@@ -643,7 +643,7 @@ class TestInfraProvision:
             "db": db,
             "secrets_root": secrets_root,
             "registry": registry,
-            "desk_id": ws.id,
+            "drydock_id": ws.id,
             "backend": StubStorageBackend(),
         }
         registry.close()
@@ -655,7 +655,7 @@ class TestInfraProvision:
         result = request_capability(
             self._params(["s3:*", "iam:CreateRole"]),
             "rid-prov-1",
-            env["desk_id"],
+            env["drydock_id"],
             registry_path=env["db"],
             secrets_root=env["secrets_root"],
             storage_backend=env["backend"],
@@ -664,7 +664,7 @@ class TestInfraProvision:
         assert result["scope"]["actions"] == ["s3:*", "iam:CreateRole"]
         assert result["expiry"] is not None
 
-        desk_dir = env["secrets_root"] / env["desk_id"]
+        desk_dir = env["secrets_root"] / env["drydock_id"]
         assert (desk_dir / "aws_access_key_id").read_bytes().decode().startswith("STUB-")
 
     def test_rejects_when_capability_not_granted(self, env):
@@ -672,7 +672,7 @@ class TestInfraProvision:
         with pytest.raises(_RpcError) as exc:
             request_capability(
                 self._params(),
-                "rid", env["desk_id"],
+                "rid", env["drydock_id"],
                 registry_path=env["db"],
                 secrets_root=env["secrets_root"],
                 storage_backend=env["backend"],
@@ -684,7 +684,7 @@ class TestInfraProvision:
         # Default-permissive-when-empty preserves pre-narrowness behavior.
         result = request_capability(
             self._params(["iam:DeleteUser"]),
-            "rid", env["desk_id"],
+            "rid", env["drydock_id"],
             registry_path=env["db"],
             secrets_root=env["secrets_root"],
             storage_backend=env["backend"],
@@ -697,7 +697,7 @@ class TestInfraProvision:
         )
         result = request_capability(
             self._params(["s3:CreateBucket", "s3:PutBucketPolicy"]),
-            "rid", env["desk_id"],
+            "rid", env["drydock_id"],
             registry_path=env["db"],
             secrets_root=env["secrets_root"],
             storage_backend=env["backend"],
@@ -711,7 +711,7 @@ class TestInfraProvision:
         with pytest.raises(_RpcError) as exc:
             request_capability(
                 self._params(["s3:CreateBucket", "iam:CreateRole"]),
-                "rid", env["desk_id"],
+                "rid", env["drydock_id"],
                 registry_path=env["db"],
                 secrets_root=env["secrets_root"],
                 storage_backend=env["backend"],
@@ -723,7 +723,7 @@ class TestInfraProvision:
         with pytest.raises(_RpcError) as exc:
             request_capability(
                 self._params(["not-an-iam-action"]),
-                "rid", env["desk_id"],
+                "rid", env["drydock_id"],
                 registry_path=env["db"],
                 secrets_root=env["secrets_root"],
                 storage_backend=env["backend"],
@@ -734,7 +734,7 @@ class TestInfraProvision:
         with pytest.raises(_RpcError) as exc:
             request_capability(
                 {"type": "INFRA_PROVISION", "scope": {"actions": []}},
-                "rid", env["desk_id"],
+                "rid", env["drydock_id"],
                 registry_path=env["db"],
                 secrets_root=env["secrets_root"],
                 storage_backend=env["backend"],
@@ -755,14 +755,14 @@ class TestInfraProvision:
         storage_result = request_capability(
             {"type": "STORAGE_MOUNT",
              "scope": {"bucket": "lab-data", "prefix": "", "mode": "ro"}},
-            "rid-s", env["desk_id"],
+            "rid-s", env["drydock_id"],
             registry_path=env["db"],
             secrets_root=env["secrets_root"],
             storage_backend=env["backend"],
         )
         provision_result = request_capability(
             self._params(["s3:*"]),
-            "rid-p", env["desk_id"],
+            "rid-p", env["drydock_id"],
             registry_path=env["db"],
             secrets_root=env["secrets_root"],
             storage_backend=env["backend"],
@@ -772,7 +772,7 @@ class TestInfraProvision:
         assert prior.revoked is True
         assert prior.revocation_reason == "superseded"
 
-        still_active = env["registry"].find_active_aws_lease(env["desk_id"])
+        still_active = env["registry"].find_active_aws_lease(env["drydock_id"])
         assert still_active is not None
         assert still_active.lease_id == provision_result["lease_id"]
 
@@ -784,7 +784,7 @@ class TestInfraProvision:
 # the safety boundary before docker-exec.
 class TestValidateNetworkReachScope:
     def _validate(self, scope):
-        from drydock.wsd.capability_handlers import _validate_network_reach_scope
+        from drydock.daemon.capability_handlers import _validate_network_reach_scope
         return _validate_network_reach_scope(scope)
 
     def test_canonicalizes_case_and_trailing_dot(self):
@@ -846,7 +846,7 @@ class TestValidateNetworkReachScope:
 class TestAmendmentSideEffects:
     def test_successful_secret_creates_auto_approved_amendment(self, env):
         request_capability(
-            _params(secret="anthropic_api_key"), "rid", env["desk_id"],
+            _params(secret="anthropic_api_key"), "rid", env["drydock_id"],
             registry_path=env["db"], secrets_root=env["secrets_root"],
         )
         amendments = env["registry"].list_amendments()
@@ -855,14 +855,14 @@ class TestAmendmentSideEffects:
         match = [a for a in amendments
                  if a["kind"] == "secret_grant" and a["status"] == "auto_approved"]
         assert len(match) == 1
-        assert match[0]["drydock_id"] == env["desk_id"]
+        assert match[0]["drydock_id"] == env["drydock_id"]
         assert match[0]["request"]["secret_name"] == "anthropic_api_key"
 
     def test_narrowness_violation_creates_escalated_amendment(self, env):
         # Request a secret NOT in delegatable_secrets; should escalate
         with pytest.raises(_RpcError) as exc:
             request_capability(
-                _params(secret="not_in_entitlements"), "rid", env["desk_id"],
+                _params(secret="not_in_entitlements"), "rid", env["drydock_id"],
                 registry_path=env["db"], secrets_root=env["secrets_root"],
             )
         assert exc.value.message == "narrowness_violated"
@@ -870,7 +870,7 @@ class TestAmendmentSideEffects:
         amendments = env["registry"].list_amendments(status="escalated")
         match = [a for a in amendments if a["kind"] == "secret_grant"]
         assert len(match) == 1
-        assert match[0]["drydock_id"] == env["desk_id"]
+        assert match[0]["drydock_id"] == env["drydock_id"]
         assert match[0]["request"]["secret_name"] == "not_in_entitlements"
         assert "narrowness_violated" in (match[0]["reason"] or "")
 
@@ -880,7 +880,7 @@ class TestAmendmentSideEffects:
         # If amendment recording raises, capability handler must still
         # succeed (or fail) per its own logic. Tests the never-crash
         # contract from _emit_capability_amendment's docstring.
-        from drydock.wsd import capability_handlers as ch
+        from drydock.daemon import capability_handlers as ch
 
         original = ch.Registry.create_amendment
 
@@ -890,7 +890,7 @@ class TestAmendmentSideEffects:
         monkeypatch.setattr(ch.Registry, "create_amendment", boom)
         # Capability handler should still succeed despite amendment failure
         result = request_capability(
-            _params(secret="anthropic_api_key"), "rid", env["desk_id"],
+            _params(secret="anthropic_api_key"), "rid", env["drydock_id"],
             registry_path=env["db"], secrets_root=env["secrets_root"],
         )
         assert result["type"] == "SECRET"

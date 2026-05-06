@@ -56,8 +56,8 @@ def _coerce_date(value) -> date | None:
     return None
 
 
-def load_compliance(workspace_root: Path) -> ComplianceConfig | None:
-    path = Path(workspace_root) / "compliance.yaml"
+def load_compliance(drydock_root: Path) -> ComplianceConfig | None:
+    path = Path(drydock_root) / "compliance.yaml"
     if not path.exists():
         return None
 

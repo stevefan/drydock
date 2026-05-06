@@ -39,7 +39,7 @@ class CapabilityLease:
     """
 
     lease_id: str
-    desk_id: str
+    drydock_id: str
     type: CapabilityType
     scope: dict
     issued_at: datetime
@@ -52,7 +52,7 @@ class CapabilityLease:
         """Serialize for JSON-RPC response (matches docs/v2-design-protocol.md)."""
         return {
             "lease_id": self.lease_id,
-            "desk_id": self.desk_id,
+            "drydock_id": self.drydock_id,
             "type": self.type.value,
             "scope": dict(self.scope),
             "issued_at": self.issued_at.isoformat(),

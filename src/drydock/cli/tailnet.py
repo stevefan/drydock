@@ -1,8 +1,8 @@
 """ws tailnet — tailnet device-record admin commands.
 
 `ws tailnet prune` enumerates devices on the configured tailnet, matches
-them against the drydock workspace registry by hostname, and lists (or
-deletes) those that don't correspond to a live workspace.
+them against the drydock drydock registry by hostname, and lists (or
+deletes) those that don't correspond to a live drydock.
 
 Useful after force-removed containers, crashes mid-destroy, or to clean
 up V1-era ghost records (the original forcing function — see
@@ -23,15 +23,15 @@ logger = logging.getLogger(__name__)
 
 
 def _live_hostnames(registry) -> set[str]:
-    """Hostnames currently associated with registry workspaces.
+    """Hostnames currently associated with registry drydocks.
 
-    Each workspace may contribute up to two candidate hostnames: the explicit
+    Each drydock may contribute up to two candidate hostnames: the explicit
     `config.tailscale_hostname` (if set) and `ws.id`. We consider both so a
     device matching either is preserved — prune's job is to remove only
     confirmed orphans.
     """
     hostnames: set[str] = set()
-    for ws in registry.list_workspaces():
+    for ws in registry.list_drydocks():
         hostnames.add(ws.id)
         hostnames.add(ws.name)
         ts = ws.config.get("tailscale_hostname")

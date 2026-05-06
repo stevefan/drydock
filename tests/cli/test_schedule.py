@@ -8,7 +8,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from drydock.cli.schedule import schedule
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 from drydock.output.formatter import Output
 
 
@@ -17,8 +17,8 @@ def _make_obj(registry):
 
 
 def _register_desk(registry, name="testdesk", worktree="/tmp/ws", subdir=""):
-    ws = Workspace(name=name, project="proj", repo_path="/tmp/repo", worktree_path=worktree, workspace_subdir=subdir)
-    registry.create_workspace(ws)
+    ws = Drydock(name=name, project="proj", repo_path="/tmp/repo", worktree_path=worktree, workspace_subdir=subdir)
+    registry.create_drydock(ws)
     return ws
 
 

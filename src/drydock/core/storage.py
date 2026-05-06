@@ -4,7 +4,7 @@ Parallel to `secrets.py` but for time-bounded cloud storage credentials.
 V4 Phase 1: the capability broker accepts STORAGE_MOUNT leases and
 returns scoped AWS STS credentials. Further backends (GCS via workload
 identity, Azure, etc.) are additive — new classes implementing
-`StorageBackend`, a `wsd.toml [storage] backend = ...` entry, no RPC
+`StorageBackend`, a `daemon.toml [storage] backend = ...` entry, no RPC
 churn.
 
 Design choices anchored in docs/v2-design-capability-broker.md §7 and
@@ -99,12 +99,12 @@ class StorageBackend(Protocol):
     def mint(
         self,
         *,
-        desk_id: str,
+        drydock_id: str,
         bucket: str,
         prefix: str,
         mode: str,
     ) -> StorageCredential:
-        """Issue a scoped credential for `desk_id` against `bucket`/`prefix`.
+        """Issue a scoped credential for `drydock_id` against `bucket`/`prefix`.
 
         `mode` is one of {"ro", "rw"}. Backends validate and raise
         StorageBackendConfigError for unknown modes.
@@ -119,7 +119,7 @@ class StorageBackend(Protocol):
     def mint_provision(
         self,
         *,
-        desk_id: str,
+        drydock_id: str,
         actions: list[str] | tuple[str, ...],
     ) -> StorageCredential:
         """Issue a credential narrowed to an IAM action list on `*`.
@@ -201,13 +201,13 @@ def build_provision_session_policy(actions: list[str] | tuple[str, ...]) -> dict
     }
 
 
-def _session_name(desk_id: str, prefix: str = DEFAULT_SESSION_NAME_PREFIX) -> str:
+def _session_name(drydock_id: str, prefix: str = DEFAULT_SESSION_NAME_PREFIX) -> str:
     """Construct an AWS STS RoleSessionName matching the trust-policy condition.
 
     `scripts/aws/trust-policy.json` requires sts:RoleSessionName to match
     `drydock-*`. STS limit is 64 chars.
     """
-    raw = f"{prefix}{desk_id}"
+    raw = f"{prefix}{drydock_id}"
     return raw[:64]
 
 
@@ -231,7 +231,7 @@ class StsAssumeRoleBackend:
     ):
         if not role_arn:
             raise StorageBackendConfigError(
-                "StsAssumeRoleBackend requires role_arn — set [storage] role_arn in wsd.toml"
+                "StsAssumeRoleBackend requires role_arn — set [storage] role_arn in daemon.toml"
             )
         self.role_arn = role_arn
         self.source_profile = source_profile
@@ -241,27 +241,27 @@ class StsAssumeRoleBackend:
     def mint(
         self,
         *,
-        desk_id: str,
+        drydock_id: str,
         bucket: str,
         prefix: str,
         mode: str,
     ) -> StorageCredential:
-        return self._assume_role(desk_id, build_session_policy(bucket, prefix, mode))
+        return self._assume_role(drydock_id, build_session_policy(bucket, prefix, mode))
 
     def mint_provision(
         self,
         *,
-        desk_id: str,
+        drydock_id: str,
         actions: list[str] | tuple[str, ...],
     ) -> StorageCredential:
-        return self._assume_role(desk_id, build_provision_session_policy(actions))
+        return self._assume_role(drydock_id, build_provision_session_policy(actions))
 
-    def _assume_role(self, desk_id: str, policy: dict) -> StorageCredential:
+    def _assume_role(self, drydock_id: str, policy: dict) -> StorageCredential:
         argv = [
             self.aws_bin, "sts", "assume-role",
             "--profile", self.source_profile,
             "--role-arn", self.role_arn,
-            "--role-session-name", _session_name(desk_id),
+            "--role-session-name", _session_name(drydock_id),
             "--policy", json.dumps(policy, separators=(",", ":")),
             "--duration-seconds", str(self.session_duration_seconds),
             "--output", "json",
@@ -315,31 +315,31 @@ class StubStorageBackend:
     def mint(
         self,
         *,
-        desk_id: str,
+        drydock_id: str,
         bucket: str,
         prefix: str,
         mode: str,
     ) -> StorageCredential:
         # Validate mode shape even in the stub so tests catch bad inputs.
         build_session_policy(bucket, prefix, mode)
-        self.calls.append({"desk_id": desk_id, "bucket": bucket, "prefix": prefix, "mode": mode})
-        return self._fake(desk_id)
+        self.calls.append({"drydock_id": drydock_id, "bucket": bucket, "prefix": prefix, "mode": mode})
+        return self._fake(drydock_id)
 
     def mint_provision(
         self,
         *,
-        desk_id: str,
+        drydock_id: str,
         actions: list[str] | tuple[str, ...],
     ) -> StorageCredential:
         build_provision_session_policy(actions)
-        self.calls.append({"desk_id": desk_id, "actions": list(actions)})
-        return self._fake(desk_id)
+        self.calls.append({"drydock_id": drydock_id, "actions": list(actions)})
+        return self._fake(drydock_id)
 
-    def _fake(self, desk_id: str) -> StorageCredential:
+    def _fake(self, drydock_id: str) -> StorageCredential:
         return StorageCredential(
-            access_key_id=f"STUB-{desk_id}-AKID",
-            secret_access_key=f"STUB-{desk_id}-SECRET",
-            session_token=f"STUB-{desk_id}-TOKEN",
+            access_key_id=f"STUB-{drydock_id}-AKID",
+            secret_access_key=f"STUB-{drydock_id}-SECRET",
+            session_token=f"STUB-{drydock_id}-TOKEN",
             expiration=self.fixed_expiration,
         )
 
@@ -354,7 +354,7 @@ def build_storage_backend(
     """Construct the configured storage backend.
 
     Raises ValueError for unknown backend names — the daemon surfaces
-    this as `unknown_storage_backend` at startup (see wsd/config.py).
+    this as `unknown_storage_backend` at startup (see daemon/config.py).
     """
     if name == "sts":
         return StsAssumeRoleBackend(

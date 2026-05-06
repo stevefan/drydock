@@ -1,4 +1,4 @@
-"""ws — Drydock workspace orchestration CLI."""
+"""ws — Drydock orchestration CLI."""
 
 import logging
 
@@ -14,7 +14,7 @@ from drydock.output.formatter import Output
 @click.option("--dry-run", is_flag=True, help="Preview without executing")
 @click.pass_context
 def cli(ctx, force_json, dry_run):
-    """Drydock workspace orchestration."""
+    """Drydock orchestration."""
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     ctx.ensure_object(dict)
     ctx.obj["output"] = Output(force_json=force_json)

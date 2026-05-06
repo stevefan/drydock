@@ -33,13 +33,13 @@ cp scripts/notebooks/{Dockerfile,start-syncthing.sh,devcontainer.json} \
 cp scripts/notebooks/project.yaml ~/.drydock/projects/notebooks.yaml
 git -C /root/src/notebooks add -A && git -C /root/src/notebooks commit -m init
 
-ws create notebooks
+drydock create notebooks
 ```
 
 First start generates the Syncthing device ID:
 
 ```bash
-ws exec notebooks -- syncthing --home=/var/lib/syncthing device-id
+drydock exec notebooks -- syncthing --home=/var/lib/syncthing device-id
 #   IDFGAVP-A33YIMB-M5HAPYJ-SQ2QBO7-7FIS5EO-LUYCXM7-FXHVV7F-CGNB7A5
 ```
 
@@ -111,7 +111,7 @@ extra_mounts:
   - "source=notebooks-vault,target=/workspace/Notebooks,type=volume,readonly"
 ```
 
-Then `ws project reload <desk>` + `ws stop && ws create` to apply.
+Then `drydock project reload <desk>` + `drydock stop && drydock create` to apply.
 Every vault shared ends up at `/workspace/Notebooks/<vault>` inside
 the consuming desk.
 
@@ -120,8 +120,8 @@ the consuming desk.
 - **Desk-level firewall allows the Syncthing infrastructure** (relay
   + discovery + apt repo). See `project.yaml`.
 - **Syncthing state lives on a named volume** (`notebooks-syncthing-state`)
-  so `ws stop && ws create` doesn't re-pair. To force re-pairing:
-  `docker volume rm notebooks-syncthing-state`, then `ws create
+  so `drydock stop && drydock create` doesn't re-pair. To force re-pairing:
+  `docker volume rm notebooks-syncthing-state`, then `drydock create
   --force`.
 - **The `notebooks-vault` named volume** is what sibling desks mount.
   Don't bind-mount it with `:rw` unless you want writes flowing
@@ -136,7 +136,7 @@ the consuming desk.
 - Vault selection is manual in both GUIs; no declarative project-YAML
   surface for "share these vaults." If this stays a per-Harbor-one-off,
   that's fine; if you want it reproducible, add a follow-up to express
-  the share set as YAML that `ws create notebooks` applies via
+  the share set as YAML that `drydock create notebooks` applies via
   Syncthing's REST API.
 - Pairing is interactive (click accept in both GUIs). Automating this
   requires passing Steven's explicit share list, which is the

@@ -6,7 +6,7 @@
 # whatever Harbor this YAML is installed on.
 #
 # One-time pairing: on Mac (brew install syncthing; start it; add the
-# folder ~/Notebooks); inside this desk (ws exec notebooks -- cat
+# folder ~/Notebooks); inside this desk (drydock exec notebooks -- cat
 # /var/lib/syncthing/config.xml | grep -i 'id=' to get the device
 # ID); pair in both syncthing GUIs. See docs/operations/notebooks.md.
 
@@ -32,7 +32,7 @@ extra_mounts:
   # Vault data — the thing that gets consumed by sibling desks.
   - "source=notebooks-vault,target=/vault,type=volume"
   # Syncthing's own state (cert, device ID, peer config). Survives
-  # `ws stop && ws create`; wipe to reset pairing.
+  # `drydock stop && drydock create`; wipe to reset pairing.
   - "source=notebooks-syncthing-state,target=/var/lib/syncthing,type=volume"
 
 deskwatch:

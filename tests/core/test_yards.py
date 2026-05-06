@@ -6,7 +6,7 @@ Pin the contracts:
 - list_yards returns in created_at order
 - destroy_yard refuses if members exist (unless with_members=True)
 - with_members=True detaches but does NOT destroy member Drydocks
-- yard_id FK on workspaces is plain TEXT NULL (not enforced by SQLite,
+- yard_id FK on drydocks is plain TEXT NULL (not enforced by SQLite,
   enforced in code)
 - migration is additive (existing v3 registries get the v4 columns + table)
 """
@@ -17,7 +17,7 @@ import pytest
 
 from drydock.core import WsError
 from drydock.core.registry import Registry
-from drydock.core.workspace import Workspace
+from drydock.core.runtime import Drydock
 
 
 @pytest.fixture
@@ -28,8 +28,8 @@ def registry(tmp_path):
     r.close()
 
 
-def _make_ws(name: str, project: str = "demo") -> Workspace:
-    return Workspace(
+def _make_ws(name: str, project: str = "demo") -> Drydock:
+    return Drydock(
         name=name,
         project=project,
         repo_path="/tmp/repo",
@@ -87,28 +87,28 @@ class TestYardCRUD:
 
 
 class TestYardMembership:
-    def test_workspaces_have_yard_id_column(self, registry):
+    def test_drydocks_have_yard_id_column(self, registry):
         # Migration adds the column with NULL default. Just creating
-        # a Workspace should leave yard_id None on the resulting row.
+        # a Drydock should leave yard_id None on the resulting row.
         ws = _make_ws("test1")
-        registry.create_workspace(ws)
-        loaded = registry.get_workspace("test1")
+        registry.create_drydock(ws)
+        loaded = registry.get_drydock("test1")
         assert loaded.yard_id is None
 
-    def test_set_workspace_to_yard(self, registry):
+    def test_set_drydock_to_yard(self, registry):
         registry.create_yard("microfoundry")
         ws = _make_ws("test1")
-        registry.create_workspace(ws)
-        registry.update_workspace("test1", yard_id="yd_microfoundry")
-        loaded = registry.get_workspace("test1")
+        registry.create_drydock(ws)
+        registry.update_drydock("test1", yard_id="yd_microfoundry")
+        loaded = registry.get_drydock("test1")
         assert loaded.yard_id == "yd_microfoundry"
 
     def test_list_yard_members(self, registry):
         registry.create_yard("microfoundry")
         for n in ("a", "b", "c"):
-            registry.create_workspace(_make_ws(n))
-            registry.update_workspace(n, yard_id="yd_microfoundry")
-        registry.create_workspace(_make_ws("standalone"))  # no yard
+            registry.create_drydock(_make_ws(n))
+            registry.update_drydock(n, yard_id="yd_microfoundry")
+        registry.create_drydock(_make_ws("standalone"))  # no yard
 
         members = registry.list_yard_members("yd_microfoundry")
         names = sorted(m.name for m in members)
@@ -128,28 +128,28 @@ class TestYardDestroy:
 
     def test_destroy_with_members_refuses_by_default(self, registry):
         registry.create_yard("microfoundry")
-        registry.create_workspace(_make_ws("a"))
-        registry.update_workspace("a", yard_id="yd_microfoundry")
+        registry.create_drydock(_make_ws("a"))
+        registry.update_drydock("a", yard_id="yd_microfoundry")
 
         with pytest.raises(WsError, match="member drydock"):
             registry.destroy_yard("microfoundry")
 
         # Yard still exists, member still attached
         assert registry.get_yard("microfoundry") is not None
-        assert registry.get_workspace("a").yard_id == "yd_microfoundry"
+        assert registry.get_drydock("a").yard_id == "yd_microfoundry"
 
     def test_destroy_with_members_flag_detaches(self, registry):
         registry.create_yard("microfoundry")
         for n in ("a", "b"):
-            registry.create_workspace(_make_ws(n))
-            registry.update_workspace(n, yard_id="yd_microfoundry")
+            registry.create_drydock(_make_ws(n))
+            registry.update_drydock(n, yard_id="yd_microfoundry")
 
         detached = registry.destroy_yard("microfoundry", with_members=True)
         assert detached == 2
         assert registry.get_yard("microfoundry") is None
         # Member Drydocks still exist, just detached.
         for n in ("a", "b"):
-            ws = registry.get_workspace(n)
+            ws = registry.get_drydock(n)
             assert ws is not None
             assert ws.yard_id is None
 

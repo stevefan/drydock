@@ -1,6 +1,6 @@
 # Project ↔ Dock — ontology revisit
 
-**Status:** position paper · revisit invited · **Pulls from:** [vocabulary.md](vocabulary.md), [narrowness.md](narrowness.md), [capability-broker.md](capability-broker.md), [principal-harbormaster-governance.md](principal-harbormaster-governance.md)
+**Status:** position paper · revisit invited · **Pulls from:** [vocabulary.md](vocabulary.md), [narrowness.md](narrowness.md), [capability-broker.md](capability-broker.md), [harbor-authority.md](harbor-authority.md)
 
 This doc is a deep look at the Project ↔ Dock relationship as drydock has it today, the assumptions that produced the current shape, the friction those assumptions are now generating in real use, and what a more first-principled design might look like. It's meant to be argued with, not adopted whole.
 
@@ -8,7 +8,7 @@ This doc is a deep look at the Project ↔ Dock relationship as drydock has it t
 
 ## 1. How we got here — history of the concept
 
-The original drydock concept (V1) had no Project layer. There was just a **Workspace** (now called DryDock / Dock): a single durable bounded environment, created with `ws create`, parameterized with command-line flags. Each Workspace was its own snowflake — its devcontainer config, repo path, branch, capabilities all decided at create time and stored as registry state.
+The original drydock concept (V1) had no Project layer. There was just a **Workspace** (now called DryDock / Dock): a single durable bounded environment, created with `drydock create`, parameterized with command-line flags. Each Workspace was its own snowflake — its devcontainer config, repo path, branch, capabilities all decided at create time and stored as registry state.
 
 Three pressures pulled the Project layer into existence:
 
@@ -18,7 +18,7 @@ Three pressures pulled the Project layer into existence:
 
 **(c) The narrowness model arriving.** Once V2's capability-broker landed, declarative policy (`delegatable_secrets`, `delegatable_firewall_domains`, `capabilities`) needed a place to live that wasn't "we set it at one specific create-time and never see it again." YAML at a known location filled that role.
 
-The Project was conceived as **a template that gets instantiated**, by analogy to a class-instance relationship in OOP. One Project = one YAML; many Docks of that Project = many runtime instances created from that template. The `ws create <project> <dock-name>` command syntax baked this in.
+The Project was conceived as **a template that gets instantiated**, by analogy to a class-instance relationship in OOP. One Project = one YAML; many Docks of that Project = many runtime instances created from that template. The `drydock create <project> <dock-name>` command syntax baked this in.
 
 What did NOT happen alongside this conceptual move: the daemon never started tracking Projects as first-class entities. There's no `projects` table in the registry, no Project ID, no "this Project was edited at time T" audit event. The Project remained a *YAML file* on disk; the daemon's view of it is "a string key that happens to match a filename in `~/.drydock/projects/`."
 
@@ -50,23 +50,23 @@ These get parsed once at YAML load. **No daemon record exists for the Project**.
 
 ### Dock — what it is in code
 
-`Workspace` dataclass + `workspaces` table. Created by `ws create <project> [<dock-name>]` which:
+`Workspace` dataclass + `workspaces` table. Created by `drydock create <project> [<dock-name>]` which:
 
 1. Loads the Project YAML
 2. Validates (KNOWN_KEYS, narrowness rules)
-3. Generates a `desk_id` (`ws_<slug>` of the dock-name)
+3. Generates a `drydock_id` (`ws_<slug>` of the dock-name)
 4. Inserts a `workspaces` row with: `id`, `name`, `project: <string>`, `repo_path`, `worktree_path`, `branch`, `state`, `container_id`, plus **the snapshot of the Project's policy fields** (`delegatable_*`, `capabilities`, `resources_hard`)
-5. `git worktree add ~/.drydock/worktrees/<desk_id>/ ws/<dock-name>` — separate git worktree of the source repo, on its own branch
+5. `git worktree add ~/.drydock/worktrees/<drydock_id>/ ws/<dock-name>` — separate git worktree of the source repo, on its own branch
 6. Generates an overlay devcontainer.json (combines base devcontainer + drydock additions)
 7. Spawns the container via `devcontainer up`
 
-After create, the Dock's policy is **frozen** — the `workspaces` row carries the values that were in the Project YAML *at the moment of create*. Editing the YAML afterwards has no effect until `ws project reload <dock>` is run, which re-reads YAML + re-pins onto the Dock's row + regenerates the overlay (but doesn't recreate the container; for that you need `ws stop && ws create`).
+After create, the Dock's policy is **frozen** — the `workspaces` row carries the values that were in the Project YAML *at the moment of create*. Editing the YAML afterwards has no effect until `drydock project reload <dock>` is run, which re-reads YAML + re-pins onto the Dock's row + regenerates the overlay (but doesn't recreate the container; for that you need `drydock stop && drydock create`).
 
 ### The relationship
 
 | Property | Project | Dock |
 |---|---|---|
-| Identity | YAML filename (`<name>.yaml`) | `desk_id` (UUID-like in registry) |
+| Identity | YAML filename (`<name>.yaml`) | `drydock_id` (UUID-like in registry) |
 | Tracked by daemon? | No | Yes |
 | Mutable? | Yes (edit YAML) | Yes (registry update) |
 | Audit trail? | Git history of YAML (if checked in) | Audit log of state changes + leases |
@@ -76,7 +76,7 @@ After create, the Dock's policy is **frozen** — the `workspaces` row carries t
 
 ### The "create" verb is doing a lot of work
 
-`ws create auction-crawl prod` doesn't just spawn a container. It:
+`drydock create auction-crawl prod` doesn't just spawn a container. It:
 - Resolves the Project YAML
 - Pins the Project's pinnable policy onto a new Dock
 - Allocates a new git worktree (separate filesystem state)
@@ -99,15 +99,15 @@ Background: Dock pins Project's policy at create. Editing the YAML doesn't propa
 
 This was inherited from the narrowness model where pinning serves a security purpose (a compromised parent can't retroactively widen a child). But Project ≠ parent-Dock — Project is static YAML edited by the principal.
 
-**The friction**: when the principal edits a Project YAML and wants the change live, they must run `ws project reload` on **every** Dock of that Project. For a Project with 5 Docks, that's 5 separate commands and 5 separate audit events. Forgetting one is silent — the forgotten Dock keeps running on stale policy.
+**The friction**: when the principal edits a Project YAML and wants the change live, they must run `drydock project reload` on **every** Dock of that Project. For a Project with 5 Docks, that's 5 separate commands and 5 separate audit events. Forgetting one is silent — the forgotten Dock keeps running on stale policy.
 
-**The cost is real but bounded**: most Projects today have 1-2 Docks. The principal mostly remembers to reload, and `ws project reload` is one of the simpler commands. The friction is annoying, not blocking.
+**The cost is real but bounded**: most Projects today have 1-2 Docks. The principal mostly remembers to reload, and `drydock project reload` is one of the simpler commands. The friction is annoying, not blocking.
 
 **The deeper cost**: there's no easy answer to "what policy is Dock X currently running under?" without querying the registry directly. The YAML on disk is *not* canonical; the registry row is. Users (including the principal) tend to assume the YAML is canonical because it's source-controllable and visible. Mismatches between assumption and reality cause real bugs (like trying to debug "why doesn't this Dock have access to X?" by reading the YAML, not realizing the Dock was created before X was added).
 
 ### Tension B — Project as YAML-string-name vs Project as identity
 
-Background: The daemon knows a Dock's project as a string. Renaming `auction-crawl.yaml` → `auction-crawl-v2.yaml` doesn't update the Workspace row. Worse: deleting `auction-crawl.yaml` doesn't notify anyone — the Docks of that Project keep running, and `ws project reload` on them fails because the YAML is gone.
+Background: The daemon knows a Dock's project as a string. Renaming `auction-crawl.yaml` → `auction-crawl-v2.yaml` doesn't update the Workspace row. Worse: deleting `auction-crawl.yaml` doesn't notify anyone — the Docks of that Project keep running, and `drydock project reload` on them fails because the YAML is gone.
 
 **The friction**: Project as a name-pointing-at-a-file means edits/renames/deletes can silently break things. There's no "Project deleted while N Docks still depend on it" warning.
 
@@ -122,9 +122,9 @@ All of these require either scanning every workspace row (for #1) or shelling ou
 
 Background: One Project can have many Docks. The only way they differ today is by name (and name-derived branch + worktree path).
 
-**The friction**: looking at `ws list`, you see `auction-crawl`, `auction-crawl-experimental`, `auction-crawl-test`. The relationship between these (they're all instances of the same Project, but for different *purposes*) is implicit. The daemon has no idea that `experimental` is the experimental fork and `test` is for one-shot test runs — that knowledge lives only in Steven's head and the Dock names.
+**The friction**: looking at `drydock list`, you see `auction-crawl`, `auction-crawl-experimental`, `auction-crawl-test`. The relationship between these (they're all instances of the same Project, but for different *purposes*) is implicit. The daemon has no idea that `experimental` is the experimental fork and `test` is for one-shot test runs — that knowledge lives only in Steven's head and the Dock names.
 
-**The deeper issue**: when the Harbormaster (or future automated systems) want to make decisions about "treat experimental Docks more leniently than prod Docks," there's no signal to distinguish them. We'd have to either parse Dock names heuristically or add a new field.
+**The deeper issue**: when the Auditor (or future automated systems) want to make decisions about "treat experimental Docks more leniently than prod Docks," there's no signal to distinguish them. We'd have to either parse Dock names heuristically or add a new field.
 
 ### Tension D — Cross-Harbor Project drift
 
@@ -210,19 +210,19 @@ This suggests a cheap first move: **only deskwatch becomes live**. That single c
 
 Where the current Project = YAML model leaks into machinery:
 
-### `ws project reload` exists as its own command
+### `drydock project reload` exists as its own command
 
 Tellingly: this command is its own thing, not a flag on something else. That's evidence the friction is real enough to deserve a verb. In a fully-living-policy world, `reload` wouldn't exist — YAML edits would just take effect.
 
 ### Audit log records Dock-level changes only
 
-When `ws project reload` runs, the audit log gets `desk.policy_updated` events. The *Project YAML edit itself* is not audited (only its effects via reload). To answer "when was this Project's policy last changed," you have to git-log the YAML or check the most recent reload event across all the Project's Docks. Asymmetric.
+When `drydock project reload` runs, the audit log gets `desk.policy_updated` events. The *Project YAML edit itself* is not audited (only its effects via reload). To answer "when was this Project's policy last changed," you have to git-log the YAML or check the most recent reload event across all the Project's Docks. Asymmetric.
 
-### `ws inspect <dock>` shows pinned values, not Project drift
+### `drydock inspect <dock>` shows pinned values, not Project drift
 
-If the Dock is on stale policy, `ws inspect` shows the stale state. There's no flag like "this Dock is 3 reloads behind the current YAML." The Dock looks fine.
+If the Dock is on stale policy, `drydock inspect` shows the stale state. There's no flag like "this Dock is 3 reloads behind the current YAML." The Dock looks fine.
 
-### `ws host audit` (this session's addition) doesn't surface Project staleness
+### `drydock host audit` (this session's addition) doesn't surface Project staleness
 
 The audit shows per-Dock policy but doesn't compare it to current Project YAML. Could — would need: read YAML, hash it, compare to a `pinned_yaml_sha` column on the Dock that doesn't exist yet.
 
@@ -232,11 +232,11 @@ The code path for "load Project YAML, parse, validate, send to daemon" exists in
 
 ### Cross-Harbor Project drift has no detection
 
-The Mac's `auction-crawl.yaml` and Hetzner's could diverge silently. There's no command like `ws project diff <project> --across-harbors`. If a principal manually copies a YAML from Mac to Hetzner and forgets one field, the two Harbors' Docks of that Project run different policies.
+The Mac's `auction-crawl.yaml` and Hetzner's could diverge silently. There's no command like `drydock project diff <project> --across-harbors`. If a principal manually copies a YAML from Mac to Hetzner and forgets one field, the two Harbors' Docks of that Project run different policies.
 
-### `ws schedule sync` is the closest existing analogue to "live"
+### `drydock schedule sync` is the closest existing analogue to "live"
 
-`ws schedule sync <dock>` reads the Project's `deploy/schedule.yaml`, syncs to Harbor cron/launchd. Note this is NOT pinned — it pulls from the source on every sync. The schedule is *operationally* live, just gated behind an explicit sync command. A future "live deskwatch" would look like the same pattern (or even more automatic).
+`drydock schedule sync <dock>` reads the Project's `deploy/schedule.yaml`, syncs to Harbor cron/launchd. Note this is NOT pinned — it pulls from the source on every sync. The schedule is *operationally* live, just gated behind an explicit sync command. A future "live deskwatch" would look like the same pattern (or even more automatic).
 
 ### Tests that touch ProjectConfig assume a YAML on disk
 
@@ -266,7 +266,7 @@ CREATE TABLE projects (
 );
 ```
 
-Projects are explicitly registered: `ws project register <name> --from <uri>`. Future Docks of that Project use the registered entity. The YAML URI can be a local path (today's behavior) or a git URL (future: project YAML lives in the project's own repo, single source of truth).
+Projects are explicitly registered: `drydock project register <name> --from <uri>`. Future Docks of that Project use the registered entity. The YAML URI can be a local path (today's behavior) or a git URL (future: project YAML lives in the project's own repo, single source of truth).
 
 ### Per-field bind classification
 
@@ -282,7 +282,7 @@ binding:
 
 Default is PINNED (safe). Authors opt fields into LIVE explicitly; opting in says "I accept that edits to this field take effect on running Docks without explicit per-Dock action."
 
-The daemon tracks each Dock's `pinned_yaml_sha256` — the hash of the Project YAML at the moment the Dock was created OR last reloaded. When a LIVE field changes (detected by hash diff), the daemon reads the new value, updates the Dock's effective config, emits an audit event. When a PINNED field changes, the daemon emits a "drift detected" warning that the principal can act on with `ws project propagate <project>` (which reloads all of that Project's Docks atomically).
+The daemon tracks each Dock's `pinned_yaml_sha256` — the hash of the Project YAML at the moment the Dock was created OR last reloaded. When a LIVE field changes (detected by hash diff), the daemon reads the new value, updates the Dock's effective config, emits an audit event. When a PINNED field changes, the daemon emits a "drift detected" warning that the principal can act on with `drydock project propagate <project>` (which reloads all of that Project's Docks atomically).
 
 ### Dock has a `purpose` field
 
@@ -293,21 +293,21 @@ ALTER TABLE workspaces ADD COLUMN purpose TEXT DEFAULT '';
 -- Values: 'prod', 'experimental', 'scheduled-jobs', 'sandbox', 'ephemeral', or any string
 ```
 
-Set at create: `ws create auction-crawl prod-main --purpose prod`. Surfaces in `ws list`, `ws inspect`, `ws host audit`. The Harbormaster can use it for differential treatment ("experimental Docks get tighter resource ceilings by default").
+Set at create: `drydock create auction-crawl prod-main --purpose prod`. Surfaces in `drydock list`, `drydock inspect`, `drydock host audit`. The Auditor can use it for differential treatment ("experimental Docks get tighter resource ceilings by default" — a soft signal in the Auditor's judgment, enforced via Authority).
 
 ### Project edit/audit/propagate workflow
 
 ```
-$ ws project edit auction-crawl
+$ drydock project edit auction-crawl
 # (opens YAML in $EDITOR; on save, validates + computes new hash)
 # Validation passes → updates projects table → emits 'project.edited' audit event
-# Lists Docks affected; suggests `ws project propagate auction-crawl` to apply pinned changes
+# Lists Docks affected; suggests `drydock project propagate auction-crawl` to apply pinned changes
 
-$ ws project status auction-crawl
+$ drydock project status auction-crawl
 # Shows: current YAML hash, count of Docks pinned to current vs older hashes,
 # count of Docks with live-field deltas already applied
 
-$ ws project propagate auction-crawl [--dry-run]
+$ drydock project propagate auction-crawl [--dry-run]
 # Re-reads YAML for each Dock of this Project, updates pinned values atomically,
 # emits 'desk.policy_updated' per Dock, regenerates overlays.
 # (Does NOT recreate containers — same as today's reload.)
@@ -315,8 +315,8 @@ $ ws project propagate auction-crawl [--dry-run]
 
 ### What this composes with
 
-- **Harbormaster**: can subscribe to `project.edited` audit events; can auto-propagate live fields; can escalate to principal when pinned fields drift ("auction-crawl Project edited; 3 Docks pinned to old policy — propagate?").
-- **`ws host audit`**: surfaces project staleness per Dock cleanly (`pinned_yaml_sha` column directly comparable).
+- **Auditor**: can subscribe to `project.edited` audit events; can escalate to principal when pinned fields drift ("auction-crawl Project edited; 3 Docks pinned to old policy — propagate?"). Auto-propagation of LIVE fields is structural (Authority handles deterministically); the Auditor's role is escalation when something drift-shaped wants principal attention.
+- **`drydock host audit`**: surfaces project staleness per Dock cleanly (`pinned_yaml_sha` column directly comparable).
 - **Cross-Harbor**: if Project YAML lives in the project's own git repo (yaml_uri = git URL), drift between Harbors is reduced to "did each Harbor pull the latest commit?" — same problem as code drift, same solution.
 
 ### What changes for code
@@ -326,10 +326,10 @@ $ ws project propagate auction-crawl [--dry-run]
 | `core/project_config.py` | Add `binding` block parsing; expose pinned vs live field lists |
 | `core/registry.py` | Add `projects` table; add `pinned_yaml_sha256`, `purpose` columns to `workspaces` |
 | `cli/project.py` | Add `register`, `edit`, `status`, `propagate`; keep `reload` as a thin alias for `propagate <one-dock>` |
-| `wsd/handlers.py` | Add `RegisterProject`, `PropagateProject` RPCs; `CreateDesk` now validates against a registered Project (with auto-register fallback for backwards compat) |
+| `daemon/handlers.py` | Add `RegisterProject`, `PropagateProject` RPCs; `CreateDesk` now validates against a registered Project (with auto-register fallback for backwards compat) |
 | `cli/create.py` | Auto-registers Project if not already; accepts `--purpose` flag |
 | `core/host_audit.py` | Surfaces per-Dock pinned-vs-current YAML drift |
-| `wsd/recovery.py` | On startup, scan `~/.drydock/projects/` and ensure each YAML has a `projects` row (one-shot migration) |
+| `daemon/recovery.py` | On startup, scan `~/.drydock/projects/` and ensure each YAML has a `projects` row (one-shot migration) |
 
 Backward compatibility:
 - Existing Docks have no `pinned_yaml_sha256` — treat as "drift unknown," trigger first reload to record current sha
@@ -340,7 +340,7 @@ Backward compatibility:
 
 - **Repo as a layer above Project.** Could be useful for monorepos but isn't pulling its weight at current scale. Adding it requires schema migration, new commands, more vocabulary. Defer until monorepo pain is concrete.
 - **Splitting Project into Project + Policy + Infrastructure.** Tension E says these are orthogonal, but splitting them adds three concepts where one currently suffices. The principal isn't drowning in YAML complexity yet. Defer until the volume of YAML-per-Project is actually painful.
-- **Full Project lifecycle (`ws project archive`, `ws project clone`).** Nice to have eventually; not needed for the core ontology fix.
+- **Full Project lifecycle (`drydock project archive`, `drydock project clone`).** Nice to have eventually; not needed for the core ontology fix.
 - **Renaming "Project."** Steven asked about this earlier; my read remains: "Project" is generic but familiar. The cost of renaming is high and the benefit is small. Keep.
 
 ---
@@ -351,19 +351,19 @@ If you wanted to land this incrementally rather than all-at-once:
 
 **Phase 0 — make staleness visible (smallest possible step).**
 - Add `pinned_yaml_sha256` column to `workspaces` (defaulting to '').
-- `ws create` and `ws project reload` both write the SHA at the moment of pin.
-- `ws host audit` surfaces per-Dock "policy SHA matches current YAML?" — yes/no/unknown.
+- `drydock create` and `drydock project reload` both write the SHA at the moment of pin.
+- `drydock host audit` surfaces per-Dock "policy SHA matches current YAML?" — yes/no/unknown.
 - Cost: tiny (one column, one hash function call, one audit-output addition).
 - Value: closes the silent-drift problem. You can see what's stale without needing to know.
 
 **Phase 1 — make Project a registered entity.**
 - Add `projects` table.
-- `ws create` auto-registers if Project not yet known.
-- `ws project list` and `ws project status <name>` work.
+- `drydock create` auto-registers if Project not yet known.
+- `drydock project list` and `drydock project status <name>` work.
 - Cost: schema migration + a few CLI commands.
 - Value: enables "which Docks of this Project?" queries; foundation for everything else.
 
-**Phase 2 — `ws project propagate <project>`.**
+**Phase 2 — `drydock project propagate <project>`.**
 - Reloads all Docks of a given Project atomically; emits per-Dock audit.
 - Replaces the per-Dock reload-loop pattern.
 - Cost: one new RPC + CLI command, modest.
@@ -379,7 +379,7 @@ If you wanted to land this incrementally rather than all-at-once:
 - Free-form string at create time; surfaced in inspect/audit.
 - Could happen alongside any of the above phases — independent.
 - Cost: one column + one CLI flag.
-- Value: enables differential treatment (Harbormaster Phase C onwards).
+- Value: enables differential treatment (Auditor judgment from Phase PA3 onwards).
 
 **Phase 5+ (deferred, only if needed):**
 - Project YAML in project's own repo (git URI).
@@ -399,15 +399,18 @@ The least coherent thing in the current model is the **interaction between** "Pr
 
 The conservative recommendation: ship Phase 0, see if it changes how you operate, then Phase 2 if reload-friction is still annoying. Phase 1, 3, 4 add real value but aren't urgent.
 
-The aggressive recommendation: ship Phase 0-3 as one cohesive V2-of-Project work, on the bet that the per-field bind classification is what unlocks the Harbormaster's autonomous-operation story (Harbormaster can apply LIVE changes without principal involvement, escalates only on PINNED drift).
+The aggressive recommendation: ship Phase 0-3 as one cohesive V2-of-Project work, on the bet that the per-field bind classification is what unlocks the daemon's autonomous-operation story (Authority applies LIVE changes deterministically without principal involvement; Auditor escalates only on PINNED drift).
 
-Either is defensible. The current model is also defensible — it's just generating friction that someone (you or the Harbormaster) will absorb.
+Either is defensible. The current model is also defensible — it's just generating friction that someone (you, or the Auditor surfacing it via daily summary) will absorb.
 
 ---
 
-## Open questions
+## Resolved decisions and open questions
 
-1. **Should Project YAML live in the project's own repo by default?** If yes, the cross-Harbor drift problem largely dissolves but `ws create` needs to clone-or-pull to get the YAML.
-2. **What's the right granularity for `purpose`?** Free-form string risks proliferation (40 unique values across 50 Docks); enum risks not capturing real usage. Could start free-form, observe, enum-ify.
-3. **Should the Harbormaster have authority to auto-propagate LIVE field changes, or always require principal action?** Current `principal-harbormaster-governance.md` §6 says policy mutation is static V1 (principal hand on policy file). LIVE field auto-application is in tension with that — it's the daemon applying YAML changes without explicit principal action per Dock. Probably consistent (principal still authored the YAML edit), but worth saying explicitly.
-4. **Do we need a `Project` audit principal?** Today audit tracks `desk_id`. If Project edits become first-class events, they need their own principal-id; probably the human principal directly (no Project-level agent in the trust model).
+**Resolved:**
+- **LIVE field auto-propagation.** Yes — the principal authored the YAML edit, so applying it is consistent with static policy mutation; no per-Dock confirmation needed.
+- **Project audit principal.** The human principal directly — no Project-level agent in the trust model.
+
+**Still open:**
+1. **Should Project YAML live in the project's own repo by default?** If yes, the cross-Harbor drift problem largely dissolves but `drydock create` needs to clone-or-pull to get the YAML.
+2. **What's the right granularity for `purpose`?** Free-form string risks proliferation; enum risks not capturing real usage. Could start free-form, observe, enum-ify.

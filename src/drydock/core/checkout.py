@@ -1,4 +1,4 @@
-"""Git checkout (standalone clone) for workspace isolation."""
+"""Git checkout (standalone clone) for drydock isolation."""
 
 import logging
 import os
@@ -7,15 +7,15 @@ import subprocess
 from pathlib import Path
 
 from . import CONTAINER_REMOTE_GID, CONTAINER_REMOTE_UID, WsError
-from .workspace import Workspace
+from .runtime import Drydock
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHECKOUT_BASE = Path.home() / ".drydock" / "worktrees"
 
 
-def create_checkout(ws: Workspace, base_dir: Path | None = None) -> Path:
-    """Create a standalone git clone for the workspace, returning the checkout path.
+def create_checkout(ws: Drydock, base_dir: Path | None = None) -> Path:
+    """Create a standalone git clone for the drydock, returning the checkout path.
 
     Clones from ``ws.repo_path`` using ``--reference --dissociate`` for
     fast initial setup (hardlinked objects) that detaches after clone so
@@ -40,7 +40,7 @@ def create_checkout(ws: Workspace, base_dir: Path | None = None) -> Path:
     if dest.exists():
         raise WsError(
             f"Checkout directory already exists: {dest}",
-            fix=f"Remove '{dest}' or destroy the existing workspace first",
+            fix=f"Remove '{dest}' or destroy the existing drydock first",
         )
 
     if _branch_exists(repo, ws.branch):

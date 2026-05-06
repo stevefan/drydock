@@ -1,4 +1,4 @@
-"""Devcontainer override generator for per-workspace orchestration."""
+"""Devcontainer override generator for per-drydock orchestration."""
 
 import hashlib
 import json
@@ -10,27 +10,27 @@ from pathlib import Path
 from . import WsError
 
 logger = logging.getLogger(__name__)
-from .workspace import Workspace
+from .runtime import Drydock
 
 DEFAULT_SECRETS_HOST_DIR = str(Path.home() / ".drydock" / "secrets")
 DEFAULT_SECRETS_CONTAINER_DIR = "/run/secrets"
 # Socket lives inside its own dedicated dir so the overlay can bind-mount
 # the DIRECTORY (not the socket file) into drydock containers. File
-# bind-mounts capture inodes at container-start and orphan on wsd
+# bind-mounts capture inodes at container-start and orphan on daemon
 # restart; directory bind-mounts survive socket-file recreation.
 DEFAULT_WSD_RUN_HOST_DIR = str(Path.home() / ".drydock" / "run")
 DEFAULT_WSD_RUN_CONTAINER_DIR = "/run/drydock"
-DEFAULT_WSD_SOCKET_CONTAINER_PATH = "/run/drydock/wsd.sock"
+DEFAULT_WSD_SOCKET_CONTAINER_PATH = "/run/drydock/daemon.sock"
 DEFAULT_DRYDOCK_RPC_HOST_PATH = str(Path.home() / ".drydock" / "bin" / "drydock-rpc")
 DEFAULT_DRYDOCK_RPC_CONTAINER_PATH = "/usr/local/bin/drydock-rpc"
 SHORT_ID_LENGTH = 6
 
 
-def _short_id(ws: Workspace) -> str:
+def _short_id(ws: Drydock) -> str:
     return hashlib.sha256(ws.id.encode()).hexdigest()[:SHORT_ID_LENGTH]
 
 
-def _default_identity(ws: Workspace) -> str:
+def _default_identity(ws: Drydock) -> str:
     return f"{ws.name}-{_short_id(ws)}"
 
 
@@ -53,7 +53,7 @@ class OverlayConfig:
     forward_ports: list[int] = field(default_factory=list)
     claude_profile: str = ""
     # In-desk RPC wiring. Set to None to disable either bind-mount
-    # (e.g. running a drydock on a Harbor with no wsd daemon yet).
+    # (e.g. running a drydock on a Harbor with no drydock daemon yet).
     wsd_run_host_dir: str | None = DEFAULT_WSD_RUN_HOST_DIR
     drydock_rpc_host_path: str | None = DEFAULT_DRYDOCK_RPC_HOST_PATH
     # Phase A hard resource ceilings — raw dict from project YAML.
@@ -62,8 +62,8 @@ class OverlayConfig:
     resources_hard: dict = field(default_factory=dict)
 
 
-def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict:
-    """Build a devcontainer override dict for a workspace.
+def generate_overlay(ws: Drydock, config: OverlayConfig | None = None) -> dict:
+    """Build a devcontainer override dict for a drydock.
 
     The returned dict is suitable for writing to a JSON file and passing
     to `devcontainer up --override-config`.
@@ -99,12 +99,12 @@ def generate_overlay(ws: Workspace, config: OverlayConfig | None = None) -> dict
             overlay["runArgs"].extend(ceiling_args)
 
     # When a desk declares workspace_subdir, land the container's default
-    # WORKDIR at /workspace/<subdir> so relative paths in schedule.yaml
+    # WORKDIR at /drydock/<subdir> so relative paths in schedule.yaml
     # commands (`bash deploy/run-daily.sh`) resolve inside the subproject.
     # Without this, cron jobs fail with exit 127 "No such file or
     # directory" because ws exec lands in the repo root, not the subdir.
     if ws.workspace_subdir:
-        overlay["workspaceFolder"] = f"/workspace/{ws.workspace_subdir}"
+        overlay["drydockFolder"] = f"/drydock/{ws.workspace_subdir}"
 
     container_env = _build_container_env(ws, config)
     if container_env:
@@ -181,7 +181,7 @@ def merge_into_base(base_path: Path, overlay: dict) -> dict:
     # source devcontainer.json is NOT at the conventional .devcontainer/
     # location (e.g., .devcontainer/drydock/ via devcontainer_subpath), because
     # devcontainer CLI resolves relative build paths against a synthetic
-    # <workspace>/.devcontainer/ regardless of where the override-config sits.
+    # <drydock>/.devcontainer/ regardless of where the override-config sits.
     build = composite.get("build")
     if isinstance(build, dict):
         dockerfile = build.get("dockerfile")
@@ -195,7 +195,7 @@ def merge_into_base(base_path: Path, overlay: dict) -> dict:
 
 
 def write_overlay(
-    ws: Workspace,
+    ws: Drydock,
     output_dir: Path,
     config: OverlayConfig | None = None,
     *,
@@ -215,8 +215,8 @@ def remove_overlay(overlay_path: str) -> None:
     Path(overlay_path).unlink()
 
 
-def regenerate_overlay_from_workspace(
-    ws: Workspace,
+def regenerate_overlay_from_drydock(
+    ws: Drydock,
     *,
     overlay_dir: Path | None = None,
 ) -> Path:
@@ -292,7 +292,7 @@ def regenerate_overlay_from_workspace(
     )
 
 
-def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]:
+def _build_container_env(ws: Drydock, config: OverlayConfig) -> dict[str, str]:
     env: dict[str, str] = {}
 
     env["TAILSCALE_HOSTNAME"] = config.tailscale_hostname or _default_identity(ws)
@@ -321,7 +321,7 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
     if config.storage_mounts:
         env["STORAGE_MOUNTS_JSON"] = json.dumps(config.storage_mounts)
 
-    # Workspace identity labels as env vars for container introspection
+    # Drydock identity labels as env vars for container introspection
     env["DRYDOCK_WORKSPACE_ID"] = ws.id
     env["DRYDOCK_WORKSPACE_NAME"] = ws.name
     env["DRYDOCK_PROJECT"] = ws.project
@@ -332,34 +332,34 @@ def _build_container_env(ws: Workspace, config: OverlayConfig) -> dict[str, str]
     # In-desk RPC — tell any worker (ws CLI, drydock-rpc, direct clients)
     # where to reach the daemon inside the container.
     if config.wsd_run_host_dir:
-        env["DRYDOCK_WSD_SOCKET"] = DEFAULT_WSD_SOCKET_CONTAINER_PATH
+        env["DRYDOCK_DAEMON_SOCKET"] = DEFAULT_WSD_SOCKET_CONTAINER_PATH
 
     env.update(config.extra_env)
 
     return env
 
 
-def _build_mounts(ws: Workspace, config: OverlayConfig) -> list[str]:
+def _build_mounts(ws: Drydock, config: OverlayConfig) -> list[str]:
     mounts: list[str] = []
 
-    # Per-workspace secrets directory. Operator populates it before container
+    # Per-drydock secrets directory. Operator populates it before container
     # start; docker auto-creates an empty dir if missing. v2 will replace this
     # with daemon-brokered time-bounded credential leases.
-    workspace_secrets = Path(config.secrets_host_dir) / ws.id
+    drydock_secrets = Path(config.secrets_host_dir) / ws.id
     mounts.append(
-        f"source={workspace_secrets},target={config.secrets_container_dir},type=bind,readonly"
+        f"source={drydock_secrets},target={config.secrets_container_dir},type=bind,readonly"
     )
 
-    # In-desk RPC: bind-mount the wsd *run directory* + the drydock-rpc
+    # In-desk RPC: bind-mount the drydock daemon *run directory* + the drydock-rpc
     # client script. A worker inside the container reaches the daemon
-    # by connect()-ing to /run/drydock/wsd.sock.
+    # by connect()-ing to /run/drydock/daemon.sock.
     #
     # We bind-mount the DIRECTORY (~/.drydock/run → /run/drydock)
-    # rather than the socket file so a wsd restart — which unlinks and
+    # rather than the socket file so a daemon restart — which unlinks and
     # recreates the socket inode — doesn't orphan the container's
     # bind-mount. The container sees whatever socket file is currently
     # live in the directory. Resilient across `systemctl restart
-    # drydock-wsd.service` without needing per-drydock recreate.
+    # drydock.service` without needing per-drydock recreate.
     if config.wsd_run_host_dir:
         mounts.append(
             f"source={config.wsd_run_host_dir},"

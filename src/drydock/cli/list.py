@@ -1,4 +1,4 @@
-"""ws list — show all workspaces."""
+"""ws list — show all drydocks."""
 
 import click
 
@@ -8,13 +8,13 @@ import click
 @click.option("--state", default=None, help="Filter by state")
 @click.pass_context
 def list(ctx, project, state):
-    """List workspaces."""
+    """List drydocks."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    workspaces = registry.list_workspaces(project=project, state=state)
+    drydocks = registry.list_drydocks(project=project, state=state)
 
     out.table(
-        [ws.to_dict() for ws in workspaces],
+        [ws.to_dict() for ws in drydocks],
         columns=["name", "project", "branch", "state", "owner", "created_at"],
     )

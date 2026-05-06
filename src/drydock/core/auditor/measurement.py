@@ -165,7 +165,7 @@ def collect_docker_stats(container_ids: Iterable[str]) -> dict[str, dict]:
 
 
 def count_recent_audit_events(
-    desk_id: str,
+    drydock_id: str,
     *,
     audit_path: Path | None = None,
     window: timedelta = _AUDIT_RECENT_WINDOW,
@@ -212,11 +212,11 @@ def count_recent_audit_events(
                 details = rec.get("details", {}) or {}
                 involved_desk = (
                     principal
-                    or details.get("desk_id")
-                    or details.get("caller_desk_id")
+                    or details.get("drydock_id")
+                    or details.get("caller_drydock_id")
                     or ""
                 )
-                if involved_desk != desk_id:
+                if involved_desk != drydock_id:
                     continue
                 event = rec.get("event") or rec.get("event_type") or "unknown"
                 counts[event] = counts.get(event, 0) + 1
@@ -226,15 +226,15 @@ def count_recent_audit_events(
     return {"events_total": total, "by_event_class": counts}
 
 
-def count_active_leases(registry, desk_id: str) -> dict:
+def count_active_leases(registry, drydock_id: str) -> dict:
     """Active lease counts for a Dock, broken by capability type.
 
     Returns {active_total, by_type: {...}}. Empty if no active leases.
     """
     cur = registry._conn.execute(
         "SELECT type, COUNT(*) AS n FROM leases "
-        "WHERE desk_id = ? AND revoked = 0 GROUP BY type",
-        (desk_id,),
+        "WHERE drydock_id = ? AND revoked = 0 GROUP BY type",
+        (drydock_id,),
     )
     by_type: dict[str, int] = {}
     total = 0
@@ -275,13 +275,13 @@ def snapshot_harbor(
     if hostname is None:
         hostname = platform.node() or "unknown"
 
-    workspaces = registry.list_workspaces()
-    container_ids = [w.container_id for w in workspaces if w.container_id]
+    drydocks = registry.list_drydocks()
+    container_ids = [w.container_id for w in drydocks if w.container_id]
     stats_by_cid = collect_docker_stats(container_ids)
 
     snapshot_at = datetime.now(timezone.utc).isoformat()
     drydocks_data: list[dict] = []
-    for ws in workspaces:
+    for ws in drydocks:
         metrics = stats_by_cid.get(ws.container_id) if ws.container_id else None
         leases = count_active_leases(registry, ws.id)
         audit = count_recent_audit_events(ws.id, audit_path=audit_path)

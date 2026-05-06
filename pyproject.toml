@@ -19,7 +19,7 @@ dev = [
 ]
 
 [project.scripts]
-ws = "drydock.cli.main:cli"
+drydock = "drydock.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -10,7 +10,7 @@ Layers, in order of "where things drift":
 
 1. **code**       — installed package version, install location, git SHA
                     if editable, ahead/behind origin, dirty flag.
-2. **daemon**     — wsd running? pid + socket + health probe.
+2. **daemon**     — daemon running? pid + socket + health probe.
 3. **capability** — supported capability types (introspected from the
                     same code this CLI was loaded from), reserved-but-
                     unsupported types.
@@ -151,7 +151,7 @@ def _git(repo_root: Path, *args: str) -> str | None:
 # ---------------- daemon layer ----------------
 
 def _gather_daemon() -> dict:
-    # Reuse cli/daemon.py's status logic so we don't drift from `ws daemon status`.
+    # Reuse cli/daemon.py's status logic so we don't drift from `drydock daemon status`.
     from drydock.cli.daemon import _daemon_status, _socket_path, _log_path
     socket = _socket_path()
     log = _log_path()
@@ -214,7 +214,7 @@ def _format_duration(seconds: int) -> str:
 def _gather_capability_surface() -> dict:
     """Introspect what the code we just imported actually supports."""
     from drydock.core.capability import CapabilityType
-    from drydock.wsd.capability_handlers import _SUPPORTED_CAPABILITY_TYPES
+    from drydock.daemon.capability_handlers import _SUPPORTED_CAPABILITY_TYPES
     from drydock.core.policy import CapabilityKind
 
     all_types = sorted(ct.value for ct in CapabilityType)
@@ -255,9 +255,9 @@ def _gather_base_images() -> dict:
 def _gather_desks() -> dict:
     registry = Registry()
     try:
-        workspaces = registry.list_workspaces()
+        drydocks = registry.list_drydocks()
         desks: list[dict] = []
-        for ws in workspaces:
+        for ws in drydocks:
             desks.append(_describe_desk(registry, ws))
         return {"count": len(desks), "desks": desks}
     finally:
@@ -355,8 +355,8 @@ def _project_yaml_mtime(project: str) -> str | None:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
-def _count_secrets(desk_id: str) -> int:
-    secrets_dir = Path.home() / ".drydock" / "secrets" / desk_id
+def _count_secrets(drydock_id: str) -> int:
+    secrets_dir = Path.home() / ".drydock" / "secrets" / drydock_id
     if not secrets_dir.exists():
         return 0
     try:
@@ -415,11 +415,11 @@ def _gather_helpers() -> dict:
     helper presence. Detects "feature in main but base-image not rebuilt"."""
     registry = Registry()
     try:
-        workspaces = registry.list_workspaces()
+        drydocks = registry.list_drydocks()
     finally:
         registry.close()
 
-    running = [ws for ws in workspaces if ws.container_id]
+    running = [ws for ws in drydocks if ws.container_id]
     if not running:
         return {"probed": [], "note": "no running desks to probe"}
 

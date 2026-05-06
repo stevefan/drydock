@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from drydock.core.audit import V2_EVENTS
-from drydock.wsd.server import _RpcError
+from drydock.daemon.server import _RpcError
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ MAX_LIMIT = 1000
 def get_audit(
     params: dict | list | None,
     request_id: str | int | None,
-    caller_desk_id: str | None,
+    caller_drydock_id: str | None,
     *,
     log_path: Path,
 ) -> dict:
@@ -39,13 +39,13 @@ def get_audit(
     - `limit`: 1..1000, default 100
     - `event`: exact match against the `event` field
     - `principal`: exact match (matches V2 entries' `principal` or v1
-      entries' `workspace_id` for cross-shape consumer convenience)
+      entries' `drydock_id` for cross-shape consumer convenience)
 
     Returns: {events: [...], next_before_ts: str | None}.
     `next_before_ts` is non-null when more events remain past the limit;
     pass it back as `before_ts` for the next page.
     """
-    del request_id, caller_desk_id
+    del request_id, caller_drydock_id
 
     filters = _validate_filters(params)
     if not log_path.exists():
@@ -103,7 +103,7 @@ def _validate_filters(params: object) -> dict[str, Any]:
         raise _RpcError(code=-32602, message="invalid_params",
                         data={"reason": "event must be a string"})
     # We DON'T require event ∈ V2_EVENTS here — consumers may want to
-    # filter on v1-shape events too (workspace.created etc.). Validation
+    # filter on v1-shape events too (drydock.created etc.). Validation
     # is a no-op pass-through; mismatched names just yield empty results.
 
     principal = params.get("principal")
@@ -123,10 +123,10 @@ def _matches(entry: dict, filters: dict) -> bool:
     if filters["event"] is not None and entry.get("event") != filters["event"]:
         return False
     if filters["principal"] is not None:
-        # V2 entry: principal field. v1 entry: workspace_id.
+        # V2 entry: principal field. v1 entry: drydock_id.
         principal_match = (
             entry.get("principal") == filters["principal"]
-            or entry.get("workspace_id") == filters["principal"]
+            or entry.get("drydock_id") == filters["principal"]
         )
         if not principal_match:
             return False

@@ -70,7 +70,7 @@ def _evaluate_one(registry, ws, force_rerun_probes: bool = False):
     if config.is_empty:
         return {
             "desk": ws.name,
-            "desk_id": ws.id,
+            "drydock_id": ws.id,
             "checks": [],
             "violations": 0,
             "healthy": True,
@@ -109,12 +109,12 @@ def _format_human(result: dict) -> list[str]:
               help="Force probe re-runs regardless of declared interval.")
 @click.pass_context
 def deskwatch(ctx, name, scan):
-    """Evaluate workload health for one desk (or all)."""
+    """Evaluate workload health for one drydock (or all)."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
     if name:
-        ws = registry.get_workspace(name)
+        ws = registry.get_drydock(name)
         if ws is None:
             out.error(WsError(
                 f"Drydock '{name}' not found",
@@ -124,7 +124,7 @@ def deskwatch(ctx, name, scan):
             return
         desks = [ws]
     else:
-        desks = registry.list_workspaces()
+        desks = registry.list_drydocks()
 
     all_results = []
     exit_code = 0
@@ -133,7 +133,7 @@ def deskwatch(ctx, name, scan):
             result, contrib = _evaluate_one(registry, ws, force_rerun_probes=scan)
         except WsError as e:
             result = {
-                "desk": ws.name, "desk_id": ws.id,
+                "desk": ws.name, "drydock_id": ws.id,
                 "checks": [], "violations": 1, "healthy": False,
                 "error": e.message, "fix": e.fix,
             }
@@ -175,7 +175,7 @@ def deskwatch_events(ctx, desk, limit, kind):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(desk)
+    ws = registry.get_drydock(desk)
     if ws is None:
         out.error(WsError(
             f"Drydock '{desk}' not found",
@@ -188,7 +188,7 @@ def deskwatch_events(ctx, desk, limit, kind):
     if kind:
         events = [e for e in events if e["kind"] == kind]
 
-    payload = {"desk": desk, "desk_id": ws.id, "count": len(events), "events": events}
+    payload = {"desk": desk, "drydock_id": ws.id, "count": len(events), "events": events}
     human_lines = [f"{desk}: {len(events)} event(s)" + (f" (kind={kind})" if kind else "")]
     for e in events:
         mark = {"ok": "✓", "failed": "✗", "missing": "?"}.get(e["status"], "·")
@@ -216,7 +216,7 @@ def deskwatch_record(ctx, desk, kind, event_name, status, detail):
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(desk)
+    ws = registry.get_drydock(desk)
     if ws is None:
         out.error(WsError(
             f"Drydock '{desk}' not found",

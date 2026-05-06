@@ -1,7 +1,7 @@
 """Host-side Telegram bot helper for Authority + (future) Auditor + ad-hoc.
 
 Stdlib-only. Mirrors the in-Drydock ``tg.py`` helper from collab Drydock's
-/workspace/telegram/tg.py (per AGENT_NOTES.md), but reads credentials from
+/drydock/telegram/tg.py (per AGENT_NOTES.md), but reads credentials from
 Harbor-level daemon-secrets instead of in-container /run/secrets/.
 
 Conventions:
@@ -16,7 +16,7 @@ switch or the Auditor's escalation path. Callers can check the return
 value if they want to know whether their message landed.
 
 Design decision (2026-05-05): host-side telegram is necessary because
-Authority + deadman switch run in `wsd` on the Harbor host, OUTSIDE any
+Authority + deadman switch run in `drydock daemon` on the Harbor host, OUTSIDE any
 Drydock container. The in-Drydock tg.py and shipped tg-send only work
 INSIDE drydock-base containers; for host-side use, we need this module.
 When the auth-broker work eventually moves principal-OAuth-credentials
@@ -75,7 +75,7 @@ def send(
 
     Never raises. Returns False if bot token missing, chat_id missing, or
     the API call fails for any reason. Logs warnings on failure so failed
-    sends are diagnosable from `wsd.log` / journald.
+    sends are diagnosable from `daemon.log` / journald.
 
     `disable_web_page_preview` defaults True because tailnet URLs aren't
     reachable from Telegram's previewer (per the AGENT_NOTES.md learning),

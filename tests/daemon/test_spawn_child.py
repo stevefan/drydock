@@ -37,10 +37,10 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _create_parent(wsd, *, name: str, request_id: str, capabilities: list[str], domains: list[str]) -> tuple[dict, str]:
-    repo = wsd.home / f"repo-{name}"
+def _create_parent(daemon, *, name: str, request_id: str, capabilities: list[str], domains: list[str]) -> tuple[dict, str]:
+    repo = daemon.home / f"repo-{name}"
     _init_repo(repo)
-    result = wsd.call_rpc(
+    result = daemon.call_rpc(
         "CreateDesk",
         params={
             "project": "proj",
@@ -51,25 +51,25 @@ def _create_parent(wsd, *, name: str, request_id: str, capabilities: list[str], 
         },
         request_id=request_id,
     )["result"]
-    token = (wsd.secrets_root / result["desk_id"] / "drydock-token").read_text(encoding="utf-8").strip()
+    token = (daemon.secrets_root / result["drydock_id"] / "drydock-token").read_text(encoding="utf-8").strip()
     return result, token
 
 
-def test_spawn_child_happy_path_with_narrow_subset(wsd):
+def test_spawn_child_happy_path_with_narrow_subset(daemon):
     parent, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-happy",
         request_id="parent-happy",
         capabilities=["spawn_children"],
         domains=["api.example.com", "example.com"],
     )
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={
             "project": "proj",
             "name": "child-happy",
-            "repo_path": str(wsd.home / "repo-parent-happy"),
+            "repo_path": str(daemon.home / "repo-parent-happy"),
             "firewall_extra_domains": ["api.example.com"],
             "capabilities": ["spawn_children"],
         },
@@ -78,37 +78,37 @@ def test_spawn_child_happy_path_with_narrow_subset(wsd):
     )
     result = response["result"]
 
-    assert result["desk_id"] == "ws_child_happy"
-    assert result["parent_desk_id"] == parent["desk_id"]
+    assert result["drydock_id"] == "dock_child_happy"
+    assert result["parent_drydock_id"] == parent["drydock_id"]
     assert result["state"] == "running"
     assert result["container_id"].startswith("dry-run-")
 
-    conn = _connect(wsd.registry_path)
+    conn = _connect(daemon.registry_path)
     row = conn.execute(
-        "SELECT parent_desk_id FROM workspaces WHERE name = ?",
+        "SELECT parent_drydock_id FROM drydocks WHERE name = ?",
         ("child-happy",),
     ).fetchone()
     conn.close()
 
     assert row is not None
-    assert row["parent_desk_id"] == parent["desk_id"]
+    assert row["parent_drydock_id"] == parent["drydock_id"]
 
 
-def test_spawn_child_narrowness_violated_firewall(wsd):
+def test_spawn_child_narrowness_violated_firewall(daemon):
     _, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-firewall",
         request_id="parent-firewall",
         capabilities=["spawn_children"],
         domains=["a.com"],
     )
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={
             "project": "proj",
             "name": "child-firewall",
-            "repo_path": str(wsd.home / "repo-parent-firewall"),
+            "repo_path": str(daemon.home / "repo-parent-firewall"),
             "firewall_extra_domains": ["b.com"],
         },
         request_id="spawn-firewall",
@@ -121,9 +121,9 @@ def test_spawn_child_narrowness_violated_firewall(wsd):
     assert error["data"]["reject"]["rule"] == "firewall_narrowness"
     assert error["data"]["reject"]["offending_item"] == "b.com"
 
-    conn = _connect(wsd.registry_path)
+    conn = _connect(daemon.registry_path)
     row = conn.execute(
-        "SELECT * FROM workspaces WHERE name = ?",
+        "SELECT * FROM drydocks WHERE name = ?",
         ("child-firewall",),
     ).fetchone()
     conn.close()
@@ -131,21 +131,21 @@ def test_spawn_child_narrowness_violated_firewall(wsd):
     assert row is None
 
 
-def test_spawn_child_narrowness_violated_capability(wsd):
+def test_spawn_child_narrowness_violated_capability(daemon):
     _, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-capability",
         request_id="parent-capability",
         capabilities=[],
         domains=["example.com"],
     )
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={
             "project": "proj",
             "name": "child-capability",
-            "repo_path": str(wsd.home / "repo-parent-capability"),
+            "repo_path": str(daemon.home / "repo-parent-capability"),
             "capabilities": ["spawn_children"],
         },
         request_id="spawn-capability",
@@ -159,11 +159,11 @@ def test_spawn_child_narrowness_violated_capability(wsd):
     assert error["data"]["reject"]["offending_item"] == "spawn_children"
 
 
-def test_spawn_child_unauthenticated_no_token(wsd):
-    repo = wsd.home / "repo-no-token"
+def test_spawn_child_unauthenticated_no_token(daemon):
+    repo = daemon.home / "repo-no-token"
     _init_repo(repo)
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={"project": "proj", "name": "child-no-token", "repo_path": str(repo)},
         request_id="spawn-no-token",
@@ -174,26 +174,26 @@ def test_spawn_child_unauthenticated_no_token(wsd):
     assert response["error"]["data"]["reason"] == "no_token"
 
 
-def test_spawn_child_parent_not_found(wsd):
+def test_spawn_child_parent_not_found(daemon):
     parent, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-gone",
         request_id="parent-gone",
         capabilities=["spawn_children"],
         domains=["example.com"],
     )
 
-    conn = _connect(wsd.registry_path)
-    conn.execute("DELETE FROM workspaces WHERE id = ?", (parent["desk_id"],))
+    conn = _connect(daemon.registry_path)
+    conn.execute("DELETE FROM drydocks WHERE id = ?", (parent["drydock_id"],))
     conn.commit()
     conn.close()
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={
             "project": "proj",
             "name": "child-gone",
-            "repo_path": str(wsd.home / "repo-parent-gone"),
+            "repo_path": str(daemon.home / "repo-parent-gone"),
         },
         request_id="spawn-gone",
         auth=token,
@@ -201,12 +201,12 @@ def test_spawn_child_parent_not_found(wsd):
 
     assert response["error"]["code"] == -32001
     assert response["error"]["message"] == "parent_not_found"
-    assert response["error"]["data"]["parent_desk_id"] == parent["desk_id"]
+    assert response["error"]["data"]["parent_drydock_id"] == parent["drydock_id"]
 
 
-def test_spawn_child_idempotent_by_request_id(wsd):
+def test_spawn_child_idempotent_by_request_id(daemon):
     parent, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-idem",
         request_id="parent-idem",
         capabilities=["spawn_children"],
@@ -216,19 +216,19 @@ def test_spawn_child_idempotent_by_request_id(wsd):
     params = {
         "project": "proj",
         "name": "child-idem",
-        "repo_path": str(wsd.home / "repo-parent-idem"),
+        "repo_path": str(daemon.home / "repo-parent-idem"),
         "firewall_extra_domains": ["api.example.com"],
         "capabilities": ["spawn_children"],
     }
-    first = wsd.call_rpc("SpawnChild", params=params, request_id="r1", auth=token)["result"]
-    second = wsd.call_rpc("SpawnChild", params=params, request_id="r1", auth=token)["result"]
+    first = daemon.call_rpc("SpawnChild", params=params, request_id="r1", auth=token)["result"]
+    second = daemon.call_rpc("SpawnChild", params=params, request_id="r1", auth=token)["result"]
 
     assert second == first
-    assert second["parent_desk_id"] == parent["desk_id"]
+    assert second["parent_drydock_id"] == parent["drydock_id"]
 
-    conn = _connect(wsd.registry_path)
-    workspace_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM workspaces WHERE name = ?",
+    conn = _connect(daemon.registry_path)
+    drydock_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM drydocks WHERE name = ?",
         ("child-idem",),
     ).fetchone()["n"]
     task_count = conn.execute(
@@ -241,15 +241,15 @@ def test_spawn_child_idempotent_by_request_id(wsd):
     ).fetchone()
     conn.close()
 
-    assert workspace_count == 1
+    assert drydock_count == 1
     assert task_count == 1
     assert task["method"] == "SpawnChild"
     assert json.loads(task["outcome_json"]) == first
 
 
-def test_spawn_child_applies_overlay_fields(wsd):
+def test_spawn_child_applies_overlay_fields(daemon):
     parent, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-overlay",
         request_id="parent-overlay",
         capabilities=["spawn_children"],
@@ -257,12 +257,12 @@ def test_spawn_child_applies_overlay_fields(wsd):
     )
     del parent
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={
             "project": "proj",
             "name": "child-overlay",
-            "repo_path": str(wsd.home / "repo-parent-overlay"),
+            "repo_path": str(daemon.home / "repo-parent-overlay"),
             "remote_control_name": "Child Agent",
         },
         request_id="spawn-overlay",
@@ -270,15 +270,15 @@ def test_spawn_child_applies_overlay_fields(wsd):
     )
     result = response["result"]
 
-    conn = _connect(wsd.registry_path)
-    workspace = conn.execute(
-        "SELECT config FROM workspaces WHERE name = ?",
+    conn = _connect(daemon.registry_path)
+    drydock = conn.execute(
+        "SELECT config FROM drydocks WHERE name = ?",
         ("child-overlay",),
     ).fetchone()
     conn.close()
 
-    assert workspace is not None
-    config = json.loads(workspace["config"])
+    assert drydock is not None
+    config = json.loads(drydock["config"])
     overlay = json.loads(Path(config["overlay_path"]).read_text())
 
     assert result["state"] == "running"
@@ -286,9 +286,9 @@ def test_spawn_child_applies_overlay_fields(wsd):
     assert overlay["containerEnv"]["REMOTE_CONTROL_NAME"] == "Child Agent"
 
 
-def test_spawn_child_with_devcontainer_subpath(wsd):
+def test_spawn_child_with_devcontainer_subpath(daemon):
     parent, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-subpath",
         request_id="parent-subpath",
         capabilities=["spawn_children"],
@@ -296,11 +296,11 @@ def test_spawn_child_with_devcontainer_subpath(wsd):
     )
     del parent
 
-    child_repo = wsd.home / "repo-parent-subpath"
+    child_repo = daemon.home / "repo-parent-subpath"
     (child_repo / ".devcontainer" / "devcontainer.json").unlink()
     _add_devcontainer_variant(child_repo, ".devcontainer/drydock")
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={
             "project": "proj",
@@ -315,21 +315,21 @@ def test_spawn_child_with_devcontainer_subpath(wsd):
 
     assert result["state"] == "running"
 
-    conn = _connect(wsd.registry_path)
-    workspace = conn.execute(
-        "SELECT config, worktree_path FROM workspaces WHERE name = ?",
+    conn = _connect(daemon.registry_path)
+    drydock = conn.execute(
+        "SELECT config, worktree_path FROM drydocks WHERE name = ?",
         ("child-subpath",),
     ).fetchone()
     conn.close()
 
-    assert workspace is not None
-    config = json.loads(workspace["config"])
+    assert drydock is not None
+    config = json.loads(drydock["config"])
     assert config["devcontainer_subpath"] == ".devcontainer/drydock"
-    expected_path = Path(workspace["worktree_path"]) / ".devcontainer" / "drydock" / "devcontainer.json"
+    expected_path = Path(drydock["worktree_path"]) / ".devcontainer" / "drydock" / "devcontainer.json"
     assert expected_path.exists()
 
 
-def test_spawn_child_rate_limited_when_too_many_provisioning(wsd):
+def test_spawn_child_rate_limited_when_too_many_provisioning(daemon):
     """Gotcha #2: soft per-parent cap on concurrent SpawnChild.
 
     A parent with >= SPAWN_CHILD_INFLIGHT_MAX children in 'provisioning'
@@ -337,7 +337,7 @@ def test_spawn_child_rate_limited_when_too_many_provisioning(wsd):
     parent from queuing unbounded container builds.
     """
     parent, token = _create_parent(
-        wsd,
+        daemon,
         name="parent-rate",
         request_id="parent-rate",
         capabilities=["spawn_children"],
@@ -347,28 +347,28 @@ def test_spawn_child_rate_limited_when_too_many_provisioning(wsd):
     # Inject provisioning-state children directly into the registry to
     # simulate in-flight SpawnChild calls without actually building
     # containers. SPAWN_CHILD_INFLIGHT_MAX defaults to 5; we inject 5.
-    conn = _connect(wsd.registry_path)
+    conn = _connect(daemon.registry_path)
     for i in range(5):
-        child_id = f"ws_fake_child_{i}"
+        child_id = f"dock_fake_child_{i}"
         conn.execute(
-            """INSERT INTO workspaces
+            """INSERT INTO drydocks
                (id, name, project, repo_path, branch, state,
-                created_at, updated_at, config, parent_desk_id)
+                created_at, updated_at, config, parent_drydock_id)
                VALUES (?, ?, ?, ?, ?, 'provisioning', datetime('now'),
                        datetime('now'), '{}', ?)""",
             (child_id, f"fake-child-{i}", "proj",
-             str(wsd.home / "repo-parent-rate"), f"ws/fake-child-{i}",
-             parent["desk_id"]),
+             str(daemon.home / "repo-parent-rate"), f"ws/fake-child-{i}",
+             parent["drydock_id"]),
         )
     conn.commit()
     conn.close()
 
-    response = wsd.call_rpc(
+    response = daemon.call_rpc(
         "SpawnChild",
         params={
             "project": "proj",
             "name": "child-rate-blocked",
-            "repo_path": str(wsd.home / "repo-parent-rate"),
+            "repo_path": str(daemon.home / "repo-parent-rate"),
             "firewall_extra_domains": ["a.com"],
             "capabilities": ["spawn_children"],
         },

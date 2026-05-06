@@ -21,22 +21,22 @@ from drydock.core.schedule import (
 
 @click.group()
 def schedule():
-    """Manage host-native scheduled jobs for workspaces."""
+    """Manage host-native scheduled jobs for drydocks."""
 
 
 @schedule.command("sync")
 @click.argument("desk")
 @click.pass_context
 def schedule_sync(ctx, desk):
-    """Sync deploy/schedule.yaml from a workspace worktree to host scheduler."""
+    """Sync deploy/schedule.yaml from a drydock worktree to host scheduler."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(desk)
+    ws = registry.get_drydock(desk)
     if ws is None:
         out.error(WsError(
-            message=f"Workspace '{desk}' not found in registry",
-            fix="Run 'ws list' to see available workspaces.",
+            message=f"Drydock '{desk}' not found in registry",
+            fix="Run 'ws list' to see available drydocks.",
         ))
         return
 
@@ -78,15 +78,15 @@ def schedule_sync(ctx, desk):
 @click.argument("desk")
 @click.pass_context
 def schedule_list(ctx, desk):
-    """List installed schedule entries for a workspace."""
+    """List installed schedule entries for a drydock."""
     out = ctx.obj["output"]
     registry = ctx.obj["registry"]
 
-    ws = registry.get_workspace(desk)
+    ws = registry.get_drydock(desk)
     if ws is None:
         out.error(WsError(
-            message=f"Workspace '{desk}' not found in registry",
-            fix="Run 'ws list' to see available workspaces.",
+            message=f"Drydock '{desk}' not found in registry",
+            fix="Run 'ws list' to see available drydocks.",
         ))
         return
 
@@ -128,7 +128,7 @@ def schedule_list(ctx, desk):
 @click.argument("desk")
 @click.pass_context
 def schedule_remove(ctx, desk):
-    """Remove all host-native schedule entries for a workspace."""
+    """Remove all host-native schedule entries for a drydock."""
     out = ctx.obj["output"]
 
     backend = detect_backend()

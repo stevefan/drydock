@@ -83,23 +83,23 @@ class TestBuildProvisionSessionPolicy:
 class TestStubStorageBackend:
     def test_returns_deterministic_creds(self):
         backend = StubStorageBackend()
-        cred = backend.mint(desk_id="ws_x", bucket="b", prefix="p", mode="ro")
-        assert cred.access_key_id == "STUB-ws_x-AKID"
-        assert cred.secret_access_key == "STUB-ws_x-SECRET"
-        assert cred.session_token == "STUB-ws_x-TOKEN"
+        cred = backend.mint(drydock_id="dock_x", bucket="b", prefix="p", mode="ro")
+        assert cred.access_key_id == "STUB-dock_x-AKID"
+        assert cred.secret_access_key == "STUB-dock_x-SECRET"
+        assert cred.session_token == "STUB-dock_x-TOKEN"
         assert isinstance(cred.expiration, datetime)
 
     def test_records_calls(self):
         backend = StubStorageBackend()
-        backend.mint(desk_id="ws_a", bucket="b", prefix="p", mode="rw")
-        backend.mint(desk_id="ws_b", bucket="c", prefix="", mode="ro")
+        backend.mint(drydock_id="dock_a", bucket="b", prefix="p", mode="rw")
+        backend.mint(drydock_id="dock_b", bucket="c", prefix="", mode="ro")
         assert len(backend.calls) == 2
-        assert backend.calls[0] == {"desk_id": "ws_a", "bucket": "b", "prefix": "p", "mode": "rw"}
+        assert backend.calls[0] == {"drydock_id": "dock_a", "bucket": "b", "prefix": "p", "mode": "rw"}
 
     def test_invalid_mode_rejected_even_in_stub(self):
         backend = StubStorageBackend()
         with pytest.raises(StorageBackendConfigError):
-            backend.mint(desk_id="ws_x", bucket="b", prefix="", mode="admin")
+            backend.mint(drydock_id="dock_x", bucket="b", prefix="", mode="admin")
 
 
 # StsAssumeRoleBackend contract: shells out to `aws sts assume-role` with
@@ -125,7 +125,7 @@ class TestStsAssumeRoleBackend:
         })
         mock_result = MagicMock(returncode=0, stdout=fake_output, stderr="")
         with patch("drydock.core.storage.subprocess.run", return_value=mock_result) as mock_run:
-            cred = backend.mint(desk_id="ws_foo", bucket="mybucket", prefix="data", mode="ro")
+            cred = backend.mint(drydock_id="dock_foo", bucket="mybucket", prefix="data", mode="ro")
         argv = mock_run.call_args[0][0]
         assert argv[:3] == ["aws", "sts", "assume-role"]
         assert "--role-arn" in argv
@@ -154,7 +154,7 @@ class TestStsAssumeRoleBackend:
         )
         with patch("drydock.core.storage.subprocess.run", return_value=mock_result):
             with pytest.raises(StorageBackendPermissionDenied):
-                backend.mint(desk_id="ws_x", bucket="b", prefix="", mode="ro")
+                backend.mint(drydock_id="dock_x", bucket="b", prefix="", mode="ro")
 
     def test_other_sts_errors_map_to_unavailable(self):
         backend = StsAssumeRoleBackend(role_arn="arn:aws:iam::123:role/x")
@@ -163,14 +163,14 @@ class TestStsAssumeRoleBackend:
         )
         with patch("drydock.core.storage.subprocess.run", return_value=mock_result):
             with pytest.raises(StorageBackendUnavailable):
-                backend.mint(desk_id="ws_x", bucket="b", prefix="", mode="ro")
+                backend.mint(drydock_id="dock_x", bucket="b", prefix="", mode="ro")
 
     def test_malformed_response_maps_to_unavailable(self):
         backend = StsAssumeRoleBackend(role_arn="arn:aws:iam::123:role/x")
         mock_result = MagicMock(returncode=0, stdout="not json", stderr="")
         with patch("drydock.core.storage.subprocess.run", return_value=mock_result):
             with pytest.raises(StorageBackendUnavailable):
-                backend.mint(desk_id="ws_x", bucket="b", prefix="", mode="ro")
+                backend.mint(drydock_id="dock_x", bucket="b", prefix="", mode="ro")
 
 
 class TestBuildStorageBackend:
