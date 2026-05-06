@@ -18,7 +18,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -143,27 +143,8 @@ class AnthropicHttpClient:
         )
 
 
-@dataclass
-class MockLLMClient:
-    """Test double — returns pre-canned responses without network calls.
-
-    Use in tests that exercise watch-loop classification logic without
-    needing a real API key. Configure with ``responses`` (a list of
-    LLMResponse objects, returned in order) or ``response_for(prompt)``
-    for prompt-aware mocking.
-    """
-    responses: list[LLMResponse] = field(default_factory=list)
-    calls: list[dict] = field(default_factory=list)
-    raise_on_call: Exception | None = None
-
-    def call(
-        self, *, model: str, system: str, user: str, max_tokens: int,
-    ) -> LLMResponse:
-        self.calls.append({
-            "model": model, "system": system, "user": user, "max_tokens": max_tokens,
-        })
-        if self.raise_on_call is not None:
-            raise self.raise_on_call
-        if not self.responses:
-            return LLMResponse(text='{"verdict": "routine"}', model=model)
-        return self.responses.pop(0)
+# NOTE: the test-double `MockLLMClient` was previously defined here. It
+# moved to `tests/core/auditor_helpers.py` because nothing in production
+# uses it — it's a test-only construct, and shipping it in production
+# code obscured the actual production LLMClient surface (just the
+# protocol + AnthropicHttpClient).

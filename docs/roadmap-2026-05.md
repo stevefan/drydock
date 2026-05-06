@@ -8,6 +8,28 @@ The headline observation: V3 conceptual landing is *substantial* and the impleme
 
 ---
 
+## ✓ Shipped this session (2026-05-05 → 2026-05-06)
+
+| Item | Status | Commits |
+|---|---|---|
+| Phase 0 — `pinned_yaml_sha256` drift visibility | ✓ shipped | `2c06b6f` |
+| Yard primitive (Phase Y0) | ✓ shipped | `36ef1a5` |
+| PA0 measurement layer + `ws auditor snapshot` | ✓ shipped | `184fd56` |
+| Deadman switch + heartbeat + host-side telegram | ✓ shipped | `b3721b5` |
+| PA1 watch_once + LLM client + watch.md prompt | ✓ shipped | `1e996fc` |
+| PA1 daemon wrapper with adaptive cadence | ✓ shipped | `ecf8b7f` |
+| PA2 deep analysis (Sonnet) on flagged events | ✓ shipped | `e781d3d` |
+| Amendment contract A0 (schema + CRUD CLI) | ✓ shipped | `f031f13` |
+| Amendment contract A1-conservative (capability handler side-effects) | ✓ shipped | `3081255` |
+| Auditor V1 architecture decisions resolved | ✓ in vocabulary.md | `9c08a7d` |
+| Vocabulary V3 anchor (Authority+Auditor+Yard+Dock+Fleet) | ✓ canonical | `e685b0f` |
+
+Test count: started session at 590, now 773 (+183). All green.
+
+**Implementation lag closed substantially.** Auditor architecture is end-to-end functional with API key + Telegram configured: cheap classifier every 1-15 min adaptive → on flag, Sonnet deep analysis → on `should_send_telegram`, principal Telegram alert with structured reasoning. Deadman fires if loop dies.
+
+---
+
 ## Tier 1 — most-load-bearing, do first
 
 ### 1.1 Auditor LLM architecture (Steven explicitly flagged)

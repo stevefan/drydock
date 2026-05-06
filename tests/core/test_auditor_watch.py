@@ -21,11 +21,8 @@ from pathlib import Path
 import pytest
 
 from drydock.core.auditor.heartbeat import last_heartbeat
-from drydock.core.auditor.llm import (
-    LLMResponse,
-    LLMUnavailableError,
-    MockLLMClient,
-)
+from drydock.core.auditor.llm import LLMResponse, LLMUnavailableError
+from tests.core.auditor_helpers import MockLLMClient
 from drydock.core.auditor.measurement import HarborSnapshot
 from drydock.core.auditor.watch import (
     DEFAULT_WATCH_MODEL,

@@ -33,7 +33,8 @@ from drydock.core.auditor.deep import (
     parse_deep_verdict,
     read_deep_log,
 )
-from drydock.core.auditor.llm import LLMResponse, LLMUnavailableError, MockLLMClient
+from drydock.core.auditor.llm import LLMResponse, LLMUnavailableError
+from tests.core.auditor_helpers import MockLLMClient
 from drydock.core.auditor.measurement import HarborSnapshot
 from drydock.core.auditor.watch import WatchVerdict
 from drydock.core.registry import Registry
