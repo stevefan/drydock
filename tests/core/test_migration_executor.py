@@ -353,6 +353,23 @@ class TestStartVerifyStages:
         assert start_stage.detail.get("skipped") is True
         assert start_stage.detail.get("reason") == "no_worktree_path"
 
+    def test_verify_skips_when_start_skipped(self, tmp_path):
+        """Caught by smoke: when START skips (no worktree), VERIFY must
+        skip too rather than refuse with 'not_running_after_start'.
+        Otherwise the synthetic-desk smoke path always rolls back."""
+        env = _seed(tmp_path)
+        mid = _plan_image_bump(env)
+        with patch(
+            "drydock.core.migration_executor.subprocess.run",
+            return_value=_ok_subprocess(),
+        ):
+            outcome = execute_migration(mid, registry=env["registry"], config=env["config"])
+        verify_stage = next(s for s in outcome.stages if s.stage == "verify")
+        assert verify_stage.detail.get("skipped") is True
+        assert verify_stage.detail.get("reason") == "start_skipped"
+        # And the migration completes cleanly, no rollback.
+        assert outcome.terminal_status == "completed"
+
     def test_start_calls_resume_when_worktree_present(self, tmp_path):
         env = _seed(tmp_path)
         # Set worktree_path on the desk so START attempts the resume path.

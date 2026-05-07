@@ -209,11 +209,22 @@ def execute_migration(
         _stage(outcome, registry, migration_id, MigrationStage.MUTATE,
                lambda: _do_mutate(drydock, plan, registry, config))
 
-        _stage(outcome, registry, migration_id, MigrationStage.START,
-               lambda: _do_start(drydock, registry, config))
+        start_result = _stage(
+            outcome, registry, migration_id, MigrationStage.START,
+            lambda: _do_start(drydock, registry, config),
+        )
 
-        _stage(outcome, registry, migration_id, MigrationStage.VERIFY,
-               lambda: _do_verify(drydock, registry, config))
+        # VERIFY semantics depend on what START did. If START skipped
+        # (no worktree → no devcontainer up to perform), there's no
+        # running container to verify; VERIFY skips too. If START
+        # actually resumed, VERIFY confirms post-resume state.
+        start_skipped = bool(start_result.detail.get("skipped"))
+        _stage(
+            outcome, registry, migration_id, MigrationStage.VERIFY,
+            lambda: _do_verify(
+                drydock, registry, config, start_skipped=start_skipped,
+            ),
+        )
 
         _stage(outcome, registry, migration_id, MigrationStage.CLEANUP,
                lambda: _do_cleanup(snapshot_dir))
@@ -518,22 +529,30 @@ def _do_start(drydock, registry, config: ExecutorConfig) -> dict:
     }
 
 
-def _do_verify(drydock, registry, config: ExecutorConfig) -> dict:
-    """Verify the resumed drydock is reachable via the in-container
-    daemon-rpc socket and reports daemon.health=ok.
+def _do_verify(
+    drydock,
+    registry,
+    config: ExecutorConfig,
+    *,
+    start_skipped: bool = False,
+) -> dict:
+    """Verify the resumed drydock is reachable + in state=running.
 
-    Implementation: the container brings up its own drydock-rpc
-    client at /usr/local/bin/drydock-rpc and the daemon socket is
-    bind-mounted into the container at /run/drydock/daemon.sock. We
-    don't need to probe inside the container — verification that the
-    container is up and the daemon is responsive both already happen
-    naturally in START (devcontainer up returns success when the
-    container is healthy from devcontainer's perspective).
+    If START was skipped (e.g., no worktree on a synthetic desk used
+    in tests/smoke), VERIFY skips too — there's nothing to verify.
+    Otherwise, confirm the registry's post-START state is 'running';
+    devcontainer up's own health check is the underlying probe.
 
-    For M1, treat START's success as VERIFY's success. A future
-    Auditor-driven verification could probe deskwatch + a custom
-    `verification_probes` field in project YAML; that's M4.
+    For M1, that's the verification surface. A future Auditor-driven
+    verification could probe deskwatch + a custom `verification_probes`
+    field in project YAML; that's M4.
     """
+    if start_skipped:
+        return {
+            "verified": False,
+            "skipped": True,
+            "reason": "start_skipped",
+        }
     fresh = registry.get_drydock(drydock.name)
     if fresh is None:
         raise StageFailure(
