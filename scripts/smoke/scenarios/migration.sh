@@ -61,8 +61,23 @@ r.create_drydock(Drydock(
 r.close()
 '" || { echo "FAIL: couldn't seed registry"; exit 1; }
 
+# M4 pre-flight probes refuse if target image isn't pulled locally.
+# Use real images that are guaranteed present on the smoke harbor:
+# alpine:3 → alpine:3 is a no-op for the planner (same), so use two
+# different real-images. drydock-base v1 and v1.0.9 are both pulled.
+FROM_IMG="ghcr.io/stevefan/drydock-base:v1.0.9"
+TO_IMG="ghcr.io/stevefan/drydock-base:v1"
+
+# Reseed with the FROM_IMG so the bump is plausible.
+$SSH "/root/.local/share/pipx/venvs/drydock/bin/python -c '
+import sqlite3
+c = sqlite3.connect(\"/root/.drydock/registry.db\")
+c.execute(\"UPDATE drydocks SET image = ? WHERE name = ?\", (\"$FROM_IMG\", \"$NAME\"))
+c.commit()
+'"
+
 # 1. Dry-run.
-dry_resp=$($SSH "drydock --json --dry-run migrate $NAME --target image=img:v2")
+dry_resp=$($SSH "drydock --json --dry-run migrate $NAME --target image=$TO_IMG")
 dry_kind=$(echo "$dry_resp" | python3 -c "
 import sys, json
 print(json.load(sys.stdin)['plan']['target_kind'])
@@ -83,7 +98,7 @@ fi
 echo "dry-run plan: target_kind=image_bump, executed=False: OK"
 
 # 2. Execute.
-exec_resp=$($SSH "drydock --json migrate $NAME --target image=img:v3")
+exec_resp=$($SSH "drydock --json migrate $NAME --target image=$TO_IMG")
 terminal=$(echo "$exec_resp" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -102,8 +117,8 @@ new_image=$($SSH "drydock --json inspect $NAME" | python3 -c "
 import sys, json
 print(json.load(sys.stdin).get('image', ''))
 ")
-if [ "$new_image" != "img:v3" ]; then
-    echo "FAIL: registry image not bumped (got '$new_image')"
+if [ "$new_image" != "$TO_IMG" ]; then
+    echo "FAIL: registry image not bumped (got '$new_image', expected '$TO_IMG')"
     exit 1
 fi
 echo "registry image: $new_image: OK"
