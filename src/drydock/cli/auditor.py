@@ -406,6 +406,52 @@ def auditor_designate(ctx, drydock_name, revoke):
         ))
         return
 
+    if not revoke:
+        # Run the role validator on the drydock's project YAML before
+        # granting the auditor scope. Without this gate, `role: auditor`
+        # is decorative — anyone could declare it and inherit the
+        # asymmetric scope. The validator IS the gate.
+        from drydock.core.project_config import load_project_config
+        from drydock.core.auditor.role_validator import validate_auditor_role
+        from drydock.core import WsError
+
+        cfg = load_project_config(ws.project)
+        if cfg is None:
+            out.error(WsError(
+                f"project_yaml_missing: no project YAML found for "
+                f"project {ws.project!r}",
+                fix=f"Create ~/.drydock/projects/{ws.project}.yaml with "
+                    f"`role: auditor` and the constraints checked by "
+                    f"role_validator (narrow egress, resource caps, "
+                    f"approved image, etc.).",
+            ))
+            return
+        if cfg.role != "auditor":
+            out.error(WsError(
+                f"role_not_auditor: project {ws.project!r} declares "
+                f"role={cfg.role!r}, not 'auditor'",
+                fix="Add `role: auditor` to the project YAML, plus the "
+                    "narrow-egress + resource-cap constraints required "
+                    "by the role validator. See "
+                    "docs/design/port-auditor.md.",
+            ))
+            return
+        result = validate_auditor_role(cfg)
+        if not result.ok:
+            violations_payload = [
+                {"code": v.code, "message": v.message}
+                for v in result.violations
+            ]
+            out.error(WsError(
+                f"auditor_role_violations: project {ws.project!r} declares "
+                f"role: auditor but fails the role validator "
+                f"({len(result.violations)} violation(s))",
+                fix="\n".join(f"  - [{v.code}] {v.message}"
+                              for v in result.violations),
+                context={"violations": violations_payload},
+            ))
+            return
+
     if revoke:
         changed = registry.revoke_auditor_scope(ws.id)
         out.success(

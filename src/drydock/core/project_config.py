@@ -36,7 +36,18 @@ KNOWN_KEYS = {
     "deskwatch",
     "yard",
     "egress_proxy",
+    "role",
 }
+
+# Recognized values for the `role` field. `worker` = ordinary drydock
+# (the default; runs whatever the project does). `auditor` = the Port
+# Auditor's role-locked drydock (one per Harbor; gates `drydock auditor
+# designate` and is checked against role_validator). New roles
+# (harbormaster, etc.) land here when the corresponding scope/role
+# subsystem ships. See docs/design/port-auditor.md.
+ROLE_WORKER = "worker"
+ROLE_AUDITOR = "auditor"
+KNOWN_ROLES = {ROLE_WORKER, ROLE_AUDITOR}
 
 
 @dataclass
@@ -104,6 +115,12 @@ class ProjectConfig:
     # path get deleted in the same commit — no deprecation, no compat
     # shim, we are the only users.
     egress_proxy: str = "disabled"
+    # Phase PA3.1 (port-auditor.md): role-locked drydock declaration.
+    # `worker` (default) is an ordinary drydock. `auditor` is the Port
+    # Auditor's drydock — `drydock auditor designate` runs the validator
+    # in core/auditor/role_validator.py against this YAML before granting
+    # the auditor token scope. Unknown values rejected at load time.
+    role: str = ROLE_WORKER
 
 
 def default_projects_dir() -> Path:
@@ -180,7 +197,13 @@ def load_project_config(
         storage_mounts=raw.get("storage_mounts", []),
         deskwatch=raw.get("deskwatch") or {},
         egress_proxy=str(raw.get("egress_proxy") or "disabled").lower(),
+        role=str(raw.get("role") or ROLE_WORKER).lower(),
     )
+    if cfg.role not in KNOWN_ROLES:
+        raise WsError(
+            message=f"Unknown role {cfg.role!r} in {path}",
+            fix=f"Valid roles: {', '.join(sorted(KNOWN_ROLES))}",
+        )
     return expand_storage_mounts(cfg)
 
 
