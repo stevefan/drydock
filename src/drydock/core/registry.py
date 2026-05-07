@@ -291,6 +291,44 @@ def _migrate_to_v3(conn: sqlite3.Connection) -> None:
     conn.executescript(V3_TABLES)
 
 
+def _backfill_drydock_id_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent column-name fixup for FK tables.
+
+    The V1→drydock vocab migration runs only when the legacy ``workspaces``
+    table exists. On hetzner, after the live deploy ran an earlier version
+    of that migration, the ``deskwatch_events`` table still had
+    ``desk_id``: the migration only handled the FK tables it knew about
+    at the time, and re-running is a no-op once the legacy table is gone.
+
+    This idempotent fixup runs on every Registry init. If any FK table
+    has ``desk_id`` (or ``workspace_id``) and no ``drydock_id``, rename
+    it. Cheap (one PRAGMA per table per startup) and self-healing for
+    the recurring "I forgot about this table in the rename" class.
+
+    Safe to run on fresh DBs: the schema already has ``drydock_id`` so
+    the rename is skipped.
+    """
+    fk_tables = (
+        "events", "leases", "tokens", "amendments",
+        "deskwatch_events", "workload_leases", "migrations",
+    )
+    table_names = {
+        row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    for tbl in fk_tables:
+        if tbl not in table_names:
+            continue
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info('{tbl}')")}
+        if "drydock_id" in cols:
+            continue
+        if "workspace_id" in cols:
+            conn.execute(f"ALTER TABLE {tbl} RENAME COLUMN workspace_id TO drydock_id")
+        elif "desk_id" in cols:
+            conn.execute(f"ALTER TABLE {tbl} RENAME COLUMN desk_id TO drydock_id")
+
+
 def _migrate_v1_vocab_to_drydock(conn: sqlite3.Connection) -> None:
     """One-time vocabulary rename: workspace/desk/ws_ → drydock/dock_.
 
@@ -440,6 +478,11 @@ class Registry:
         _migrate_to_v6(self._conn)
         _migrate_to_v7(self._conn)
         _migrate_to_v8(self._conn)
+        # Idempotent fixup — runs after every numbered migration so any
+        # FK table that landed with `desk_id`/`workspace_id` instead of
+        # `drydock_id` gets renamed. Self-healing for the recurring
+        # "rename missed this table" class.
+        _backfill_drydock_id_columns(self._conn)
         self._conn.commit()
 
     def close(self):

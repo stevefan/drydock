@@ -113,13 +113,26 @@ def revert_cgroup_limits(
     container_id: str,
     original: HardCeilings,
     *,
+    lifted: Optional[HardCeilings] = None,
     docker_bin: Optional[str] = None,
 ) -> list[str]:
     """Restore the original ceilings.
 
-    Equivalent to ``apply_cgroup_limits(container_id, original)``, named
-    distinctly so callers express intent at the call site (the audit
-    event emitted by the caller distinguishes lift from revert).
+    The wrinkle: if the desk had no original ceiling for some field
+    (``original.memory_max is None`` → kernel was unlimited at create
+    time) and the lift set one (``lifted.memory_max == "8g"``), then
+    plain ``apply_cgroup_limits(container_id, original)`` would emit
+    no flag for memory and the kernel would keep the lifted 8g cap
+    in place forever. We need to emit docker's "unlimited" sentinels
+    (-1 for memory, 0.0 for cpus, -1 for pids-limit) for any field
+    that was lifted but wasn't capped originally.
+
+    ``lifted`` is what was applied at grant time; passing it lets us
+    detect this asymmetry. When omitted, fall back to plain apply
+    (the legacy path — fine when original is non-empty for every
+    field that was lifted).
+
+    Returns the flags that were applied, for audit.
 
     Note: if the container is currently using more memory than the
     revert target, the kernel won't reclaim it. New allocations beyond
@@ -127,7 +140,58 @@ def revert_cgroup_limits(
     over; the worker is expected to have wound down. If it didn't, the
     soft ceiling already flagged the divergence to the Auditor.
     """
-    return apply_cgroup_limits(container_id, original, docker_bin=docker_bin)
+    flags = _revert_flags_for(original, lifted)
+    if not flags:
+        return []
+    docker = docker_bin or shutil.which("docker") or "docker"
+    cmd = [docker, "update", *flags, container_id]
+    logger.info("revert_cgroup_limits: %s", " ".join(cmd))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except FileNotFoundError as exc:
+        raise CgroupUpdateError(
+            f"docker binary not found: {exc}", flags=flags, stderr=str(exc),
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CgroupUpdateError(
+            "docker update timed out after 15s", flags=flags, stderr=exc.stderr or "",
+        ) from exc
+    if result.returncode != 0:
+        raise CgroupUpdateError(
+            f"docker update failed (exit {result.returncode}): {result.stderr.strip()}",
+            flags=flags, stderr=result.stderr,
+        )
+    return flags
+
+
+def _revert_flags_for(
+    original: HardCeilings,
+    lifted: Optional[HardCeilings],
+) -> list[str]:
+    """Compute revert flags, emitting docker's unlimited sentinels for
+    fields that were lifted but had no original cap."""
+    flags: list[str] = []
+    # Memory: -1 means unlimited in docker update.
+    if original.memory_max is not None:
+        flags.append(f"--memory={original.memory_max}")
+        flags.append(f"--memory-swap={original.memory_max}")
+    elif lifted is not None and lifted.memory_max is not None:
+        flags.append("--memory=-1")
+        flags.append("--memory-swap=-1")
+
+    # CPUs: 0.0 means unlimited in docker update.
+    if original.cpu_max is not None:
+        flags.append(f"--cpus={original.cpu_max}")
+    elif lifted is not None and lifted.cpu_max is not None:
+        flags.append("--cpus=0.0")
+
+    # PIDs: -1 means unlimited.
+    if original.pids_max is not None:
+        flags.append(f"--pids-limit={original.pids_max}")
+    elif lifted is not None and lifted.pids_max is not None:
+        flags.append("--pids-limit=-1")
+
+    return flags
 
 
 def _flags_for(limits: HardCeilings) -> list[str]:

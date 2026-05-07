@@ -108,19 +108,56 @@ class TestApplyCgroupLimits:
 
 
 class TestRevertCgroupLimits:
-    def test_revert_calls_apply_with_original(self):
-        # Revert is just `apply` with the original limits; the audit
-        # caller distinguishes the intent.
+    def test_revert_with_original_emits_originals(self):
         original = HardCeilings(cpu_max=1.0, memory_max="2g")
         with patch("drydock.core.cgroup.subprocess.run", return_value=_ok()) as run:
             flags = revert_cgroup_limits("cid_x", original)
-        assert flags == ["--cpus=1.0", "--memory=2g", "--memory-swap=2g"]
+        assert flags == ["--memory=2g", "--memory-swap=2g", "--cpus=1.0"]
         run.assert_called_once()
 
-    def test_revert_to_empty_is_noop(self):
-        # If a desk had no original ceilings (legacy or unconstrained),
-        # revert does nothing — desk returns to substrate-default state.
+    def test_revert_to_empty_with_no_lifted_is_noop(self):
+        # If a desk had no original ceilings AND nothing was lifted,
+        # there's nothing to revert.
         with patch("drydock.core.cgroup.subprocess.run") as run:
             flags = revert_cgroup_limits("cid_x", HardCeilings())
         assert flags == []
         run.assert_not_called()
+
+    def test_revert_emits_unlimited_when_lifted_field_had_no_original(self):
+        # The smoke-caught bug: a desk with no original memory cap
+        # gets a workload lift to 8g; revert needs to emit --memory=-1
+        # to clear the kernel-level cap. Without this, the lifted
+        # 8g would persist forever.
+        original = HardCeilings()  # no caps
+        lifted = HardCeilings(memory_max="8g")
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok()) as run:
+            flags = revert_cgroup_limits("cid_x", original, lifted=lifted)
+        assert "--memory=-1" in flags
+        assert "--memory-swap=-1" in flags
+        run.assert_called_once()
+
+    def test_revert_emits_cpu_unlimited_marker(self):
+        original = HardCeilings()
+        lifted = HardCeilings(cpu_max=4.0)
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok()):
+            flags = revert_cgroup_limits("cid_x", original, lifted=lifted)
+        assert "--cpus=0.0" in flags
+
+    def test_revert_emits_pids_unlimited_marker(self):
+        original = HardCeilings()
+        lifted = HardCeilings(pids_max=2048)
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok()):
+            flags = revert_cgroup_limits("cid_x", original, lifted=lifted)
+        assert "--pids-limit=-1" in flags
+
+    def test_revert_mixed_original_and_lifted_only_fields(self):
+        # Memory was capped originally; cpus was unlimited.
+        # Workload lifted both. Revert should restore memory to its
+        # original cap AND clear the cpu cap that was added.
+        original = HardCeilings(memory_max="2g")
+        lifted = HardCeilings(memory_max="8g", cpu_max=4.0)
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok()):
+            flags = revert_cgroup_limits("cid_x", original, lifted=lifted)
+        assert "--memory=2g" in flags
+        assert "--memory-swap=2g" in flags
+        assert "--cpus=0.0" in flags

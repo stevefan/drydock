@@ -106,3 +106,31 @@ def test_v6_migration_idempotent():
         r2 = Registry(db_path=db)
         got = r2.get_drydock("x")
         assert got.original_resources_hard == {"cpu_max": 1.0}
+
+
+def test_backfill_renames_stale_desk_id_column():
+    """Recurring-rename fixup: a post-V8 registry that somehow still has
+    a `desk_id` FK column (left over from a partial earlier migration)
+    gets healed at next Registry init.
+
+    Reproduces the hetzner regression where deskwatch_events.desk_id
+    survived the deploy because the V1-vocab migration's body only ran
+    when `workspaces` table existed and rerunning was a no-op."""
+    with tempfile.TemporaryDirectory() as td:
+        db = Path(td) / "r.db"
+        # Open + close once so the schema is created in current shape.
+        Registry(db_path=db).close()
+
+        # Surgically rename drydock_id back to desk_id on one FK table
+        # to simulate the regression.
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            "ALTER TABLE deskwatch_events RENAME COLUMN drydock_id TO desk_id"
+        )
+        conn.commit(); conn.close()
+
+        # Re-open: backfill should rename it back.
+        r = Registry(db_path=db)
+        cols = {c[1] for c in r._conn.execute("PRAGMA table_info(deskwatch_events)")}
+        assert "drydock_id" in cols
+        assert "desk_id" not in cols

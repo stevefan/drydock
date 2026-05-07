@@ -156,8 +156,13 @@ class CgroupLiftAction:
         # Use the original from the persisted record, not self.original —
         # so a revert path that doesn't have the in-memory action object
         # (lease expiry sweeper after daemon restart) can still execute.
+        # Pass `lifted` so revert_cgroup_limits knows to emit docker's
+        # "unlimited" sentinels for fields that had no original cap.
         original = HardCeilings.from_dict(persisted.get("original") or {})
-        revert_cgroup_limits(persisted["container_id"], original)
+        lifted = HardCeilings.from_dict(persisted.get("lifted") or {})
+        revert_cgroup_limits(
+            persisted["container_id"], original, lifted=lifted,
+        )
 
     def serialize(self) -> dict:
         return {
