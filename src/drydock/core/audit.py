@@ -55,6 +55,12 @@ V2_EVENTS = frozenset({
     "drydock.migrated",             # terminal success
     "drydock.migration_rolled_back", # rollback from snapshot succeeded
     "drydock.migration_failed",     # rollback also failed; manual intervention
+    # Phase PA3 — Auditor action authority.
+    "auditor.designated",           # drydock token's scope flipped to 'auditor'
+    "auditor.scope_revoked",        # token reverted to 'dock'
+    "auditor.action_dry_run",       # Bucket-2 call audited but not executed (V1 default)
+    "auditor.action_executed",      # Bucket-2 call actually invoked the primitive (live mode)
+    "auditor.action_refused",       # caller's token wasn't auditor-scoped
 })
 
 

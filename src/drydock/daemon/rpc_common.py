@@ -60,6 +60,8 @@ class _RpcError(ValueError):
       -32017  workload_lease_exists           (Phase 2a.3 WL1)
       -32018  workload_drydock_not_running    (Phase 2a.3 WL1)
       -32019  workload_apply_failed           (Phase 2a.3 WL1)
+      -32020  auditor_scope_required          (Phase PA3)
+      -32021  auditor_action_unsupported      (Phase PA3)
     """
     code: int
     message: str

@@ -332,6 +332,41 @@ _METHODS["RegisterWorkload"] = MethodSpec(handler=_register_workload, requires_a
 _METHODS["ReleaseWorkload"] = MethodSpec(handler=_release_workload, requires_auth=True)
 
 
+# ---------------------------------------------------------------------------
+# Phase PA3: Auditor action authority. Single AuditorAction RPC dispatches
+# to specific Bucket-2 primitives (stop_dock, revoke_lease, etc.). The
+# auditor-scope check is INSIDE the handler — requires_auth=True only
+# gates "is the token valid"; the scope gate ensures it's the auditor.
+# ---------------------------------------------------------------------------
+
+
+def _auditor_action(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_drydock_id: str | None,
+) -> dict[str, object]:
+    if _SECRETS_ROOT is None:
+        raise _RpcError(code=-32603, message="Internal error")
+
+    def _impl(_registry):
+        from drydock.daemon.auditor_handlers import (
+            auditor_action, is_live_actions_enabled,
+        )
+        return auditor_action(
+            params, request_id, caller_drydock_id,
+            registry_path=_REGISTRY_PATH,
+            secrets_root=_SECRETS_ROOT,
+            dry_run=not is_live_actions_enabled(),
+        )
+    return with_task_log(
+        method="AuditorAction", params=params, request_id=request_id,
+        registry_path=_REGISTRY_PATH, fn=_impl,
+    )
+
+
+_METHODS["AuditorAction"] = MethodSpec(handler=_auditor_action, requires_auth=True)
+
+
 def _error_response(
     request_id: str | int | None,
     *,

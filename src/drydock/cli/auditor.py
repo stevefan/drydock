@@ -357,6 +357,97 @@ def _format_dock_summary(d: dict) -> list[str]:
     return lines
 
 
+@auditor.command("designate")
+@click.argument("drydock_name")
+@click.option(
+    "--revoke", is_flag=True, default=False,
+    help="Revoke an existing auditor designation (revert this drydock's "
+         "token to dock scope).",
+)
+@click.pass_context
+def auditor_designate(ctx, drydock_name, revoke):
+    """Designate a drydock as the Port Auditor on this Harbor.
+
+    Phase PA3 — Auditor action authority. Marks the named drydock's
+    bearer token as 'auditor'-scoped, which is the structural gate
+    that lets it invoke Bucket-2 RPCs (StopDock, RevokeLease,
+    ThrottleEgress, FreezeStorage). One Auditor per Harbor by design.
+
+    Idempotent: re-designating the same drydock is a no-op. Refuses
+    if a *different* drydock already holds the auditor scope —
+    revoke that one first with ``--revoke``.
+
+    Today (V1): the action surface ships in dry-run mode. The Auditor
+    can call the Bucket-2 RPCs and the daemon validates scope, audits
+    the call, and logs "would have done X" — but doesn't actually
+    invoke the underlying primitive. Flip to live execution by setting
+    AUDITOR_LIVE_ACTIONS=1 in the daemon environment.
+    """
+    out = ctx.obj["output"]
+    registry = ctx.obj["registry"]
+
+    ws = registry.get_drydock(drydock_name)
+    if ws is None:
+        from drydock.core import WsError
+        out.error(WsError(
+            f"drydock_not_found: {drydock_name!r}",
+            fix="Use `drydock list` to see registered drydocks.",
+        ))
+        return
+
+    token_info = registry.get_token_info(ws.id)
+    if token_info is None:
+        from drydock.core import WsError
+        out.error(WsError(
+            f"no_token_issued: drydock '{drydock_name}' has no bearer token",
+            fix="The token is issued at create-time. Recreate the drydock "
+                "via `drydock destroy --force` then `drydock create` if "
+                "this is a legacy desk.",
+        ))
+        return
+
+    if revoke:
+        changed = registry.revoke_auditor_scope(ws.id)
+        out.success(
+            {
+                "drydock_id": ws.id,
+                "drydock_name": ws.name,
+                "revoked": changed,
+                "scope_after": "dock",
+            },
+            human_lines=[
+                f"revoked auditor scope from {ws.name}" if changed
+                else f"{ws.name} was not auditor-scoped (no-op)",
+            ],
+        )
+        return
+
+    try:
+        changed = registry.designate_auditor(ws.id)
+    except ValueError as exc:
+        from drydock.core import WsError
+        out.error(WsError(str(exc), fix=""))
+        return
+
+    out.success(
+        {
+            "drydock_id": ws.id,
+            "drydock_name": ws.name,
+            "designated": changed,
+            "scope_after": "auditor",
+            "execution_mode": "dry-run (default)",
+            "note": "Bucket-2 RPCs validate scope + audit the call but "
+                    "don't yet execute the underlying primitive. Flip "
+                    "AUDITOR_LIVE_ACTIONS=1 in the daemon env to enable.",
+        },
+        human_lines=[
+            f"designated {ws.name} as Port Auditor on this Harbor" if changed
+            else f"{ws.name} was already auditor-scoped (no-op)",
+            "execution mode: DRY-RUN (Bucket-2 calls audit but don't fire)",
+        ],
+    )
+
+
 def _human_bytes(n: int) -> str:
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
         if n < 1024:

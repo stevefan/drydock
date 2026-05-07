@@ -59,6 +59,22 @@ def validate_token(plaintext: str | None, registry: Registry | None = None) -> s
     return registry.find_desk_by_token_hash(hash_token(plaintext))
 
 
+def validate_token_with_scope(
+    plaintext: str | None,
+    registry: Registry | None = None,
+) -> dict | None:
+    """V9 (PA3): like validate_token but returns scope too.
+
+    Returns ``{"drydock_id": ..., "scope": "dock"|"auditor"}`` or None.
+    Used by Auditor-scoped RPCs that need to gate Bucket-2 actions.
+    Existing handlers that don't care about scope keep using
+    ``validate_token``.
+    """
+    if plaintext is None or registry is None or not plaintext:
+        return None
+    return registry.find_token_record_by_hash(hash_token(plaintext))
+
+
 def _write_secret_atomic(path: Path, plaintext: str) -> None:
     # drydock-token ships here even when a drydock has no user-set secrets,
     # so the dir must be readable by the container user regardless.

@@ -330,10 +330,128 @@ def deep_analyze(
                 logger.warning("deep: telegram send raised: %s", exc)
                 parsed.telegram_sent = False
 
+    # Phase PA3: when the deep analysis recommended a Bucket-2 action,
+    # invoke it via the daemon's AuditorAction RPC. Defaults to dry-run
+    # mode (the daemon checks AUDITOR_LIVE_ACTIONS at call time); flip
+    # the env var to enable live execution.
+    if (parsed.verdict == "action_recommended" and parsed.recommended_action
+            and (parsed.target_drydock or parsed.target_lease_id)):
+        try:
+            _invoke_auditor_action(parsed)
+        except Exception as exc:
+            # Action failure must not break the deep-analysis path —
+            # the recommendation is logged regardless. The audit-event
+            # emitted by the daemon (or its absence) tells the principal
+            # whether the action ran.
+            logger.warning("deep: auditor action invocation failed: %s", exc)
+
     if write_to_log:
         _append_log(parsed, log_path)
 
     return parsed
+
+
+def _invoke_auditor_action(analysis: DeepAnalysis) -> None:
+    """Best-effort: call the daemon's AuditorAction RPC for the
+    recommended action.
+
+    Uses the in-container drydock-rpc shape (Unix socket + bearer
+    token at /run/secrets/auditor-token). The token must be
+    auditor-scoped — set via ``drydock auditor designate <name>``.
+
+    For now this is sketched against the local daemon socket; in a
+    container deployment, the daemon socket is bind-mounted at
+    /run/drydock/daemon.sock per the existing in-desk-rpc design.
+    """
+    import json as _json
+    import os as _os
+    import socket as _socket
+
+    sock_path = _os.environ.get(
+        "DRYDOCK_DAEMON_SOCKET",
+        "/run/drydock/daemon.sock",
+    )
+    if not _os.path.exists(sock_path):
+        sock_path = _os.path.expanduser("~/.drydock/run/daemon.sock")
+
+    # Token: prefer auditor-token if present (post-designate), fall
+    # back to drydock-token. The daemon enforces scope; if the token
+    # isn't auditor-scoped, the call returns -32020.
+    token: str | None = None
+    for candidate in (
+        "/run/secrets/auditor-token",
+        "/run/secrets/drydock-token",
+    ):
+        try:
+            token = Path(candidate).read_text(encoding="utf-8").strip()
+            break
+        except (FileNotFoundError, PermissionError):
+            continue
+    if not token:
+        logger.info("deep: no bearer token available; skipping auditor action invocation")
+        return
+
+    params: dict = {
+        "kind": analysis.recommended_action,
+        "reason": analysis.reasoning or "deep-analysis recommendation",
+        "evidence": {
+            "watch_verdict": analysis.triggered_by_verdict,
+            "model": analysis.model,
+            "snapshot_at": analysis.snapshot_at,
+        },
+    }
+    # revoke_lease takes lease_id; other actions take target_drydock_id.
+    if analysis.recommended_action == "revoke_lease" and analysis.target_lease_id:
+        params["lease_id"] = analysis.target_lease_id
+    elif analysis.target_drydock:
+        params["target_drydock_id"] = analysis.target_drydock
+    else:
+        logger.info("deep: skipping auditor action — neither target nor lease_id set")
+        return
+    request = _json.dumps({
+        "jsonrpc": "2.0",
+        "method": "AuditorAction",
+        "params": params,
+        "id": f"auditor-{analysis.analyzed_at}",
+        "auth": token,
+    }).encode("utf-8")
+
+    try:
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(10.0)
+        s.connect(sock_path)
+        s.sendall(request)
+        s.shutdown(_socket.SHUT_WR)
+        chunks = []
+        while True:
+            buf = s.recv(4096)
+            if not buf:
+                break
+            chunks.append(buf)
+        s.close()
+    except OSError as exc:
+        logger.warning("deep: AuditorAction socket call failed: %s", exc)
+        return
+
+    response_text = b"".join(chunks).decode("utf-8")
+    try:
+        response = _json.loads(response_text)
+    except _json.JSONDecodeError:
+        logger.warning("deep: AuditorAction response not JSON: %r", response_text[:200])
+        return
+    if "error" in response:
+        logger.info(
+            "deep: AuditorAction returned error code=%s message=%s",
+            response["error"].get("code"), response["error"].get("message"),
+        )
+    else:
+        result = response.get("result", {})
+        logger.info(
+            "deep: AuditorAction kind=%s mode=%s executed=%s",
+            result.get("kind"),
+            result.get("execution_mode"),
+            result.get("executed"),
+        )
 
 
 def _append_log(analysis: DeepAnalysis, log_path: Path | None = None) -> None:

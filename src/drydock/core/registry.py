@@ -219,6 +219,29 @@ CREATE INDEX IF NOT EXISTS idx_migrations_active
 def _migrate_to_v8(conn: sqlite3.Connection) -> None:
     conn.executescript(V8_TABLES)
 
+
+# V9 (Phase PA3 — Auditor action authority). Add a `scope` column to
+# the tokens table so the daemon can distinguish dock-scoped tokens
+# (normal worker RPCs: RequestCapability, RegisterWorkload, etc.)
+# from auditor-scoped tokens (Bucket-2 actions: AuditorStopDock,
+# AuditorRevokeLease, etc.). Default 'dock' preserves all existing
+# tokens' semantics. The Auditor's designate flow issues 'auditor'-scope
+# tokens.
+V9_TOKEN_COLUMNS = (
+    ("scope", "TEXT NOT NULL DEFAULT 'dock'"),
+)
+
+
+def _migrate_to_v9(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info('tokens')").fetchall()
+    }
+    for col, defn in V9_TOKEN_COLUMNS:
+        if col in columns:
+            continue
+        conn.execute(f"ALTER TABLE tokens ADD COLUMN {col} {defn}")
+
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
     lease_id            TEXT PRIMARY KEY,
@@ -478,6 +501,7 @@ class Registry:
         _migrate_to_v6(self._conn)
         _migrate_to_v7(self._conn)
         _migrate_to_v8(self._conn)
+        _migrate_to_v9(self._conn)
         # Idempotent fixup — runs after every numbered migration so any
         # FK table that landed with `desk_id`/`workspace_id` instead of
         # `drydock_id` gets renamed. Self-healing for the recurring
@@ -624,6 +648,69 @@ class Registry:
         if row is None:
             return None
         return str(row["drydock_id"])
+
+    def find_token_record_by_hash(self, token_sha256: str) -> dict | None:
+        """V9 (PA3): return (drydock_id, scope) for a token, or None.
+
+        Auditor-scoped RPCs need to check the bearer token's scope to
+        gate Bucket-2 actions. The pre-V9 path (find_desk_by_token_hash)
+        is preserved for handlers that don't care about scope.
+        """
+        row = self._conn.execute(
+            "SELECT drydock_id, scope FROM tokens WHERE token_sha256 = ?",
+            (token_sha256,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"drydock_id": str(row["drydock_id"]), "scope": str(row["scope"])}
+
+    def designate_auditor(self, drydock_id: str) -> bool:
+        """V9 (PA3): mark a drydock's token as auditor-scoped.
+
+        Returns True on a successful change, False if the row already
+        had scope='auditor' (idempotent).
+
+        Refuses if any *other* drydock already has an auditor token —
+        per docs/design/port-auditor.md, one Auditor per Harbor by
+        design. Caller (CLI) surfaces the conflict.
+        """
+        existing = self._conn.execute(
+            "SELECT drydock_id FROM tokens WHERE scope = 'auditor' AND drydock_id != ?",
+            (drydock_id,),
+        ).fetchone()
+        if existing is not None:
+            raise ValueError(
+                f"another drydock ({existing['drydock_id']}) already has the "
+                f"auditor scope on this Harbor; revoke it first"
+            )
+
+        cur = self._conn.execute(
+            "UPDATE tokens SET scope = 'auditor' WHERE drydock_id = ? AND scope != 'auditor'",
+            (drydock_id,),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def revoke_auditor_scope(self, drydock_id: str) -> bool:
+        """V9 (PA3): revert a drydock's token to dock scope.
+
+        Returns True if the row was changed, False if it was already
+        dock-scoped (idempotent).
+        """
+        cur = self._conn.execute(
+            "UPDATE tokens SET scope = 'dock' WHERE drydock_id = ? AND scope = 'auditor'",
+            (drydock_id,),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def get_auditor_drydock_id(self) -> str | None:
+        """V9 (PA3): return the id of the designated Auditor drydock,
+        or None if none is designated on this Harbor."""
+        row = self._conn.execute(
+            "SELECT drydock_id FROM tokens WHERE scope = 'auditor' LIMIT 1"
+        ).fetchone()
+        return str(row["drydock_id"]) if row else None
 
     def get_token_info(self, drydock_id: str) -> dict | None:
         row = self._conn.execute(
