@@ -157,6 +157,35 @@ def _migrate_to_v6(conn: sqlite3.Connection) -> None:
             f"ALTER TABLE drydocks ADD COLUMN {column_name} {column_def}"
         )
 
+
+# V7 (2a.3 WL1): workload_leases table — atomic resource grants for
+# declared workloads. spec_json is the WorkloadSpec; applied_actions_json
+# is the list of side-effects applied at grant time, replayable in
+# reverse for revoke. Status is the lifecycle marker; the sweeper marks
+# expired leases for revoke and writes back. Indexed by drydock_id +
+# status so the sweeper's "active leases past expiry" query is fast.
+V7_TABLES = """
+CREATE TABLE IF NOT EXISTS workload_leases (
+    id                   TEXT PRIMARY KEY,
+    drydock_id           TEXT NOT NULL,
+    spec_json            TEXT NOT NULL,
+    applied_actions_json TEXT NOT NULL DEFAULT '[]',
+    granted_at           TEXT NOT NULL,
+    expires_at           TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'active'
+                          CHECK (status IN ('active', 'released', 'expired', 'partial-revoked')),
+    revoked_at           TEXT NULL,
+    revoke_results_json  TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workload_leases_active
+    ON workload_leases (drydock_id, status, expires_at);
+"""
+
+
+def _migrate_to_v7(conn: sqlite3.Connection) -> None:
+    conn.executescript(V7_TABLES)
+
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
     lease_id            TEXT PRIMARY KEY,
@@ -376,6 +405,7 @@ class Registry:
         _migrate_to_v4(self._conn)
         _migrate_to_v5(self._conn)
         _migrate_to_v6(self._conn)
+        _migrate_to_v7(self._conn)
         self._conn.commit()
 
     def close(self):
@@ -734,6 +764,81 @@ class Registry:
             if lease.type in (CapabilityType.STORAGE_MOUNT, CapabilityType.INFRA_PROVISION):
                 return lease
         return None
+
+    # ------------------------------------------------------------------
+    # Workload leases (v7) — Phase 2a.3 WL1
+    # ------------------------------------------------------------------
+
+    def insert_workload_lease(self, lease) -> None:
+        """Persist a freshly-granted WorkloadLease.
+
+        Caller has already done the apply (sub-actions are in effect on
+        the live container); this records the grant for the sweeper +
+        audit. Status defaults to 'active'.
+        """
+        self._conn.execute(
+            """INSERT INTO workload_leases
+               (id, drydock_id, spec_json, applied_actions_json,
+                granted_at, expires_at, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                lease.id, lease.drydock_id, lease.spec_json,
+                lease.applied_actions_json, lease.granted_at,
+                lease.expires_at, lease.status,
+            ),
+        )
+        self._conn.commit()
+
+    def get_workload_lease(self, lease_id: str):
+        """Look up by id. Returns the row dict (caller deserializes into
+        WorkloadLease), or None."""
+        row = self._conn.execute(
+            "SELECT * FROM workload_leases WHERE id = ?", (lease_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_active_workload_leases(self, drydock_id: str | None = None) -> list[dict]:
+        """Active leases, optionally filtered to one drydock.
+
+        Used by the sweeper (`drydock_id=None` to scan all) and by
+        `RegisterWorkload` to refuse a second concurrent lease per desk.
+        """
+        if drydock_id is None:
+            cur = self._conn.execute(
+                "SELECT * FROM workload_leases WHERE status = 'active' "
+                "ORDER BY expires_at ASC"
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM workload_leases WHERE status = 'active' "
+                "AND drydock_id = ? ORDER BY expires_at ASC",
+                (drydock_id,),
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    def mark_workload_lease_revoked(
+        self,
+        lease_id: str,
+        *,
+        revoke_results: list[dict],
+        terminal_status: str = "released",
+        revoked_at: str | None = None,
+    ) -> None:
+        """Mark a lease as released/expired/partial-revoked.
+
+        terminal_status:
+        - 'released' — explicit ReleaseWorkload, all reverts succeeded.
+        - 'expired'  — sweeper-driven, expires_at passed.
+        - 'partial-revoked' — at least one revert failed; row stays
+          for the principal to investigate manually.
+        """
+        revoked_at = revoked_at or datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE workload_leases SET status = ?, revoked_at = ?, "
+            "revoke_results_json = ? WHERE id = ?",
+            (terminal_status, revoked_at, json.dumps(revoke_results), lease_id),
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Deskwatch events (v3)
