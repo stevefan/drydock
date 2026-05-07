@@ -85,6 +85,87 @@ Test count: started session at 590, now 773 (+183). All green.
 
 These are things where the design is settled enough to build; they just need turn-time.
 
+## Tier 2a — Make the harness live (NEW 2026-05-06)
+
+**The thesis.** [vocabulary.md](design/vocabulary.md)'s V3 separation says *Container = security boundary, DryDock = resource boundary, mutable without touching the Ship*. Today most "resource boundary" things — firewall, cgroup ceilings, volume mounts, port exposures — are pinned at container start. Editing the YAML pins to the registry but doesn't reach into the running container; recreate is the only propagation mechanism. That collapses the amendment-contract loop ("Dockworker proposes → Authority decides → policy updates") into "stop the desk, edit YAML, recreate." Every session that involves operational state has had this friction.
+
+This Tier groups the work that turns the harness from a static recipe into a living allocator. Each item is independently shippable; together they make V3's resource-boundary story actually true.
+
+**Recommended priority order:** 2a.1 → 2a.2 → 2a.3 → 2a.4. Earlier items unblock the amendment-contract pattern in real-world use; 2a.3 is the long-arc keystone; 2a.4 is the meta-primitive that consumes the others.
+
+---
+
+### 2a.1 Proxy egress — replace iptables/ipset domain enforcement
+
+**What:** the iptables/ipset firewall hit its structural limits during the hetzner deploy. Per-domain IP tracking can't keep up with CDN rotation; YAML edits don't propagate without container recreate; the amendment-contract loop collapses to "stop, edit, recreate." Replace the policy layer with smokescreen (Stripe's SNI-aware forward proxy); keep iptables as a default-deny floor. Sub-minute end-to-end allowlist updates, no container restarts. Lays the groundwork for `RequestCapability(NETWORK_REACH)` to become a real-time amendment.
+
+**Size:** 2-3 days across 4 phases (E0 ship binary in drydock-base; E1 opt-in per drydock; E2 make default; E3 wire NETWORK_REACH RPC to proxy mutation).
+
+**Design:** [docs/design/proxy-egress.md](design/proxy-egress.md) sketched 2026-05-06.
+
+**My recommended position:** ship E0 + E1 first (independently usable). Highest-leverage infra work outside the Auditor LLM conversation, because it eliminates a recurring frictional class — and the V3 amendment-contract narrative depends on it.
+
+---
+
+### 2a.2 Cgroup live update — make `WorkloadLease` actually move the hard ceiling
+
+**What:** today's `WorkloadLease` lifts the *soft* ceiling (the Auditor's observation threshold) but does nothing to the *hard* ceiling enforced by docker `--memory` / `--cpus` / `--pids-limit`. A worker that legitimately needs 8 GB on a 4 GB-capped drydock still gets OOM-killed. Docker supports `docker update --memory --cpus --pids-limit` on running containers; daemon doesn't expose it. Wire `WorkloadLease` issuance to call `docker update` on the lift; revert at lease expiry. ~half-day.
+
+**Why on the list:** without this, declaring a workload is observation-only — the principal sees the spike in audit logs but the worker still dies. The whole "register a workload, get a lift, do the heavy thing" contract is half-built.
+
+---
+
+### 2a.3 WorkloadLease end-to-end — bundled resource lift + egress + reach
+
+**What:** the `resource-ceilings.md §3` schema is right but only the soft lift is implemented. Build out:
+- Hard cgroup lift via 2a.2.
+- Egress bandwidth lift via `tc/htb` on the drydock's veth.
+- Bundled NETWORK_REACH leases co-issued with the workload (via the proxy from 2a.1) — auto-revoked at workload expiry.
+- Cooperative-vs-coercive enforcement per resource (Anthropic-token throttle = revoke + RestartAgent; egress = direct shaping).
+
+**Why:** this is the operational keystone of the V3 amendment contract. When a worker says "I'm about to fine-tune llama-3-8b for 2 hours," the daemon adjusts *every* live resource boundary at once and reverts cleanly. Not built today; sketched everywhere.
+
+**Size:** 2-3 days. Builds on 2a.1 and 2a.2.
+
+---
+
+### 2a.4 Migration primitive — drydock as a living drain/restore operation
+
+**What:** every structural change to a drydock today follows the same shape: drain → snapshot → stop → mutate → restore → start → verify, with rollback on failure. Tonight's hetzner deploy did exactly this manually (backup tarball + S3 push, ws stop, registry+filesystem migration, drydock create per desk, verify); a code upgrade does it; an image bump does it; future cross-host moves do it. None of these flows share code, none have rollback, all are bespoke shell.
+
+A unified primitive:
+
+```
+drydock migrate <name> [--target image=…|backend=…|harbor=…] [--dry-run]
+```
+
+Stages:
+1. **Plan** — print delta + ask for confirmation if interactive.
+2. **Drain** — signal worker process to finish in-flight work; wait up to TTL.
+3. **Snapshot** — registry row, secrets dir, worktree git state, named volumes (or pin to litestream replica state for SQLite).
+4. **Stop** — stop the source container.
+5. **Provision target** — create new container under new image / harness / Harbor.
+6. **Restore state** — worktree, secrets, volume re-attach.
+7. **Start + verify** — health probe + `drydock-rpc daemon.health` round-trip.
+8. **Commit/rollback** — on success, mark old state for cleanup; on any stage failure, restore from snapshot atomically.
+
+**Generalizes over:**
+- In-place upgrade (today's `drydock upgrade <name>` — bare image-bump variant).
+- Daemon-version + schema migration (tonight's deploy).
+- Project YAML structural changes (`drydock project reload` + recreate variant).
+- Drydock-base image bump (cross-version drift).
+- Future: cross-Harbor migration (Mac ↔ Hetzner) — currently archived per `_archive/migration-vision.md`, but the V1 of this primitive deliberately includes the seams.
+
+**Why on the list:** the deploy tonight made it concrete — manual sequencing of "backup, stop, mutate, restore, start, verify, rollback" is fragile shell every time. Each operational change re-derives it. Steven flagged it as a recurring pull. Cheaper to build the primitive once.
+
+**Size:** 3-5 days for the same-host V1 (upgrade + schema migration + project-YAML structural change). Cross-Harbor is a separate epic, at least 2 weeks, requires shared state substrate (litestream-style continuous replication for non-SQLite state).
+
+**Open scoping question:** does V1 include a real `drain` step (talk to the worker process) or is "stop the container" the drain V0? Lean V0 for first ship — drain semantics need a worker-side contract that doesn't exist yet (`SIGTERM-with-grace`-on-capability). Land V0 as the primitive shape; layer drain in V2.
+
+**Design:** to-write before implementation. Should pull from `resource-ceilings.md` (lease lifecycle), `vocabulary.md §V3`, and the operational learning from this session's deploy.
+
+---
+
 ### 2.1 Mechanical V3 vocabulary sweep across remaining design docs ✓ DONE 2026-05-06
 
 **What was done:** Authority/Auditor split applied across `resource-ceilings.md`, `harbor-authority.md`, `vocabulary.md`, `auth-broker.md`, `project-dock-ontology.md`, `port-auditor.md`, `yard.md`, `employee-worker.md`. The umbrella position paper `principal-harbormaster-governance.md` was retired to `docs/design/archive/` since the V3 split made it incoherent — the per-feature docs now stand on their own. Code-comment cleanup in `src/drydock/core/resource_ceilings.py`. Stale "fleet" usages in vision.md, harbor-monitor.md, employee-worker.md updated to "archipelago." Remaining "Harbormaster" references in vocabulary.md/yard.md/port-auditor.md are intentional — they refer to the deferred manager role.
