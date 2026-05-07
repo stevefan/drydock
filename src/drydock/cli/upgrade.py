@@ -70,6 +70,8 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["claude_profile"] = proj_cfg.claude_profile
     if proj_cfg.devcontainer_subpath is not None and proj_cfg.devcontainer_subpath != DEFAULT_DEVCONTAINER_SUBPATH:
         params["devcontainer_subpath"] = proj_cfg.devcontainer_subpath
+    if proj_cfg.role and proj_cfg.role != "worker":
+        params["role"] = proj_cfg.role
     return params
 
 

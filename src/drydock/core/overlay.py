@@ -23,6 +23,14 @@ DEFAULT_WSD_RUN_CONTAINER_DIR = "/run/drydock"
 DEFAULT_WSD_SOCKET_CONTAINER_PATH = "/run/drydock/daemon.sock"
 DEFAULT_DRYDOCK_RPC_HOST_PATH = str(Path.home() / ".drydock" / "bin" / "drydock-rpc")
 DEFAULT_DRYDOCK_RPC_CONTAINER_PATH = "/usr/local/bin/drydock-rpc"
+# Phase PA3.3: auditor-specific bind-mounts. The Auditor's container
+# reads the audit log + registry directly (read-only) since
+# snapshot_harbor() opens a Registry handle. Daemon socket is already
+# bind-mounted for all desks via DEFAULT_WSD_RUN_HOST_DIR.
+DEFAULT_AUDIT_LOG_HOST_PATH = str(Path.home() / ".drydock" / "audit.log")
+DEFAULT_AUDIT_LOG_CONTAINER_PATH = "/var/log/drydock/audit.log"
+DEFAULT_REGISTRY_DB_HOST_PATH = str(Path.home() / ".drydock" / "registry.db")
+DEFAULT_REGISTRY_DB_CONTAINER_PATH = "/var/lib/drydock/registry.db"
 SHORT_ID_LENGTH = 6
 
 
@@ -73,6 +81,19 @@ class OverlayConfig:
     # Each desk has its own file at <dir>/<drydock_id>.yaml; the
     # overlay maps that one file to /run/drydock/proxy/allowlist.yaml.
     proxy_config_host_dir: str | None = None
+    # Phase PA3.3: drydock role. `worker` (default) is an ordinary desk.
+    # `auditor` triggers role-specific bind-mounts: audit log RO and
+    # registry DB RO so the Auditor can observe Harbor state via its
+    # in-process snapshot_harbor() + read_audit_log() paths. The role
+    # field also lives in project YAML and is enforced by
+    # core/auditor/role_validator.py at designation time.
+    role: str = "worker"
+    # Auditor-specific bind-mount source paths on the Harbor. Plumbed
+    # as fields (rather than reading Path.home() inside _build_mounts)
+    # so tests can override + so daemon-side overlay generation isn't
+    # tied to the daemon's $HOME.
+    audit_log_host_path: str = DEFAULT_AUDIT_LOG_HOST_PATH
+    registry_db_host_path: str = DEFAULT_REGISTRY_DB_HOST_PATH
 
 
 def generate_overlay(ws: Drydock, config: OverlayConfig | None = None) -> dict:
@@ -279,6 +300,8 @@ def regenerate_overlay_from_drydock(
         kwargs["egress_proxy"] = str(cfg["egress_proxy"]).lower()
     if cfg.get("proxy_config_host_dir"):
         kwargs["proxy_config_host_dir"] = cfg["proxy_config_host_dir"]
+    if cfg.get("role"):
+        kwargs["role"] = str(cfg["role"]).lower()
 
     overlay_config = OverlayConfig(**kwargs)
     # When workspace_subdir is set, the base devcontainer.json lives
@@ -359,6 +382,15 @@ def _build_container_env(ws: Drydock, config: OverlayConfig) -> dict[str, str]:
     if config.wsd_run_host_dir:
         env["DRYDOCK_DAEMON_SOCKET"] = DEFAULT_WSD_SOCKET_CONTAINER_PATH
 
+    # Phase PA3.3: point the Auditor's in-container drydock toolchain at
+    # the bind-mounted registry DB and audit log. The watch-loop's
+    # snapshot_harbor() opens Registry(db_path=...); without these env
+    # vars it'd default to ~/.drydock/registry.db inside the container
+    # (a different, empty file).
+    if config.role == "auditor":
+        env["DRYDOCK_DAEMON_REGISTRY"] = DEFAULT_REGISTRY_DB_CONTAINER_PATH
+        env["DRYDOCK_AUDIT_LOG"] = DEFAULT_AUDIT_LOG_CONTAINER_PATH
+
     env.update(config.extra_env)
 
     return env
@@ -407,6 +439,22 @@ def _build_mounts(ws: Drydock, config: OverlayConfig) -> list[str]:
         mounts.append(
             f"source={proxy_file},"
             f"target=/run/drydock/proxy/allowlist.yaml,type=bind,readonly"
+        )
+
+    # Phase PA3.3: auditor-role bind-mounts. The Auditor reads the
+    # Harbor's audit log + registry directly (read-only) because
+    # snapshot_harbor() opens a Registry handle and the deep-analysis
+    # tier reads audit.log for context. Constrained by the validator
+    # to only the auditor's drydock — worker desks never see these
+    # paths.
+    if config.role == "auditor":
+        mounts.append(
+            f"source={config.audit_log_host_path},"
+            f"target={DEFAULT_AUDIT_LOG_CONTAINER_PATH},type=bind,readonly"
+        )
+        mounts.append(
+            f"source={config.registry_db_host_path},"
+            f"target={DEFAULT_REGISTRY_DB_CONTAINER_PATH},type=bind,readonly"
         )
 
     claude_vol = (

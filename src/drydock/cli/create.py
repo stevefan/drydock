@@ -88,6 +88,11 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
     # field keeps the CreateDesk wire smaller for desks that don't care.
     if proj_cfg.egress_proxy == "enabled":
         params["egress_proxy"] = "enabled"
+    # Phase PA3.3: propagate role so the daemon-side overlay can wire
+    # auditor bind-mounts at create-time. Worker (default) is implicit;
+    # only emit when non-default to keep CreateDesk wire smaller.
+    if proj_cfg.role and proj_cfg.role != "worker":
+        params["role"] = proj_cfg.role
     return params
 
 
@@ -469,6 +474,8 @@ def _overlay_from_project(proj_cfg) -> OverlayConfig:
         kwargs["claude_profile"] = proj_cfg.claude_profile
     if proj_cfg.resources_hard:
         kwargs["resources_hard"] = proj_cfg.resources_hard
+    if proj_cfg.role and proj_cfg.role != "worker":
+        kwargs["role"] = proj_cfg.role
     return OverlayConfig(**kwargs)
 
 

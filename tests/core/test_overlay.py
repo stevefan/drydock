@@ -480,3 +480,57 @@ class TestEgressProxyOverlay:
         assert overlay["containerEnv"]["EGRESS_PROXY_ENABLED"] == "1"
         for m in overlay.get("mounts", []):
             assert "/run/drydock/proxy/allowlist.yaml" not in m
+
+
+class TestAuditorRoleBindMounts:
+    """Phase PA3.3: when role=auditor, the overlay must add bind-mounts
+    for the audit log + registry DB so the watch loop can call
+    snapshot_harbor() and the deep-analysis tier can read audit context.
+    Worker (default) desks must NOT see these paths."""
+
+    def test_worker_role_no_auditor_mounts(self, ws):
+        cfg = OverlayConfig()  # default role=worker
+        overlay = generate_overlay(ws, cfg)
+        for m in overlay.get("mounts", []):
+            assert "/var/log/drydock/audit.log" not in m
+            assert "/var/lib/drydock/registry.db" not in m
+        env = overlay.get("containerEnv", {})
+        assert "DRYDOCK_DAEMON_REGISTRY" not in env
+        assert "DRYDOCK_AUDIT_LOG" not in env
+
+    def test_auditor_role_adds_audit_log_mount_readonly(self, ws):
+        cfg = OverlayConfig(
+            role="auditor",
+            audit_log_host_path="/host/audit.log",
+        )
+        overlay = generate_overlay(ws, cfg)
+        audit_mounts = [
+            m for m in overlay["mounts"]
+            if "/var/log/drydock/audit.log" in m
+        ]
+        assert len(audit_mounts) == 1
+        assert "source=/host/audit.log" in audit_mounts[0]
+        assert "readonly" in audit_mounts[0]
+
+    def test_auditor_role_adds_registry_db_mount_readonly(self, ws):
+        cfg = OverlayConfig(
+            role="auditor",
+            registry_db_host_path="/host/registry.db",
+        )
+        overlay = generate_overlay(ws, cfg)
+        reg_mounts = [
+            m for m in overlay["mounts"]
+            if "/var/lib/drydock/registry.db" in m
+        ]
+        assert len(reg_mounts) == 1
+        assert "source=/host/registry.db" in reg_mounts[0]
+        assert "readonly" in reg_mounts[0]
+
+    def test_auditor_role_sets_env_pointers(self, ws):
+        cfg = OverlayConfig(role="auditor")
+        overlay = generate_overlay(ws, cfg)
+        env = overlay["containerEnv"]
+        assert env["DRYDOCK_DAEMON_REGISTRY"] == "/var/lib/drydock/registry.db"
+        assert env["DRYDOCK_AUDIT_LOG"] == "/var/log/drydock/audit.log"
+        # Plus the standard daemon-socket pointer that all desks get
+        assert env["DRYDOCK_DAEMON_SOCKET"] == "/run/drydock/daemon.sock"

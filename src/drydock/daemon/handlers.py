@@ -56,6 +56,7 @@ _OVERLAY_PARAM_FIELDS = (
     "storage_mounts",
     "resources_hard",
     "egress_proxy",
+    "role",
 )
 
 
@@ -407,6 +408,16 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
             code=-32602, message="invalid_params",
             data={"field": "egress_proxy", "reason": "must be 'enabled' or 'disabled'"},
         )
+
+    # Phase PA3.3: drydock role. Accepts "worker" (default) or "auditor".
+    # Auditor role triggers the auditor bind-mounts in the create-time
+    # overlay (audit log RO + registry DB RO).
+    role = str(params.get("role") or "worker").lower()
+    if role not in ("worker", "auditor"):
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "role", "reason": "must be 'worker' or 'auditor'"},
+        )
     extra_env = _validated_str_map(
         params.get("extra_env"),
         field_name="extra_env",
@@ -473,6 +484,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "forward_ports": forward_ports,
         "claude_profile": claude_profile,
         "egress_proxy": egress_proxy,
+        "role": role,
         "extra_env": extra_env,
         "storage_mounts": storage_mounts,
         "secret_entitlements": secret_entitlements,
@@ -687,6 +699,13 @@ def _overlay_from_spec(spec: dict[str, object]) -> OverlayConfig:
         kwargs["proxy_config_host_dir"] = str(
             Path.home() / ".drydock" / "proxy"
         )
+
+    # Phase PA3.3: thread role through so the overlay's _build_mounts
+    # adds auditor bind-mounts when role=auditor. Default ("worker") is
+    # the OverlayConfig default, no override needed.
+    role = spec.get("role")
+    if isinstance(role, str) and role.lower() != "worker":
+        kwargs["role"] = role.lower()
 
     return OverlayConfig(**kwargs)
 
