@@ -43,6 +43,12 @@ V2_EVENTS = frozenset({
     "token.revoked",
     "tailnet.device_deleted",
     "tailnet.device_delete_failed",
+    # Phase 2a.3 WL1 — workload-as-transaction primitive.
+    "workload.lease_granted",
+    "workload.lease_released",
+    "workload.lease_apply_failed",
+    "workload.lease_expired",
+    "workload.lease_partial_revoked",
 })
 
 

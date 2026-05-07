@@ -517,6 +517,110 @@ _METHODS: dict[str, MethodSpec] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Phase 2a.3 WL1: workload RPCs registered separately so the dispatch
+# table reads cleanly. Wrapped in task_log for idempotency on retry.
+# ---------------------------------------------------------------------------
+
+
+def _register_workload(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_drydock_id: str | None,
+) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    if request_id is None:
+        raise _RpcError(code=-32600, message="Invalid Request",
+                        data={"reason": "request_id_required"})
+    request_key = str(request_id)
+    registry = Registry(db_path=_REGISTRY_PATH)
+    try:
+        cached = registry._conn.execute(
+            "SELECT status, outcome_json FROM task_log WHERE request_id = ?",
+            (request_key,),
+        ).fetchone()
+        if cached is not None:
+            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
+        registry._conn.execute(
+            "INSERT INTO task_log (request_id, method, spec_json, status, outcome_json, created_at, completed_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (request_key, "RegisterWorkload", json.dumps(params), "in_progress", None, _utc_now(), None),
+        )
+        registry._conn.commit()
+        try:
+            from drydock.daemon.workload_handlers import register_workload, _RpcError as _WorkloadRpcError
+            try:
+                result = register_workload(
+                    params, request_id, caller_drydock_id,
+                    registry_path=_REGISTRY_PATH,
+                )
+            except _WorkloadRpcError as exc:
+                # Translate the workload module's local _RpcError into the
+                # daemon's _RpcError so the dispatcher serializes correctly.
+                raise _RpcError(code=exc.code, message=exc.message, data=exc.data) from exc
+        except _RpcError as exc:
+            error = {"code": exc.code, "message": exc.message}
+            if exc.data is not None:
+                error["data"] = exc.data
+            _finish_task_log(registry, request_key, "failed", error)
+            raise
+        _finish_task_log(registry, request_key, "completed", result)
+        return result
+    finally:
+        registry.close()
+
+
+def _release_workload(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_drydock_id: str | None,
+) -> dict[str, object]:
+    if _REGISTRY_PATH is None:
+        raise _RpcError(code=-32603, message="Internal error")
+    if request_id is None:
+        raise _RpcError(code=-32600, message="Invalid Request",
+                        data={"reason": "request_id_required"})
+    request_key = str(request_id)
+    registry = Registry(db_path=_REGISTRY_PATH)
+    try:
+        cached = registry._conn.execute(
+            "SELECT status, outcome_json FROM task_log WHERE request_id = ?",
+            (request_key,),
+        ).fetchone()
+        if cached is not None:
+            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
+        registry._conn.execute(
+            "INSERT INTO task_log (request_id, method, spec_json, status, outcome_json, created_at, completed_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (request_key, "ReleaseWorkload", json.dumps(params), "in_progress", None, _utc_now(), None),
+        )
+        registry._conn.commit()
+        try:
+            from drydock.daemon.workload_handlers import release_workload, _RpcError as _WorkloadRpcError
+            try:
+                result = release_workload(
+                    params, request_id, caller_drydock_id,
+                    registry_path=_REGISTRY_PATH,
+                )
+            except _WorkloadRpcError as exc:
+                raise _RpcError(code=exc.code, message=exc.message, data=exc.data) from exc
+        except _RpcError as exc:
+            error = {"code": exc.code, "message": exc.message}
+            if exc.data is not None:
+                error["data"] = exc.data
+            _finish_task_log(registry, request_key, "failed", error)
+            raise
+        _finish_task_log(registry, request_key, "completed", result)
+        return result
+    finally:
+        registry.close()
+
+
+_METHODS["RegisterWorkload"] = MethodSpec(handler=_register_workload, requires_auth=True)
+_METHODS["ReleaseWorkload"] = MethodSpec(handler=_release_workload, requires_auth=True)
+
+
 def _error_response(
     request_id: str | int | None,
     *,
