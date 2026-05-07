@@ -27,6 +27,39 @@ class _RpcError(ValueError):
 
     code/message/data shape mirrors the wire protocol so handlers can
     raise this and let the dispatcher serialize it directly.
+
+    **Application error code registry** (-32xxx range). Each code maps
+    to exactly one error class; reusing a code for different meanings
+    is a wire-protocol bug. When adding a new error, pick the next
+    free code below.
+
+    Standard JSON-RPC errors (don't reuse):
+      -32700  parse_error
+      -32600  invalid_request
+      -32601  method_not_found
+      -32602  invalid_params
+      -32603  internal_error
+
+    Application-defined (drydock-specific):
+      -32000  generic application error (avoid; prefer specific code)
+      -32001  reserved for narrowness/policy refusals (capability)
+      -32002  request_in_progress (task_log replay)
+      -32004  unauthenticated / forbidden
+      -32005  reserved (storage scope refusal)
+      -32006  narrowness_violated (capability narrowness gate)
+      -32007  backend_permission_denied (capability backend)
+      -32008  backend_unavailable (capability backend)
+      -32009  backend_missing_secret (capability backend)
+      -32010  desk_not_running (capability handler)
+      -32011  materialization_failed (capability handler)
+      -32012  lease_not_found (capability handler)
+      -32013  capability_unsupported
+      -32014  reserved (CreateDesk validation)
+      -32015  storage_backend_not_configured
+      -32016  storage_backend_config_error
+      -32017  workload_lease_exists           (Phase 2a.3 WL1)
+      -32018  workload_drydock_not_running    (Phase 2a.3 WL1)
+      -32019  workload_apply_failed           (Phase 2a.3 WL1)
     """
     code: int
     message: str

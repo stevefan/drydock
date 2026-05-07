@@ -78,7 +78,7 @@ def register_workload(
             )
         if not ws.container_id:
             raise _RpcError(
-                code=-32008,
+                code=-32018,  # workload_drydock_not_running
                 message="drydock_not_running",
                 data={"fix": "Start the drydock first; cgroup lift requires a live container."},
             )
@@ -89,7 +89,7 @@ def register_workload(
         existing = registry.list_active_workload_leases(drydock_id=caller_drydock_id)
         if existing:
             raise _RpcError(
-                code=-32007,
+                code=-32017,  # workload_lease_exists
                 message="workload_lease_exists",
                 data={
                     "lease_id": existing[0]["id"],
@@ -124,7 +124,7 @@ def register_workload(
                 },
             )
             raise _RpcError(
-                code=-32009,
+                code=-32019,  # workload_apply_failed
                 message="workload_apply_failed",
                 data={"failed_at": exc.failed_at, "cause": str(exc.cause)},
             ) from exc

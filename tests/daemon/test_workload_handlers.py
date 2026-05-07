@@ -3,8 +3,8 @@
 The contract these tests pin:
 - Auth required (caller_drydock_id is the lease's drydock_id).
 - Spec validation surfaces structured errors (-32602 invalid_workload_spec).
-- Drydock-not-running surfaces a clear -32008 with fix hint.
-- Single-active-lease semantic (-32007 workload_lease_exists).
+- Drydock-not-running surfaces a clear -32018 with fix hint.
+- Single-active-lease semantic (-32017 workload_lease_exists).
 - Happy path returns a lease id, applies cgroup, persists row.
 - Release reverts and marks the row.
 - Release of foreign drydock's lease forbidden.
@@ -116,7 +116,7 @@ class TestRegisterWorkloadAuth:
                 {"kind": "batch"}, "req-1", caller_drydock_id="dock_test",
                 registry_path=db,
             )
-        assert exc.value.code == -32008
+        assert exc.value.code == -32018  # workload_drydock_not_running
         assert "fix" in exc.value.data
 
 
@@ -176,7 +176,7 @@ class TestRegisterWorkloadSingleActive:
                 {"kind": "batch"}, "req-2", caller_drydock_id="dock_test",
                 registry_path=registry_with_running_desk,
             )
-        assert exc.value.code == -32007
+        assert exc.value.code == -32017  # workload_lease_exists
         assert exc.value.message == "workload_lease_exists"
         assert "lease_id" in exc.value.data
 
