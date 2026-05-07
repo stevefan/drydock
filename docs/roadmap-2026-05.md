@@ -91,6 +91,8 @@ These are things where the design is settled enough to build; they just need tur
 
 This Tier groups the work that turns the harness from a static recipe into a living allocator. Each item is independently shippable; together they make V3's resource-boundary story actually true.
 
+**Full design + plan:** [docs/design/make-the-harness-live.md](design/make-the-harness-live.md) — first-principles treatment of all four primitives, glossary of basic terms, phase-by-phase implementation plan, risk register.
+
 **Recommended priority order:** 2a.1 → 2a.2 → 2a.3 → 2a.4. Earlier items unblock the amendment-contract pattern in real-world use; 2a.3 is the long-arc keystone; 2a.4 is the meta-primitive that consumes the others.
 
 ---
