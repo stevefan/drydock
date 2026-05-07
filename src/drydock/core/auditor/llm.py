@@ -25,10 +25,40 @@ from typing import Protocol
 logger = logging.getLogger(__name__)
 
 DAEMON_SECRETS_DIR = Path.home() / ".drydock" / "daemon-secrets"
-DEFAULT_API_KEY_PATH = DAEMON_SECRETS_DIR / "anthropic_api_key"
+# Per-drydock secrets path (mounted into containerized auditor at
+# create-time via the standard secrets bind-mount). This is the
+# preferred source — per-service keys mean spend is attributable per
+# Anthropic console line item; revoking one key doesn't disrupt others.
+PER_DRYDOCK_API_KEY_PATH = Path("/run/secrets/anthropic_api_key")
+# Harbor-admin fallback for ad-hoc invocations (`drydock auditor
+# watch-once` run on the Harbor host outside any container).
+DAEMON_SECRETS_API_KEY_PATH = DAEMON_SECRETS_DIR / "anthropic_api_key"
+DEFAULT_API_KEY_PATH = DAEMON_SECRETS_API_KEY_PATH  # back-compat alias
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
 ANTHROPIC_API_VERSION = "2023-06-01"
 DEFAULT_TIMEOUT = 30
+
+
+def resolve_api_key_path() -> Path:
+    """Resolution order: per-drydock secret first, daemon-secrets fallback.
+
+    Per-drydock is preferred because it lets the principal attribute
+    Anthropic spend per service in the console — one key per drydock,
+    revocable independently. Harbor-admin daemon-secrets is the
+    fallback for Harbor-side invocations where /run/secrets isn't
+    mounted (ad-hoc snapshots, `drydock auditor watch-once`).
+
+    Returns the first readable, non-empty path. Returns the per-drydock
+    path even if missing so error messages point users at the
+    principled location first.
+    """
+    if PER_DRYDOCK_API_KEY_PATH.is_file():
+        try:
+            if PER_DRYDOCK_API_KEY_PATH.read_text(encoding="utf-8").strip():
+                return PER_DRYDOCK_API_KEY_PATH
+        except (PermissionError, OSError):
+            pass
+    return DAEMON_SECRETS_API_KEY_PATH
 
 
 @dataclass
@@ -71,7 +101,10 @@ class AnthropicHttpClient:
     """Production client — calls Anthropic API via stdlib urllib."""
 
     def __init__(self, api_key_path: Path | None = None, timeout: int = DEFAULT_TIMEOUT):
-        self.api_key_path = api_key_path or DEFAULT_API_KEY_PATH
+        # When no explicit path given, resolve at construction time so
+        # tests can monkeypatch resolve_api_key_path. Per-drydock path
+        # wins if present + readable; falls back to daemon-secrets.
+        self.api_key_path = api_key_path or resolve_api_key_path()
         self.timeout = timeout
 
     def _api_key(self) -> str:
