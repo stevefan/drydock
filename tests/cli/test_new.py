@@ -63,7 +63,7 @@ class TestNew:
         result = _invoke(tmp_path, "p", "--repo-path", str(tmp_path),
                          "--no-write-project-yaml", dry_run=True)
         assert result.exit_code == 0
-        assert not (tmp_path / ".devcontainer" / "drydock").exists()
+        assert not (tmp_path / ".devcontainer" / "workspace").exists()
 
     def test_writes_project_yaml(self, tmp_path, monkeypatch):
         projects_dir = tmp_path / "projects"

@@ -30,7 +30,7 @@ def _read_workspace_folder_from_overlay(overlay_path: str | Path | None) -> str:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return "/drydock"
-    folder = data.get("drydockFolder")
+    folder = data.get("workspaceFolder")
     return folder if isinstance(folder, str) and folder else "/drydock"
 
 
@@ -70,7 +70,7 @@ def _already_trusted(data: dict, workspace_folder: str) -> bool:
             if isinstance(entry, str) and entry == workspace_folder:
                 return True
             if isinstance(entry, dict):
-                for key in ("path", "drydockFolder"):
+                for key in ("path", "workspaceFolder"):
                     if entry.get(key) == workspace_folder:
                         return True
     return False

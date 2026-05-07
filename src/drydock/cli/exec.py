@@ -45,7 +45,7 @@ def _read_workspace_folder(overlay_path: str) -> str:
     try:
         with open(overlay_path) as f:
             data = json.load(f)
-        return data.get("drydockFolder", "/drydock")
+        return data.get("workspaceFolder", "/drydock")
     except (OSError, json.JSONDecodeError):
         return "/drydock"
 

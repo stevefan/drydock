@@ -108,7 +108,7 @@ def test_status_ipset_null_when_absent(MockCLI):
 @patch("drydock.cli.status.DevcontainerCLI")
 def test_status_trust_accepted_true_when_claude_json_has_entry(MockCLI, tmp_path):
     overlay = tmp_path / "overlay.json"
-    overlay.write_text(json.dumps({"drydockFolder": "/drydock"}))
+    overlay.write_text(json.dumps({"workspaceFolder": "/drydock"}))
     ws = _make_ws(overlay_path=str(overlay))
     devc = MockCLI.return_value
     devc.exec_command.return_value = subprocess.CompletedProcess(
@@ -124,7 +124,7 @@ def test_status_trust_accepted_true_when_claude_json_has_entry(MockCLI, tmp_path
 @patch("drydock.cli.status.DevcontainerCLI")
 def test_status_trust_accepted_false_when_claude_json_missing_entry(MockCLI, tmp_path):
     overlay = tmp_path / "overlay.json"
-    overlay.write_text(json.dumps({"drydockFolder": "/drydock"}))
+    overlay.write_text(json.dumps({"workspaceFolder": "/drydock"}))
     ws = _make_ws(overlay_path=str(overlay))
     devc = MockCLI.return_value
     devc.exec_command.return_value = subprocess.CompletedProcess(

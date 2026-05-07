@@ -91,7 +91,7 @@ def test_attach_happy_path(tmp_path, monkeypatch):
 
 
 def test_attach_custom_workspace_folder(tmp_path, monkeypatch):
-    overlay = json.dumps({"drydockFolder": "/custom/path"})
+    overlay = json.dumps({"workspaceFolder": "/custom/path"})
     runner = _create_drydock(tmp_path, monkeypatch, overlay_content=overlay)
     with patch("drydock.cli.attach._find_container", return_value="silly_spence"), \
          patch("drydock.cli.attach.shutil.which", return_value="/usr/bin/code"), \

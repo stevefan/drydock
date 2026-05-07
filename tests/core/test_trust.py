@@ -42,7 +42,7 @@ class TestReadWorkspaceFolder:
 
     def test_returns_overlay_value(self, tmp_path):
         overlay = tmp_path / "overlay.json"
-        overlay.write_text(json.dumps({"drydockFolder": "/drydocks/asi"}))
+        overlay.write_text(json.dumps({"workspaceFolder": "/drydocks/asi"}))
         assert _read_workspace_folder_from_overlay(str(overlay)) == "/drydocks/asi"
 
 

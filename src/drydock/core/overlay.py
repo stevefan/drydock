@@ -104,7 +104,7 @@ def generate_overlay(ws: Drydock, config: OverlayConfig | None = None) -> dict:
     # Without this, cron jobs fail with exit 127 "No such file or
     # directory" because ws exec lands in the repo root, not the subdir.
     if ws.workspace_subdir:
-        overlay["drydockFolder"] = f"/drydock/{ws.workspace_subdir}"
+        overlay["workspaceFolder"] = f"/workspace/{ws.workspace_subdir}"
 
     container_env = _build_container_env(ws, config)
     if container_env:

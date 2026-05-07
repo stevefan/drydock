@@ -37,7 +37,7 @@ def _read_workspace_folder(ws) -> str:
     except (OSError, json.JSONDecodeError) as exc:
         logger.debug("status: failed reading overlay for %s: %s", ws.name, exc)
         return "/drydock"
-    return data.get("drydockFolder", "/drydock")
+    return data.get("workspaceFolder", "/drydock")
 
 
 def _docker_container_id(*candidate_paths: str) -> str:
@@ -171,7 +171,7 @@ def _trusted_drydock_entry_matches(entry, workspace_folder: str) -> bool | None:
     if isinstance(entry, str):
         return entry == workspace_folder
     if isinstance(entry, dict):
-        for key in ("path", "drydockFolder"):
+        for key in ("path", "workspaceFolder"):
             value = entry.get(key)
             if isinstance(value, str):
                 return value == workspace_folder

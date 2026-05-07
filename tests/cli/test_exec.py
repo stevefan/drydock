@@ -129,7 +129,7 @@ def test_exec_lookup_tries_subdir_then_worktree(mock_find, mock_execvp):
 @patch("drydock.cli.exec._find_container_id", return_value="ctr-abc")
 def test_exec_reads_workspace_folder_from_overlay(mock_find, mock_execvp, tmp_path):
     overlay = tmp_path / "overlay.json"
-    overlay.write_text(json.dumps({"drydockFolder": "/custom/path"}))
+    overlay.write_text(json.dumps({"workspaceFolder": "/custom/path"}))
 
     registry = MagicMock()
     registry.get_drydock.return_value = _make_ws(overlay_path=str(overlay))

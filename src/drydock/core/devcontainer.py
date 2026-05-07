@@ -68,7 +68,7 @@ class DevcontainerCLI:
     ) -> dict:
         cmd = [
             "devcontainer", "up",
-            "--drydock-folder", workspace_folder,
+            "--workspace-folder", workspace_folder,
             "--log-format", "json",
         ]
         if override_config:
@@ -179,7 +179,7 @@ class DevcontainerCLI:
         cmd = [
             "devcontainer",
             "exec",
-            "--drydock-folder",
+            "--workspace-folder",
             workspace_folder,
             *command,
         ]

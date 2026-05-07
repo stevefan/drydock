@@ -104,12 +104,12 @@ class TestGenerateOverlay:
         overlay = generate_overlay(ws)
         assert overlay["containerEnv"]["DRYDOCK_WORKSPACE_SUBDIR"] == "apps/frontend"
 
-    def test_workspace_subdir_sets_drydockFolder(self):
+    def test_workspace_subdir_sets_workspaceFolder(self):
         """Regression: a subdir desk's cron jobs failed with exit 127
-        because drydockFolder stayed at /drydock (repo root) and
+        because workspaceFolder stayed at /drydock (repo root) and
         `ws exec desk -- bash deploy/run.sh` looked for deploy/run.sh
         relative to the root, not the subdir. Overlay must push the
-        drydockFolder down to /drydock/<subdir> so the container's
+        workspaceFolder down to /drydock/<subdir> so the container's
         default WORKDIR and downstream `ws exec -w` land inside the
         subproject."""
         ws = Drydock(
@@ -117,18 +117,18 @@ class TestGenerateOverlay:
             branch="ws/auction", workspace_subdir="auction-crawl",
         )
         overlay = generate_overlay(ws)
-        assert overlay["drydockFolder"] == "/drydock/auction-crawl"
+        assert overlay["workspaceFolder"] == "/workspace/auction-crawl"
 
-    def test_workspace_subdir_unset_leaves_drydockFolder_absent(self):
+    def test_workspace_subdir_unset_leaves_workspaceFolder_absent(self):
         """Without workspace_subdir we let the project's own
-        devcontainer.json dictate drydockFolder — overriding would be
+        devcontainer.json dictate workspaceFolder — overriding would be
         a breaking change for single-project desks."""
         ws = Drydock(
             name="rootdesk", project="proj", repo_path="/srv/code/proj",
             branch="ws/rootdesk",
         )
         overlay = generate_overlay(ws)
-        assert "drydockFolder" not in overlay
+        assert "workspaceFolder" not in overlay
 
     def test_secrets_mount_uses_drydock_scoped_path(self, ws):
         expected_host_dir = str(Path.home() / ".drydock" / "secrets")

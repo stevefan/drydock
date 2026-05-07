@@ -10,8 +10,8 @@ from drydock.core import WsError
 
 
 def _find_container(worktree_path: str) -> str:
-    # devcontainer CLI labels containers with devcontainer.local_folder=<drydock-folder>,
-    # which is the path passed via --drydock-folder — i.e. the worktree path in drydock's
+    # devcontainer CLI labels containers with devcontainer.local_folder=<workspace-folder>,
+    # which is the path passed via --workspace-folder — i.e. the worktree path in drydock's
     # case (not the overlay path).
     result = subprocess.run(
         [
@@ -36,7 +36,7 @@ def _read_workspace_folder(overlay_path: str) -> str:
     try:
         with open(overlay_path) as f:
             data = json.load(f)
-        return data.get("drydockFolder", "/drydock")
+        return data.get("workspaceFolder", "/drydock")
     except (OSError, json.JSONDecodeError):
         return "/drydock"
 
@@ -84,7 +84,7 @@ def attach(ctx, name, editor):
         return
 
     folder = _read_workspace_folder(overlay_path)
-    # devcontainer CLI labels containers with the drydock-folder it was given
+    # devcontainer CLI labels containers with the workspace-folder it was given
     # (worktree_path + workspace_subdir for sub-project desks).
     from pathlib import Path as _P
     effective_workspace_folder = str(
