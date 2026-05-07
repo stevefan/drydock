@@ -55,17 +55,20 @@ class TestPassingCase:
         assert result.ok is True, result.violations
         assert result.violations == ()
 
-    def test_canonical_example_yaml_passes(self, tmp_path):
-        """The example in scripts/port-auditor/project.yaml is THE
-        documented shape. If it stops passing the validator, either
-        the validator changed (deliberate) or the example drifted
-        (regression). Either way, the test surfaces it."""
-        repo_root = Path(__file__).resolve().parents[3]
-        example = repo_root / "scripts" / "port-auditor" / "project.yaml"
-        # Load through the real loader so role + KNOWN_KEYS gate also fires
+    def test_bundled_template_yaml_passes(self, tmp_path):
+        """The bundled template in src/drydock/cli/new.py
+        (_auditor_project_yaml) is THE documented shape. If it stops
+        passing the validator, either the validator changed
+        (deliberate) or the template drifted (regression). Either way,
+        the test surfaces it. This is also covered end-to-end by
+        test_new.py::TestNewAuditor — keeping a unit-level pin here
+        for fast feedback on validator drift specifically."""
+        from drydock.cli.new import _auditor_project_yaml, AUDITOR_DEFAULT_BASE_TAG
         projects_dir = tmp_path / "projects"
         projects_dir.mkdir()
-        (projects_dir / "port-auditor.yaml").write_text(example.read_text())
+        (projects_dir / "port-auditor.yaml").write_text(
+            _auditor_project_yaml(tmp_path, AUDITOR_DEFAULT_BASE_TAG)
+        )
         cfg = load_project_config("port-auditor", base_dir=projects_dir)
         assert cfg is not None
         assert cfg.role == ROLE_AUDITOR

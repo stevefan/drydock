@@ -1,0 +1,43 @@
+# OPTIONAL — only used if the Auditor needs custom services beyond
+# the watch loop (state machine, multi-process agent harness, custom
+# tooling). The default scaffold uses the baked image directly via
+# devcontainer.json's "image" key, so most Auditors don't need this.
+#
+# To enable extension:
+#   1. Rename this file to "Dockerfile"
+#   2. Edit devcontainer.json — replace the top-level "image" key with:
+#        "build": { "dockerfile": "Dockerfile" }
+#   3. Add your services / state machine / harness code below
+#   4. drydock destroy / drydock create — the build runs at create time
+#
+# Caveat: derived images don't pass core/auditor/role_validator.py's
+# _APPROVED_IMAGE_PREFIXES gate by default. Either publish your
+# derivative under the drydock-port-auditor prefix (requires write
+# access to that namespace) OR edit the validator allowlist to add
+# your prefix — a deliberate principal-side change.
+
+FROM ghcr.io/stevefan/drydock-port-auditor:{{ base_tag }}
+
+USER root
+
+# --- Agent harness extension point -----------------------------------
+#
+# Example: install a Python state-machine library + your harness code.
+# The bundled drydock package's auditor module already has internal
+# state for the watch loop's cadence; this is for cases where you
+# need a richer reasoning skeleton (multi-step plans, branching
+# workflows, tool-use orchestration).
+#
+# RUN pip install --no-cache-dir transitions
+# COPY harness/ /opt/harness/
+# ENV PYTHONPATH=/opt/harness:$PYTHONPATH
+#
+# If your harness adds long-running services, override the entrypoint
+# to start them alongside the watch loop. Pattern: a tiny supervisor
+# script that backgrounds your services then exec's start-auditor.sh.
+#
+# COPY start-auditor-with-harness.sh /usr/local/bin/
+# RUN chmod +x /usr/local/bin/start-auditor-with-harness.sh
+# ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/start-auditor-with-harness.sh"]
+#
+# --------------------------------------------------------------------

@@ -26,3 +26,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "drydock.templates.devcontainer_drydock" = ["Dockerfile", "devcontainer.json"]
+"drydock.templates.port_auditor" = ["devcontainer.json", "Dockerfile.example"]
