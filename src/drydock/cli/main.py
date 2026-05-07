@@ -53,6 +53,7 @@ from drydock.cli.yard import yard  # noqa: E402
 from drydock.cli.auditor import auditor  # noqa: E402
 from drydock.cli.amendment import amendment  # noqa: E402
 from drydock.cli.migrate import migrate  # noqa: E402
+from drydock.cli.workload import workload  # noqa: E402
 
 cli.add_command(create)
 cli.add_command(upgrade)
@@ -81,3 +82,4 @@ cli.add_command(yard)
 cli.add_command(auditor)
 cli.add_command(amendment)
 cli.add_command(migrate)
+cli.add_command(workload)
