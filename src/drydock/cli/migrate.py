@@ -29,6 +29,9 @@ from drydock.core.migration import (
     SchemaMigrationTarget,
     plan_migration,
     precheck_migration,
+    probe_daemon_healthy,
+    probe_disk_free,
+    probe_target_image_present,
 )
 
 
@@ -97,14 +100,30 @@ def migrate(ctx, name, target_spec, force):
         out.error(WsError(str(exc), fix=""))
         return
 
+    # Run the real probes against the live system — but only when about
+    # to execute. --dry-run is a planning tool; refusing it because the
+    # daemon isn't running locally would block planning before deploy.
+    # Each probe returns None for "couldn't tell" so the precheck only
+    # refuses on confirmed-bad.
+    from pathlib import Path
+    if dry_run:
+        target_image_present = None
+        disk_free_bytes = None
+        daemon_healthy = True  # treat as healthy for planning
+    else:
+        target_image_present = (
+            probe_target_image_present(target.new_image)
+            if isinstance(target, ImageBumpTarget) else None
+        )
+        disk_free_bytes = probe_disk_free(Path.home() / ".drydock")
+        daemon_healthy = probe_daemon_healthy()
+
     precheck = precheck_migration(
         drydock=drydock,
         plan=plan,
-        # M1: no real disk-space probe yet; daemon-health/image-presence
-        # default to "assume ok" for the planning surface. Hard checks
-        # land in M1-followup when the state machine actually executes.
-        daemon_healthy=True,
-        target_image_present=None,
+        disk_free_bytes=disk_free_bytes,
+        daemon_healthy=daemon_healthy,
+        target_image_present=target_image_present,
     )
 
     registry.insert_migration(

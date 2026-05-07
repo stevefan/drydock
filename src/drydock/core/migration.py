@@ -325,3 +325,84 @@ def precheck_migration(
 
 def isinstance_image_bump(target_kind: str) -> bool:
     return target_kind == "image_bump"
+
+
+# ---------------------------------------------------------------------------
+# Real probes — compute the values precheck_migration consumes
+# ---------------------------------------------------------------------------
+
+
+def probe_disk_free(path) -> int | None:
+    """Return free bytes on the filesystem containing ``path``.
+
+    Returns None on any error (path doesn't exist, OS doesn't expose
+    statvfs, etc.) — caller treats None as "couldn't probe; skip the
+    disk check rather than refuse the migration."
+    """
+    import shutil
+    from pathlib import Path
+    try:
+        p = Path(path)
+        if not p.exists():
+            return None
+        return shutil.disk_usage(p).free
+    except OSError:
+        return None
+
+
+def probe_target_image_present(image: str, *, docker_bin: str | None = None) -> bool | None:
+    """Return True if the docker image is present locally, False if not,
+    None if docker isn't reachable.
+
+    Pre-check returns None for "skip the check" — distinguishes "image
+    missing, refuse" from "we couldn't tell, don't gate."
+    """
+    import shutil
+    import subprocess
+    docker = docker_bin or shutil.which("docker") or "docker"
+    try:
+        result = subprocess.run(
+            [docker, "image", "inspect", image],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    return result.returncode == 0
+
+
+def probe_daemon_healthy(socket_path: str | None = None) -> bool:
+    """Probe the daemon's daemon.health RPC over the local socket.
+
+    Returns True if the daemon responds with ok=true within a short
+    timeout, False otherwise. We're inside the daemon when this is
+    called (probing localhost), so a False answer means something
+    structurally broken.
+    """
+    import json as _json
+    import os
+    import socket as _socket
+    sock_path = socket_path or os.path.expanduser("~/.drydock/run/daemon.sock")
+    if not os.path.exists(sock_path):
+        return False
+    try:
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(3.0)
+        s.connect(sock_path)
+        request = _json.dumps({
+            "jsonrpc": "2.0",
+            "method": "daemon.health",
+            "id": "precheck",
+        }).encode("utf-8")
+        s.sendall(request)
+        s.shutdown(_socket.SHUT_WR)
+        chunks = []
+        while True:
+            buf = s.recv(4096)
+            if not buf:
+                break
+            chunks.append(buf)
+        s.close()
+        response = _json.loads(b"".join(chunks).decode("utf-8"))
+        return response.get("result", {}).get("ok") is True
+    except (OSError, _json.JSONDecodeError):
+        return False

@@ -347,3 +347,42 @@ class TestMigrationRegistry:
         )
         # 'planned' (dry-run) is not 'in_progress'
         assert r.list_active_migrations() == []
+
+
+class TestProbes:
+    """Phase 2a.4 M4: live probes that compute precheck inputs."""
+
+    def test_probe_disk_free_returns_int_for_existing_path(self, tmp_path):
+        from drydock.core.migration import probe_disk_free
+        result = probe_disk_free(tmp_path)
+        assert isinstance(result, int)
+        assert result > 0
+
+    def test_probe_disk_free_returns_none_for_missing_path(self, tmp_path):
+        from drydock.core.migration import probe_disk_free
+        result = probe_disk_free(tmp_path / "does-not-exist")
+        assert result is None
+
+    def test_probe_target_image_present_true_when_inspect_succeeds(self):
+        from unittest.mock import patch, MagicMock
+        from drydock.core.migration import probe_target_image_present
+        ok = MagicMock(); ok.returncode = 0; ok.stdout = "[]"; ok.stderr = ""
+        with patch("subprocess.run", return_value=ok):
+            assert probe_target_image_present("img:v1") is True
+
+    def test_probe_target_image_present_false_when_inspect_fails(self):
+        from unittest.mock import patch, MagicMock
+        from drydock.core.migration import probe_target_image_present
+        bad = MagicMock(); bad.returncode = 1; bad.stdout = ""; bad.stderr = "no such image"
+        with patch("subprocess.run", return_value=bad):
+            assert probe_target_image_present("img:v1") is False
+
+    def test_probe_target_image_present_none_when_docker_unavailable(self):
+        from unittest.mock import patch
+        from drydock.core.migration import probe_target_image_present
+        with patch("subprocess.run", side_effect=FileNotFoundError("no docker")):
+            assert probe_target_image_present("img:v1") is None
+
+    def test_probe_daemon_healthy_false_when_socket_missing(self, tmp_path):
+        from drydock.core.migration import probe_daemon_healthy
+        assert probe_daemon_healthy(socket_path=str(tmp_path / "no-sock")) is False
