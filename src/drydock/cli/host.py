@@ -66,6 +66,52 @@ def _repo_root() -> Path | None:
     return None
 
 
+def _ensure_drydock_symlink(
+    target: Path = Path("/usr/local/bin/drydock"),
+    home: Path | None = None,
+) -> str | None:
+    """Idempotent: symlink ``target`` → the pipx-installed drydock binary.
+
+    pipx installs at ``~/.local/bin/drydock`` (a symlink) or directly at
+    ``~/.local/share/pipx/venvs/drydock/bin/drydock``. Non-interactive
+    ssh sessions don't have ``~/.local/bin`` on PATH by default, so
+    ``ssh harbor 'drydock list'`` fails with "command not found" without
+    a system-wide symlink. Tonight's smoke harness hit this; codifying.
+
+    Returns a short action string if a symlink was created/updated,
+    None if no action was needed. Refuses to overwrite a regular file
+    at ``target`` (returns None) — that's an unusual install state we
+    don't want to surprise-clobber.
+    """
+    home = home or Path.home()
+    source = shutil.which("drydock")
+    if not source:
+        for candidate in (
+            home / ".local" / "bin" / "drydock",
+            home / ".local" / "share" / "pipx" / "venvs" / "drydock" / "bin" / "drydock",
+        ):
+            if candidate.exists():
+                source = str(candidate)
+                break
+    if not source:
+        return None  # nothing installed; bootstrap script handles install
+
+    if target.exists() and not target.is_symlink():
+        # Regular file at the path — don't clobber. Operator chose to
+        # install something there; we don't second-guess.
+        return None
+
+    if target.is_symlink():
+        current = os.readlink(target)
+        if current == source:
+            return None  # already correct; no action
+        target.unlink()
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(source)
+    return f"symlinked {target} → {source}"
+
+
 def _install_drydock_rpc(bin_dir: Path) -> str | None:
     """Copy scripts/drydock-rpc into ~/.drydock/bin/drydock-rpc.
 
@@ -169,6 +215,12 @@ def host_init(ctx):
     rpc_action = _install_drydock_rpc(bin_dir)
     if rpc_action:
         actions.append(rpc_action)
+
+    # System-wide drydock symlink — Linux+root only. See _ensure_drydock_symlink.
+    if sys.platform.startswith("linux") and os.geteuid() == 0:
+        symlink_action = _ensure_drydock_symlink()
+        if symlink_action:
+            actions.append(symlink_action)
 
     out.success(
         {"actions": actions, "noop": len(actions) == 0},

@@ -58,6 +58,108 @@ def test_host_init_repairs_wrong_mode(tmp_path, monkeypatch):
     assert secrets.stat().st_mode & 0o777 == 0o700
 
 
+class TestEnsureDrydockSymlink:
+    """Unit tests for the symlink helper. The full Linux+root CLI path
+    is exercised via the smoke harness on Hetzner — these tests pin the
+    branching logic in isolation."""
+
+    def test_creates_symlink_when_target_missing(self, tmp_path):
+        from drydock.cli.host import _ensure_drydock_symlink
+        # Seed a fake pipx-installed drydock binary
+        pipx_bin = tmp_path / ".local" / "bin"
+        pipx_bin.mkdir(parents=True)
+        source = pipx_bin / "drydock"
+        source.write_text("#!/bin/sh\n")
+        source.chmod(0o755)
+
+        target = tmp_path / "system-bin" / "drydock"
+        with patch("drydock.cli.host.shutil.which", return_value=None):
+            action = _ensure_drydock_symlink(target=target, home=tmp_path)
+        assert target.is_symlink()
+        assert os.readlink(target) == str(source)
+        assert action is not None
+        assert "symlinked" in action
+
+    def test_idempotent_when_symlink_already_correct(self, tmp_path):
+        from drydock.cli.host import _ensure_drydock_symlink
+        pipx_bin = tmp_path / ".local" / "bin"
+        pipx_bin.mkdir(parents=True)
+        source = pipx_bin / "drydock"
+        source.write_text("#!/bin/sh\n")
+        source.chmod(0o755)
+
+        target = tmp_path / "system-bin" / "drydock"
+        target.parent.mkdir()
+        target.symlink_to(source)
+
+        with patch("drydock.cli.host.shutil.which", return_value=None):
+            action = _ensure_drydock_symlink(target=target, home=tmp_path)
+        assert action is None
+
+    def test_replaces_stale_symlink(self, tmp_path):
+        from drydock.cli.host import _ensure_drydock_symlink
+        pipx_bin = tmp_path / ".local" / "bin"
+        pipx_bin.mkdir(parents=True)
+        source = pipx_bin / "drydock"
+        source.write_text("#!/bin/sh\n"); source.chmod(0o755)
+
+        # Symlink already exists but points somewhere stale.
+        target = tmp_path / "system-bin" / "drydock"
+        target.parent.mkdir()
+        stale = tmp_path / "stale" / "drydock"
+        stale.parent.mkdir()
+        stale.write_text("old"); stale.chmod(0o755)
+        target.symlink_to(stale)
+
+        with patch("drydock.cli.host.shutil.which", return_value=None):
+            action = _ensure_drydock_symlink(target=target, home=tmp_path)
+        assert os.readlink(target) == str(source)
+        assert action is not None
+
+    def test_refuses_to_clobber_regular_file(self, tmp_path):
+        """Operator-installed binary at /usr/local/bin/drydock is
+        respected; we don't overwrite it."""
+        from drydock.cli.host import _ensure_drydock_symlink
+        pipx_bin = tmp_path / ".local" / "bin"
+        pipx_bin.mkdir(parents=True)
+        source = pipx_bin / "drydock"
+        source.write_text("#!/bin/sh\n"); source.chmod(0o755)
+
+        target = tmp_path / "system-bin" / "drydock"
+        target.parent.mkdir()
+        target.write_text("operator's own binary")
+
+        with patch("drydock.cli.host.shutil.which", return_value=None):
+            action = _ensure_drydock_symlink(target=target, home=tmp_path)
+        assert action is None
+        # Original contents preserved
+        assert target.read_text() == "operator's own binary"
+
+    def test_returns_none_when_no_drydock_installed(self, tmp_path):
+        """Bootstrap-script case: pipx hasn't installed yet."""
+        from drydock.cli.host import _ensure_drydock_symlink
+        target = tmp_path / "system-bin" / "drydock"
+        with patch("drydock.cli.host.shutil.which", return_value=None):
+            action = _ensure_drydock_symlink(target=target, home=tmp_path)
+        assert action is None
+        assert not target.exists()
+
+    def test_uses_pipx_share_path_as_fallback(self, tmp_path):
+        """Some pipx configs install only at ~/.local/share/pipx/venvs/...
+        without the ~/.local/bin shortcut."""
+        from drydock.cli.host import _ensure_drydock_symlink
+        pipx_share = tmp_path / ".local" / "share" / "pipx" / "venvs" / "drydock" / "bin"
+        pipx_share.mkdir(parents=True)
+        source = pipx_share / "drydock"
+        source.write_text("#!/bin/sh\n"); source.chmod(0o755)
+
+        target = tmp_path / "system-bin" / "drydock"
+        with patch("drydock.cli.host.shutil.which", return_value=None):
+            action = _ensure_drydock_symlink(target=target, home=tmp_path)
+        assert target.is_symlink()
+        assert os.readlink(target) == str(source)
+
+
 def test_host_check_fails_when_docker_missing(tmp_path, monkeypatch):
     """Required check failure → exit 1. Docker absence is the canonical fail."""
     monkeypatch.setenv("HOME", str(tmp_path))
