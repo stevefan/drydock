@@ -157,6 +157,33 @@ class _FakeAction:
         return {"kind": self.kind}
 
 
+class TestCgroupLiftRefusal:
+    def test_refuses_to_lift_field_with_no_original_cap(self):
+        """Docker can't revert a once-set cap to unlimited in place,
+        so we refuse the lift up front rather than ship a half-revertable
+        action. Forces the principal to set standing caps in YAML."""
+        from drydock.core.cgroup import CgroupUpdateError
+        action = CgroupLiftAction(
+            container_id="cid_x",
+            original=HardCeilings(),  # no caps
+            lifted=HardCeilings(memory_max="8g"),
+        )
+        with pytest.raises(CgroupUpdateError) as exc:
+            action.apply()
+        assert "memory_max" in str(exc.value)
+        assert "no original cap" in str(exc.value)
+
+    def test_allows_lift_when_original_has_cap(self):
+        action = CgroupLiftAction(
+            container_id="cid_x",
+            original=HardCeilings(memory_max="2g"),
+            lifted=HardCeilings(memory_max="8g"),
+        )
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok_run()):
+            persisted = action.apply()
+        assert persisted["lifted"]["memory_max"] == "8g"
+
+
 class TestApplyAtomically:
     def test_clean_apply_persists_each_action(self):
         a1 = _FakeAction("action1")

@@ -168,29 +168,29 @@ def _revert_flags_for(
     original: HardCeilings,
     lifted: Optional[HardCeilings],
 ) -> list[str]:
-    """Compute revert flags, emitting docker's unlimited sentinels for
-    fields that were lifted but had no original cap."""
+    """Compute revert flags from the original ceilings only.
+
+    We previously tried to emit docker's "unlimited" sentinels (-1, 0.0)
+    for fields that were lifted but had no original cap. Confirmed
+    empirically: docker's `update` API refuses to clear a once-set
+    memory limit. ``--memory=0`` returns success but is a no-op; ``-1``
+    is rejected as an invalid size. There is no in-place way to undo
+    a memory cap once docker has set one. (Container recreate is the
+    only honest revert, which is the security-correct behavior anyway —
+    container is the security boundary, not the resource boundary.)
+
+    So: we only emit revert flags for fields the caller had original
+    caps for. Lift attempts on fields without original caps must be
+    refused upstream (in the workload-lease apply path).
+    """
     flags: list[str] = []
-    # Memory: -1 means unlimited in docker update.
     if original.memory_max is not None:
         flags.append(f"--memory={original.memory_max}")
         flags.append(f"--memory-swap={original.memory_max}")
-    elif lifted is not None and lifted.memory_max is not None:
-        flags.append("--memory=-1")
-        flags.append("--memory-swap=-1")
-
-    # CPUs: 0.0 means unlimited in docker update.
     if original.cpu_max is not None:
         flags.append(f"--cpus={original.cpu_max}")
-    elif lifted is not None and lifted.cpu_max is not None:
-        flags.append("--cpus=0.0")
-
-    # PIDs: -1 means unlimited.
     if original.pids_max is not None:
         flags.append(f"--pids-limit={original.pids_max}")
-    elif lifted is not None and lifted.pids_max is not None:
-        flags.append("--pids-limit=-1")
-
     return flags
 
 

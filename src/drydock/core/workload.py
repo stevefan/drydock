@@ -144,6 +144,27 @@ class CgroupLiftAction:
     kind: str = "cgroup_lift"
 
     def apply(self) -> dict:
+        # Refuse to lift fields that have no original cap to revert to.
+        # Docker's update API refuses to clear a once-set memory/cpu/pids
+        # limit, so the only way to "revert to unlimited" is container
+        # recreate — which defeats the live-lift contract. Force the
+        # principal to set standing caps in project YAML before workloads
+        # can lift them.
+        unsafe = []
+        if self.lifted.memory_max is not None and self.original.memory_max is None:
+            unsafe.append("memory_max")
+        if self.lifted.cpu_max is not None and self.original.cpu_max is None:
+            unsafe.append("cpu_max")
+        if self.lifted.pids_max is not None and self.original.pids_max is None:
+            unsafe.append("pids_max")
+        if unsafe:
+            raise CgroupUpdateError(
+                f"refusing to lift cgroup field(s) {unsafe} on a drydock "
+                f"with no original cap — docker can't revert to unlimited "
+                f"in place. Set explicit standing caps in project YAML "
+                f"resources_hard before lifting.",
+                flags=[], stderr="",
+            )
         applied_flags = apply_cgroup_limits(self.container_id, self.lifted)
         return {
             "container_id": self.container_id,
