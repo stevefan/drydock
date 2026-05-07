@@ -135,6 +135,28 @@ CREATE INDEX IF NOT EXISTS idx_amendments_drydock
 def _migrate_to_v5(conn: sqlite3.Connection) -> None:
     conn.executescript(V5_TABLES)
 
+
+# V6 (2a.2 cgroup-live-update prep): persist the *applied* hard ceilings
+# at create time so WorkloadLease revert has an authoritative target,
+# regardless of what the project YAML currently says (which may have
+# been edited mid-lease). Stored as JSON-encoded HardCeilings.to_dict().
+V6_DRYDOCK_COLUMNS = (
+    ("original_resources_hard", "TEXT NOT NULL DEFAULT '{}'"),
+)
+
+
+def _migrate_to_v6(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info('drydocks')").fetchall()
+    }
+    for column_name, column_def in V6_DRYDOCK_COLUMNS:
+        if column_name in columns:
+            continue
+        conn.execute(
+            f"ALTER TABLE drydocks ADD COLUMN {column_name} {column_def}"
+        )
+
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
     lease_id            TEXT PRIMARY KEY,
@@ -353,6 +375,7 @@ class Registry:
         _migrate_to_v3(self._conn)
         _migrate_to_v4(self._conn)
         _migrate_to_v5(self._conn)
+        _migrate_to_v6(self._conn)
         self._conn.commit()
 
     def close(self):
@@ -369,8 +392,8 @@ class Registry:
             """INSERT INTO drydocks
                (id, name, project, repo_path, worktree_path, branch, base_ref,
                 state, container_id, workspace_subdir, image, owner,
-                created_at, updated_at, config)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_at, updated_at, config, original_resources_hard)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ws.id,
                 ws.name,
@@ -387,6 +410,7 @@ class Registry:
                 ws.created_at,
                 ws.updated_at,
                 json.dumps(ws.config),
+                json.dumps(ws.original_resources_hard),
             ),
         )
         self._conn.commit()
@@ -989,6 +1013,10 @@ class Registry:
     def _row_to_drydock(self, row: sqlite3.Row) -> Drydock:
         d = dict(row)
         d["config"] = json.loads(d["config"])
+        # V6 column: original_resources_hard is JSON-serialized HardCeilings.
+        # Default '{}' from the migration; legacy rows will read as empty dict.
+        if "original_resources_hard" in d and isinstance(d["original_resources_hard"], str):
+            d["original_resources_hard"] = json.loads(d["original_resources_hard"] or "{}")
         # Drop columns that the current Drydock dataclass doesn't accept.
         # Lets existing registries (with legacy columns like hostname/labels)
         # migrate forward without needing a schema rewrite.

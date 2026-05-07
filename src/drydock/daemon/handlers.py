@@ -1000,6 +1000,11 @@ def _perform_create(
     # YAML changes without a `ws project reload`.
     from drydock.core.project_yaml_sha import compute_project_yaml_sha
     pinned_yaml_sha256 = compute_project_yaml_sha(str(spec["project"]))
+    # Phase 2a.2 (make-the-harness-live): pin the *applied* hard ceilings
+    # at create time as the authoritative revert target for future
+    # WorkloadLease grants. Independent of project YAML so a mid-lease
+    # YAML edit can't shift the revert target out from under the lease.
+    original_resources_hard = dict(spec.get("resources_hard") or {})
     ws = Drydock(
         name=str(spec["name"]),
         project=str(spec["project"]),
@@ -1014,6 +1019,7 @@ def _perform_create(
             "extra_mounts": list(spec["extra_mounts"]),
             **overlay_config_data,
         },
+        original_resources_hard=original_resources_hard,
     )
     ws = registry.create_drydock(ws)
     registry.update_desk_delegations(

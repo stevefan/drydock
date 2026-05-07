@@ -31,6 +31,13 @@ class Drydock:
     # PRAGMA foreign_keys=ON which we don't currently set), but enforced
     # in code by checking yard existence at create.
     yard_id: str | None = None
+    # Phase 2a.2 (make-the-harness-live.md): authoritative hard ceilings
+    # applied at create/upgrade/reload. WorkloadLease grants lift these
+    # via `docker update`; on lease revoke/expiry, this dict is the
+    # revert target. Independent of project YAML so concurrent edits
+    # don't collide. Empty dict = no original ceilings recorded
+    # (legacy rows, or desks created with no resources_hard).
+    original_resources_hard: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.id:

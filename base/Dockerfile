@@ -47,7 +47,7 @@ RUN case "${TARGETARCH:-amd64}" in \
     rm -rf /tmp/awscliv2.zip /tmp/aws && \
     aws --version
 
-COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh add-allowed-domain.sh setup-storage-mounts.sh refresh-storage-mounts.sh /usr/local/bin/
+COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh refresh-firewall-allowlist.sh add-allowed-domain.sh setup-storage-mounts.sh refresh-storage-mounts.sh start-egress-proxy.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh \
               /usr/local/bin/start-tailscale.sh \
               /usr/local/bin/start-remote-control.sh \
@@ -55,7 +55,25 @@ RUN chmod +x /usr/local/bin/init-firewall.sh \
               /usr/local/bin/refresh-firewall-allowlist.sh \
               /usr/local/bin/add-allowed-domain.sh \
               /usr/local/bin/setup-storage-mounts.sh \
-              /usr/local/bin/refresh-storage-mounts.sh
+              /usr/local/bin/refresh-storage-mounts.sh \
+              /usr/local/bin/start-egress-proxy.sh
+
+# Smokescreen — Stripe's SNI-aware forward proxy. Phase 2a.1 of
+# make-the-harness-live.md replaces the iptables/ipset domain
+# enforcement with a layer-7 proxy whose allowlist the daemon owns.
+# Built and shipped now (E0); start-egress-proxy.sh launches it only
+# when EGRESS_PROXY_ENABLED=1 (E1). Existing desks unchanged.
+ARG SMOKESCREEN_VERSION=0.0.5
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) SMOKESCREEN_ARCH=amd64 ;; \
+      arm64) SMOKESCREEN_ARCH=arm64 ;; \
+      *) echo "unsupported arch: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/stripe/smokescreen/releases/download/v${SMOKESCREEN_VERSION}/smokescreen-v${SMOKESCREEN_VERSION}-linux-${SMOKESCREEN_ARCH}.tar.gz" -o /tmp/smokescreen.tar.gz && \
+    tar xzf /tmp/smokescreen.tar.gz -C /tmp && \
+    install -m 0755 /tmp/smokescreen-*/smokescreen /usr/local/bin/smokescreen && \
+    rm -rf /tmp/smokescreen.tar.gz /tmp/smokescreen-* && \
+    smokescreen --help >/dev/null && echo "smokescreen v${SMOKESCREEN_VERSION} installed"
 
 # System-wide tmux config so SSH'd-in interactive sessions get
 # host-clipboard-friendly copy/paste out of the box. Used as the
