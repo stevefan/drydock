@@ -37,11 +37,10 @@ _SECRETS_BACKEND_NAME = "file"
 _STORAGE_BACKEND: Any = None
 
 
-@dataclass(frozen=True)
-class _RpcError(ValueError):
-    code: int
-    message: str
-    data: object | None = None
+# _RpcError + task_log helpers moved to drydock.daemon.rpc_common so
+# handler modules (workload_handlers, etc.) can import without circular
+# dependency on the dispatcher.
+from drydock.daemon.rpc_common import _RpcError, with_task_log  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -66,72 +65,22 @@ def _create_desk(
     request_id: str | int | None,
     caller_drydock_id: str | None,
 ) -> dict[str, object]:
-    if _REGISTRY_PATH is None:
-        raise _RpcError(code=-32603, message="Internal error")
     if _SECRETS_ROOT is None:
         raise _RpcError(code=-32603, message="Internal error")
-    if request_id is None:
-        raise _RpcError(
-            code=-32600,
-            message="Invalid Request",
-            data={"reason": "request_id_required"},
-        )
     del caller_drydock_id
 
-    request_key = str(request_id)
-    registry = Registry(db_path=_REGISTRY_PATH)
-    try:
-        cached = registry._conn.execute(
-            """
-            SELECT status, outcome_json
-            FROM task_log
-            WHERE request_id = ?
-            """,
-            (request_key,),
-        ).fetchone()
-        if cached is not None:
-            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
-
-        created_at = _utc_now()
-        registry._conn.execute(
-            """
-            INSERT INTO task_log
-                (request_id, method, spec_json, status, outcome_json, created_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                request_key,
-                "CreateDesk",
-                json.dumps(params),
-                "in_progress",
-                None,
-                created_at,
-                None,
-            ),
+    def _impl(_registry):
+        from drydock.daemon.handlers import create_desk
+        return create_desk(
+            params, request_id, None,
+            registry_path=_REGISTRY_PATH,
+            secrets_root=_SECRETS_ROOT,
+            dry_run=_DRY_RUN,
         )
-        registry._conn.commit()
-
-        try:
-            from drydock.daemon.handlers import create_desk
-            result = create_desk(
-                params,
-                request_id,
-                None,
-                registry_path=_REGISTRY_PATH,
-                secrets_root=_SECRETS_ROOT,
-                dry_run=_DRY_RUN,
-            )
-        except _RpcError as exc:
-            error = {"code": exc.code, "message": exc.message}
-            if exc.data is not None:
-                error["data"] = exc.data
-            _finish_task_log(registry, request_key, "failed", error)
-            raise
-
-        _finish_task_log(registry, request_key, "completed", result)
-        return result
-    finally:
-        registry.close()
+    return with_task_log(
+        method="CreateDesk", params=params, request_id=request_id,
+        registry_path=_REGISTRY_PATH, fn=_impl,
+    )
 
 
 def _spawn_child(
@@ -139,71 +88,21 @@ def _spawn_child(
     request_id: str | int | None,
     caller_drydock_id: str | None,
 ) -> dict[str, object]:
-    if _REGISTRY_PATH is None:
-        raise _RpcError(code=-32603, message="Internal error")
     if _SECRETS_ROOT is None:
         raise _RpcError(code=-32603, message="Internal error")
-    if request_id is None:
-        raise _RpcError(
-            code=-32600,
-            message="Invalid Request",
-            data={"reason": "request_id_required"},
+
+    def _impl(_registry):
+        from drydock.daemon.handlers import spawn_child
+        return spawn_child(
+            params, request_id, caller_drydock_id,
+            registry_path=_REGISTRY_PATH,
+            secrets_root=_SECRETS_ROOT,
+            dry_run=_DRY_RUN,
         )
-
-    request_key = str(request_id)
-    registry = Registry(db_path=_REGISTRY_PATH)
-    try:
-        cached = registry._conn.execute(
-            """
-            SELECT status, outcome_json
-            FROM task_log
-            WHERE request_id = ?
-            """,
-            (request_key,),
-        ).fetchone()
-        if cached is not None:
-            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
-
-        created_at = _utc_now()
-        registry._conn.execute(
-            """
-            INSERT INTO task_log
-                (request_id, method, spec_json, status, outcome_json, created_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                request_key,
-                "SpawnChild",
-                json.dumps(params),
-                "in_progress",
-                None,
-                created_at,
-                None,
-            ),
-        )
-        registry._conn.commit()
-
-        try:
-            from drydock.daemon.handlers import spawn_child
-            result = spawn_child(
-                params,
-                request_id,
-                caller_drydock_id,
-                registry_path=_REGISTRY_PATH,
-                secrets_root=_SECRETS_ROOT,
-                dry_run=_DRY_RUN,
-            )
-        except _RpcError as exc:
-            error = {"code": exc.code, "message": exc.message}
-            if exc.data is not None:
-                error["data"] = exc.data
-            _finish_task_log(registry, request_key, "failed", error)
-            raise
-
-        _finish_task_log(registry, request_key, "completed", result)
-        return result
-    finally:
-        registry.close()
+    return with_task_log(
+        method="SpawnChild", params=params, request_id=request_id,
+        registry_path=_REGISTRY_PATH, fn=_impl,
+    )
 
 
 def _destroy_desk(
@@ -211,72 +110,27 @@ def _destroy_desk(
     request_id: str | int | None,
     caller_drydock_id: str | None,
 ) -> dict[str, object]:
-    if _REGISTRY_PATH is None:
-        raise _RpcError(code=-32603, message="Internal error")
     if _SECRETS_ROOT is None:
         raise _RpcError(code=-32603, message="Internal error")
-    if request_id is None:
-        raise _RpcError(
-            code=-32600,
-            message="Invalid Request",
-            data={"reason": "request_id_required"},
+
+    def _impl(_registry):
+        from drydock.daemon.handlers import destroy_desk
+        return destroy_desk(
+            params, request_id, caller_drydock_id,
+            registry_path=_REGISTRY_PATH,
+            secrets_root=_SECRETS_ROOT,
+            dry_run=_DRY_RUN,
         )
+    # Destroy returns its result even on partial_failures so the caller
+    # sees the structured shape; the task_log row is recorded as "failed"
+    # so a retry surfaces the partial-failure outcome via _replay_cached.
+    def _status(result: dict) -> str:
+        return "failed" if result.get("partial_failures") else "completed"
 
-    request_key = str(request_id)
-    registry = Registry(db_path=_REGISTRY_PATH)
-    try:
-        cached = registry._conn.execute(
-            """
-            SELECT status, outcome_json
-            FROM task_log
-            WHERE request_id = ?
-            """,
-            (request_key,),
-        ).fetchone()
-        if cached is not None:
-            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
-
-        created_at = _utc_now()
-        registry._conn.execute(
-            """
-            INSERT INTO task_log
-                (request_id, method, spec_json, status, outcome_json, created_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                request_key,
-                "DestroyDesk",
-                json.dumps(params),
-                "in_progress",
-                None,
-                created_at,
-                None,
-            ),
-        )
-        registry._conn.commit()
-
-        try:
-            from drydock.daemon.handlers import destroy_desk
-            result = destroy_desk(
-                params,
-                request_id,
-                caller_drydock_id,
-                registry_path=_REGISTRY_PATH,
-                secrets_root=_SECRETS_ROOT,
-                dry_run=_DRY_RUN,
-            )
-        except _RpcError as exc:
-            error = {"code": exc.code, "message": exc.message}
-            if exc.data is not None:
-                error["data"] = exc.data
-            _finish_task_log(registry, request_key, "failed", error)
-            raise
-
-        status = "failed" if result.get("partial_failures") else "completed"
-        _finish_task_log(registry, request_key, status, result)
-        return result
-    finally:
-        registry.close()
+    return with_task_log(
+        method="DestroyDesk", params=params, request_id=request_id,
+        registry_path=_REGISTRY_PATH, fn=_impl, status_for=_status,
+    )
 
 
 def _whoami(
@@ -294,68 +148,23 @@ def _request_capability(
     request_id: str | int | None,
     caller_drydock_id: str | None,
 ) -> dict[str, object]:
-    if _REGISTRY_PATH is None or _SECRETS_ROOT is None:
+    if _SECRETS_ROOT is None:
         raise _RpcError(code=-32603, message="Internal error")
-    if request_id is None:
-        # Per docs/v2-design-protocol.md §3 — without request_id the call
-        # is not safe to retry; daemon would issue two leases.
-        raise _RpcError(code=-32600, message="Invalid Request",
-                        data={"reason": "request_id_required"})
 
-    request_key = str(request_id)
-    registry = Registry(db_path=_REGISTRY_PATH)
-    try:
-        cached = registry._conn.execute(
-            """
-            SELECT status, outcome_json
-            FROM task_log
-            WHERE request_id = ?
-            """,
-            (request_key,),
-        ).fetchone()
-        if cached is not None:
-            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
-
-        registry._conn.execute(
-            """
-            INSERT INTO task_log
-                (request_id, method, spec_json, status, outcome_json, created_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                request_key,
-                "RequestCapability",
-                json.dumps(params),
-                "in_progress",
-                None,
-                _utc_now(),
-                None,
-            ),
+    def _impl(_registry):
+        from drydock.daemon.capability_handlers import request_capability
+        return request_capability(
+            params, request_id, caller_drydock_id,
+            registry_path=_REGISTRY_PATH,
+            secrets_root=_SECRETS_ROOT,
+            backend_name=_SECRETS_BACKEND_NAME,
+            storage_backend=_STORAGE_BACKEND,
         )
-        registry._conn.commit()
 
-        try:
-            from drydock.daemon.capability_handlers import request_capability
-            result = request_capability(
-                params,
-                request_id,
-                caller_drydock_id,
-                registry_path=_REGISTRY_PATH,
-                secrets_root=_SECRETS_ROOT,
-                backend_name=_SECRETS_BACKEND_NAME,
-                storage_backend=_STORAGE_BACKEND,
-            )
-        except _RpcError as exc:
-            error = {"code": exc.code, "message": exc.message}
-            if exc.data is not None:
-                error["data"] = exc.data
-            _finish_task_log(registry, request_key, "failed", error)
-            raise
-
-        _finish_task_log(registry, request_key, "completed", result)
-        return result
-    finally:
-        registry.close()
+    return with_task_log(
+        method="RequestCapability", params=params, request_id=request_id,
+        registry_path=_REGISTRY_PATH, fn=_impl,
+    )
 
 
 def _release_capability(
@@ -459,44 +268,6 @@ def _get_audit(
     )
 
 
-def _finish_task_log(
-    registry: Registry,
-    request_id: str,
-    status: str,
-    outcome: object,
-) -> None:
-    registry._conn.execute(
-        """
-        UPDATE task_log
-        SET status = ?, outcome_json = ?, completed_at = ?
-        WHERE request_id = ?
-        """,
-        (status, json.dumps(outcome), _utc_now(), request_id),
-    )
-    registry._conn.commit()
-
-
-def _replay_cached_outcome(request_id: str, status: str, outcome_json: str | None) -> dict[str, object]:
-    if status == "in_progress":
-        raise _RpcError(
-            code=-32002,
-            message="request_in_progress",
-            data={"request_id": request_id},
-        )
-    outcome = json.loads(outcome_json) if outcome_json else None
-    if status == "completed":
-        return outcome
-    if status == "failed" and isinstance(outcome, dict) and outcome.get("destroyed") is True:
-        return outcome
-    if status == "failed" and isinstance(outcome, dict):
-        raise _RpcError(
-            code=outcome["code"],
-            message=outcome["message"],
-            data=outcome.get("data"),
-        )
-    raise _RpcError(code=-32603, message="Internal error")
-
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -528,47 +299,16 @@ def _register_workload(
     request_id: str | int | None,
     caller_drydock_id: str | None,
 ) -> dict[str, object]:
-    if _REGISTRY_PATH is None:
-        raise _RpcError(code=-32603, message="Internal error")
-    if request_id is None:
-        raise _RpcError(code=-32600, message="Invalid Request",
-                        data={"reason": "request_id_required"})
-    request_key = str(request_id)
-    registry = Registry(db_path=_REGISTRY_PATH)
-    try:
-        cached = registry._conn.execute(
-            "SELECT status, outcome_json FROM task_log WHERE request_id = ?",
-            (request_key,),
-        ).fetchone()
-        if cached is not None:
-            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
-        registry._conn.execute(
-            "INSERT INTO task_log (request_id, method, spec_json, status, outcome_json, created_at, completed_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (request_key, "RegisterWorkload", json.dumps(params), "in_progress", None, _utc_now(), None),
+    def _impl(_registry):
+        from drydock.daemon.workload_handlers import register_workload
+        return register_workload(
+            params, request_id, caller_drydock_id,
+            registry_path=_REGISTRY_PATH,
         )
-        registry._conn.commit()
-        try:
-            from drydock.daemon.workload_handlers import register_workload, _RpcError as _WorkloadRpcError
-            try:
-                result = register_workload(
-                    params, request_id, caller_drydock_id,
-                    registry_path=_REGISTRY_PATH,
-                )
-            except _WorkloadRpcError as exc:
-                # Translate the workload module's local _RpcError into the
-                # daemon's _RpcError so the dispatcher serializes correctly.
-                raise _RpcError(code=exc.code, message=exc.message, data=exc.data) from exc
-        except _RpcError as exc:
-            error = {"code": exc.code, "message": exc.message}
-            if exc.data is not None:
-                error["data"] = exc.data
-            _finish_task_log(registry, request_key, "failed", error)
-            raise
-        _finish_task_log(registry, request_key, "completed", result)
-        return result
-    finally:
-        registry.close()
+    return with_task_log(
+        method="RegisterWorkload", params=params, request_id=request_id,
+        registry_path=_REGISTRY_PATH, fn=_impl,
+    )
 
 
 def _release_workload(
@@ -576,45 +316,16 @@ def _release_workload(
     request_id: str | int | None,
     caller_drydock_id: str | None,
 ) -> dict[str, object]:
-    if _REGISTRY_PATH is None:
-        raise _RpcError(code=-32603, message="Internal error")
-    if request_id is None:
-        raise _RpcError(code=-32600, message="Invalid Request",
-                        data={"reason": "request_id_required"})
-    request_key = str(request_id)
-    registry = Registry(db_path=_REGISTRY_PATH)
-    try:
-        cached = registry._conn.execute(
-            "SELECT status, outcome_json FROM task_log WHERE request_id = ?",
-            (request_key,),
-        ).fetchone()
-        if cached is not None:
-            return _replay_cached_outcome(request_key, cached["status"], cached["outcome_json"])
-        registry._conn.execute(
-            "INSERT INTO task_log (request_id, method, spec_json, status, outcome_json, created_at, completed_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (request_key, "ReleaseWorkload", json.dumps(params), "in_progress", None, _utc_now(), None),
+    def _impl(_registry):
+        from drydock.daemon.workload_handlers import release_workload
+        return release_workload(
+            params, request_id, caller_drydock_id,
+            registry_path=_REGISTRY_PATH,
         )
-        registry._conn.commit()
-        try:
-            from drydock.daemon.workload_handlers import release_workload, _RpcError as _WorkloadRpcError
-            try:
-                result = release_workload(
-                    params, request_id, caller_drydock_id,
-                    registry_path=_REGISTRY_PATH,
-                )
-            except _WorkloadRpcError as exc:
-                raise _RpcError(code=exc.code, message=exc.message, data=exc.data) from exc
-        except _RpcError as exc:
-            error = {"code": exc.code, "message": exc.message}
-            if exc.data is not None:
-                error["data"] = exc.data
-            _finish_task_log(registry, request_key, "failed", error)
-            raise
-        _finish_task_log(registry, request_key, "completed", result)
-        return result
-    finally:
-        registry.close()
+    return with_task_log(
+        method="ReleaseWorkload", params=params, request_id=request_id,
+        registry_path=_REGISTRY_PATH, fn=_impl,
+    )
 
 
 _METHODS["RegisterWorkload"] = MethodSpec(handler=_register_workload, requires_auth=True)

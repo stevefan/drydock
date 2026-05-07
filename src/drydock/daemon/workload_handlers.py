@@ -35,22 +35,9 @@ from drydock.core.workload import (
     revert_lease_actions,
     validate_spec,
 )
+from drydock.daemon.rpc_common import _RpcError
 
 logger = logging.getLogger(__name__)
-
-
-class _RpcError(Exception):
-    """Local re-import of the daemon's RPC error type.
-
-    Mirrors daemon/server.py's _RpcError shape; we don't import from
-    server.py because that would create a circular import (server
-    imports from this module via the dispatch table).
-    """
-    def __init__(self, *, code: int, message: str, data: object | None = None):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.data = data
 
 
 def register_workload(
