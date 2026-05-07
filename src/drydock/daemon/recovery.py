@@ -22,6 +22,8 @@ class RecoveryReport:
     completed: int
     rolled_back: int
     unknown_method: int
+    migrations_rolled_back: int = 0
+    migrations_failed: int = 0
 
 
 def recover_in_progress(registry_path: Path) -> RecoveryReport:
@@ -280,6 +282,128 @@ def _drydock_parent_desk_id(registry: Registry, name: str) -> str | None:
         return None
     value = row["parent_drydock_id"]
     return value if isinstance(value, str) and value else None
+
+
+def recover_in_progress_migrations(registry_path: Path) -> tuple[int, int]:
+    """Resolve any migrations stuck in_progress at daemon startup.
+
+    Phase 2a.4 M1 — daemon-restart recovery. If the daemon dies while
+    a migration's state machine is mid-walk, the migrations row stays
+    `status='in_progress'` with the last-completed stage in
+    `current_stage`. The desk could be in any state — half-mutated,
+    pre-snapshot, post-stop. Recovery's job is to restore a clean
+    end-state.
+
+    V1 strategy:
+    - If a snapshot exists at `snapshot_path`: attempt rollback via
+      restore_drydock. On success, mark 'rolled_back'. On failure,
+      mark 'failed' (operator inspects manually).
+    - If no snapshot (failure was pre-SNAPSHOT or snapshot file gone):
+      mark 'failed'. There's nothing safe to roll back from; operator
+      decides whether the desk's current state is acceptable.
+
+    No "resume in place" path. Resuming a half-stopped state machine
+    after an indeterminate time crash is genuinely hard; failing loud
+    is the correct conservative behavior.
+
+    Returns ``(rolled_back_count, failed_count)``.
+    """
+    rolled_back = 0
+    failed = 0
+    registry = Registry(db_path=registry_path)
+    try:
+        rows = registry._conn.execute(
+            "SELECT id, drydock_id, plan_json, current_stage, snapshot_path "
+            "FROM migrations WHERE status = 'in_progress' "
+            "ORDER BY created_at ASC"
+        ).fetchall()
+
+        for row in rows:
+            migration_id = row["id"]
+            drydock_id = row["drydock_id"]
+            current_stage = row["current_stage"]
+            snapshot_path = row["snapshot_path"]
+
+            error_payload: dict = {
+                "reason": "daemon_restart_recovery",
+                "current_stage": current_stage,
+            }
+
+            if snapshot_path and Path(snapshot_path).exists():
+                try:
+                    _rollback_migration_from_snapshot(
+                        registry=registry,
+                        drydock_id=drydock_id,
+                        snapshot_path=Path(snapshot_path),
+                    )
+                    registry.update_migration(
+                        migration_id,
+                        status="rolled_back",
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        error_json=json.dumps(error_payload),
+                    )
+                    rolled_back += 1
+                    logger.info(
+                        "daemon: migration %s rolled back on recovery (stage=%s)",
+                        migration_id, current_stage,
+                    )
+                    continue
+                except Exception as exc:
+                    error_payload["rollback_error"] = str(exc)
+                    logger.warning(
+                        "daemon: migration %s rollback failed on recovery: %s",
+                        migration_id, exc,
+                    )
+
+            registry.update_migration(
+                migration_id,
+                status="failed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                error_json=json.dumps(error_payload),
+            )
+            failed += 1
+            logger.info(
+                "daemon: migration %s marked failed on recovery (stage=%s, snapshot=%s)",
+                migration_id, current_stage, snapshot_path or "none",
+            )
+    finally:
+        registry.close()
+    return rolled_back, failed
+
+
+def _rollback_migration_from_snapshot(
+    *,
+    registry: Registry,
+    drydock_id: str,
+    snapshot_path: Path,
+) -> None:
+    """Restore a migration's pre-mutate state from its snapshot.
+
+    Mirrors the executor's _rollback path. Restores secrets dir +
+    overlay file from the snapshot, and reapplies the original
+    image field on the registry row. Volume restore is skipped (M1
+    semantic — image bumps don't move volumes; cross-host (M5) will
+    add volume restore).
+    """
+    from drydock.core.snapshot import restore_drydock
+    secrets_root = Path.home() / ".drydock" / "secrets"
+    overlays_root = Path.home() / ".drydock" / "overlays"
+    manifest = restore_drydock(
+        snapshot_path,
+        secrets_root=secrets_root,
+        overlays_root=overlays_root,
+        registry=registry,
+        restore_volumes=False,
+    )
+    # Restore the registry row's mutable fields from the snapshot's row.
+    prior = manifest.registry_row.get("drydocks") or {}
+    if "image" in prior:
+        # Look up by id since the snapshot stores id, not name.
+        row = registry._conn.execute(
+            "SELECT name FROM drydocks WHERE id = ?", (drydock_id,),
+        ).fetchone()
+        if row:
+            registry.update_drydock(row["name"], image=prior["image"])
 
 
 def _remove_worktree_best_effort(path: Path) -> None:

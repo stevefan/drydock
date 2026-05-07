@@ -22,7 +22,7 @@ from typing import Any
 
 from drydock.core.registry import Registry
 from drydock.daemon.auth import validate_token
-from drydock.daemon.recovery import recover_in_progress
+from drydock.daemon.recovery import recover_in_progress, recover_in_progress_migrations
 
 logger = logging.getLogger(__name__)
 _JSON_RPC_VERSION = "2.0"
@@ -523,6 +523,20 @@ def serve(
             report.rolled_back,
             report.unknown_method,
         )
+        # Phase 2a.4 M1: migration recovery. If the daemon died mid-walk,
+        # any migrations row stuck at status='in_progress' gets rolled
+        # back from its snapshot (if one exists) or marked failed (if
+        # pre-snapshot or snapshot missing).
+        try:
+            mig_rolled, mig_failed = recover_in_progress_migrations(_REGISTRY_PATH)
+        except Exception:
+            logger.exception("daemon: migration recovery failed for %s", _REGISTRY_PATH)
+            raise
+        if mig_rolled or mig_failed:
+            logger.info(
+                "daemon: migration recovery — rolled_back=%d failed=%d",
+                mig_rolled, mig_failed,
+            )
         # Per docs/v2-design-protocol.md §3: bounded task log. One sweep
         # at boot; in-progress rows are never evicted.
         registry = Registry(db_path=_REGISTRY_PATH)
