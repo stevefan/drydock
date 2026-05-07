@@ -327,3 +327,105 @@ class TestRegistryWorkloadMethods:
         r.insert_workload_lease(lease)
         r.mark_workload_lease_revoked(lease.id, revoke_results=[])
         assert r.list_active_workload_leases() == []
+
+
+# ---------------------------------------------------------------------------
+# Sweeper
+# ---------------------------------------------------------------------------
+
+
+class TestSweeper:
+    def test_sweep_no_expired_returns_empty(self, tmp_path):
+        from drydock.core.workload import sweep_expired_leases
+        r = Registry(db_path=tmp_path / "r.db")
+        # Insert a lease that expires far in the future
+        spec = WorkloadSpec(kind="batch", duration_max_seconds=3600)
+        lease = assemble_lease(drydock_id="dock_x", spec=spec, applied_actions=[])
+        r.insert_workload_lease(lease)
+        assert sweep_expired_leases(r) == []
+        # And it stays active
+        row = r.get_workload_lease(lease.id)
+        assert row["status"] == "active"
+
+    def test_sweep_expires_past_due_lease(self, tmp_path):
+        from drydock.core.workload import sweep_expired_leases
+        from datetime import datetime, timezone, timedelta
+        r = Registry(db_path=tmp_path / "r.db")
+        # Insert a lease that's already expired.
+        # Use a past `now` to assemble it.
+        past = datetime.now(timezone.utc) - timedelta(hours=2)
+        spec = WorkloadSpec(kind="batch", duration_max_seconds=600)  # 10 min
+        lease = assemble_lease(
+            drydock_id="dock_x", spec=spec, applied_actions=[], now=past,
+        )
+        r.insert_workload_lease(lease)
+        summaries = sweep_expired_leases(r)
+        assert len(summaries) == 1
+        assert summaries[0]["lease_id"] == lease.id
+        assert summaries[0]["terminal_status"] == "expired"
+        # Persisted state
+        row = r.get_workload_lease(lease.id)
+        assert row["status"] == "expired"
+        assert row["revoked_at"]
+
+    def test_sweep_runs_action_revert(self, tmp_path):
+        """Expired lease with a real action: sweep calls revert_cgroup_limits."""
+        from drydock.core.workload import sweep_expired_leases
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch
+        from drydock.core.resource_ceilings import HardCeilings
+        r = Registry(db_path=tmp_path / "r.db")
+        # Build a lease with a CgroupLiftAction in its applied_actions
+        action = CgroupLiftAction(
+            container_id="cid_x",
+            original=HardCeilings(memory_max="4g"),
+            lifted=HardCeilings(memory_max="8g"),
+        )
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok_run()):
+            persisted = action.apply()
+        applied = [{**action.serialize(), "persisted": persisted}]
+        past = datetime.now(timezone.utc) - timedelta(hours=2)
+        spec = WorkloadSpec(kind="training", duration_max_seconds=600,
+                            expected={"memory_max": "8g"})
+        lease = assemble_lease(
+            drydock_id="dock_x", spec=spec,
+            applied_actions=applied, now=past,
+        )
+        r.insert_workload_lease(lease)
+        # Sweep — docker update mocked, succeeds
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok_run()) as run:
+            summaries = sweep_expired_leases(r)
+        assert summaries[0]["terminal_status"] == "expired"
+        # docker update was called for the revert
+        assert run.called
+
+    def test_sweep_partial_revoke_when_action_fails(self, tmp_path):
+        """A failed revert during sweep yields partial-revoked terminal state."""
+        from drydock.core.workload import sweep_expired_leases
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch, MagicMock
+        from drydock.core.resource_ceilings import HardCeilings
+        r = Registry(db_path=tmp_path / "r.db")
+        action = CgroupLiftAction(
+            container_id="cid_x",
+            original=HardCeilings(memory_max="4g"),
+            lifted=HardCeilings(memory_max="8g"),
+        )
+        with patch("drydock.core.cgroup.subprocess.run", return_value=_ok_run()):
+            persisted = action.apply()
+        applied = [{**action.serialize(), "persisted": persisted}]
+        past = datetime.now(timezone.utc) - timedelta(hours=2)
+        spec = WorkloadSpec(kind="training", duration_max_seconds=600,
+                            expected={"memory_max": "8g"})
+        lease = assemble_lease(
+            drydock_id="dock_x", spec=spec,
+            applied_actions=applied, now=past,
+        )
+        r.insert_workload_lease(lease)
+        # docker update fails on revert
+        bad = MagicMock(); bad.returncode = 1; bad.stderr = "boom"; bad.stdout = ""
+        with patch("drydock.core.cgroup.subprocess.run", return_value=bad):
+            summaries = sweep_expired_leases(r)
+        assert summaries[0]["terminal_status"] == "partial-revoked"
+        row = r.get_workload_lease(lease.id)
+        assert row["status"] == "partial-revoked"

@@ -821,6 +821,45 @@ def serve(
                 logger.info("daemon: evicted %d old task_log entries", evicted)
         finally:
             registry.close()
+    # Phase 2a.3 WL1: lease-expiry sweeper. Background daemon thread that
+    # wakes every WORKLOAD_SWEEP_INTERVAL_SECONDS and reverts expired
+    # workload leases. Daemon-thread so KeyboardInterrupt during
+    # serve_forever() drops it cleanly without join.
+    import threading
+    sweep_stop = threading.Event()
+    def _sweep_loop():
+        from drydock.core.workload import sweep_expired_leases
+        from drydock.core.audit import emit_audit
+        interval = float(os.getenv("WORKLOAD_SWEEP_INTERVAL_SECONDS", "60"))
+        while not sweep_stop.wait(interval):
+            try:
+                reg = Registry(db_path=_REGISTRY_PATH)
+                try:
+                    summaries = sweep_expired_leases(reg)
+                finally:
+                    reg.close()
+            except Exception:
+                logger.exception("daemon: workload sweep failed")
+                continue
+            for s in summaries:
+                try:
+                    emit_audit(
+                        "workload.lease_expired"
+                        if s["terminal_status"] == "expired"
+                        else "workload.lease_partial_revoked",
+                        principal=s["drydock_id"],
+                        request_id=None,
+                        method="WorkloadSweeper",
+                        result="ok" if s["terminal_status"] == "expired" else "error",
+                        details=s,
+                    )
+                except Exception:
+                    logger.exception("daemon: failed to audit sweep result for %s", s.get("lease_id"))
+    sweeper_thread = threading.Thread(target=_sweep_loop, daemon=True, name="workload-sweeper")
+    sweeper_thread.start()
+    logger.info("daemon: workload sweeper started (interval=%ss)",
+                os.getenv("WORKLOAD_SWEEP_INTERVAL_SECONDS", "60"))
+
     with _Server(str(socket_path), _Handler) as server:
         # Socket must be connect()-able by workers inside drydock containers,
         # which run as uid 1000 (node). daemon runs as Harbor root. Unix-socket
@@ -840,6 +879,7 @@ def serve(
         except KeyboardInterrupt:
             logger.info("daemon: interrupted, shutting down")
         finally:
+            sweep_stop.set()
             try:
                 socket_path.unlink()
             except FileNotFoundError:

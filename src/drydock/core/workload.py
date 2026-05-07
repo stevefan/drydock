@@ -358,3 +358,71 @@ def assemble_lease(
         expires_at=expires.isoformat(),
         status="active",
     )
+
+
+# ---------------------------------------------------------------------------
+# Lease-expiry sweeper
+# ---------------------------------------------------------------------------
+
+
+def sweep_expired_leases(registry, *, now: Optional[datetime] = None) -> list[dict]:
+    """Find leases past expires_at and revert them.
+
+    For each lease whose ``expires_at`` is before ``now`` (default: utc
+    now) and whose status is still ``active``:
+    - deserialize applied_actions,
+    - call revert_lease_actions (best-effort),
+    - mark the lease ``expired`` (or ``partial-revoked`` on failure).
+
+    Returns one summary dict per lease processed::
+
+        [{"lease_id": ..., "drydock_id": ..., "terminal_status": ...,
+          "results": [...]}]
+
+    Designed for the daemon's periodic background thread; idempotent
+    if no leases are due (returns empty list). Caller is expected to
+    emit `workload.lease_expired` audit events from these summaries —
+    we don't emit from this module to keep core/ test-friendly without
+    needing audit-log fixtures.
+    """
+    moment = (now or datetime.now(timezone.utc))
+    cutoff = moment.isoformat()
+
+    # Direct query rather than going through list_active_workload_leases
+    # so we filter by expires_at server-side.
+    cur = registry._conn.execute(
+        "SELECT * FROM workload_leases "
+        "WHERE status = 'active' AND expires_at < ? "
+        "ORDER BY expires_at ASC",
+        (cutoff,),
+    )
+    rows = [dict(row) for row in cur.fetchall()]
+
+    summaries: list[dict] = []
+    for row in rows:
+        try:
+            applied = json.loads(row["applied_actions_json"])
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.error(
+                "sweep: lease %s has malformed applied_actions: %s",
+                row["id"], exc,
+            )
+            applied = []
+
+        results = revert_lease_actions(applied)
+        any_failure = any(not r.get("ok") for r in results)
+        terminal_status = "partial-revoked" if any_failure else "expired"
+
+        registry.mark_workload_lease_revoked(
+            row["id"],
+            revoke_results=results,
+            terminal_status=terminal_status,
+        )
+        summaries.append({
+            "lease_id": row["id"],
+            "drydock_id": row["drydock_id"],
+            "terminal_status": terminal_status,
+            "results": results,
+        })
+
+    return summaries
