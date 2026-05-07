@@ -186,6 +186,39 @@ CREATE INDEX IF NOT EXISTS idx_workload_leases_active
 def _migrate_to_v7(conn: sqlite3.Connection) -> None:
     conn.executescript(V7_TABLES)
 
+
+# V8 (2a.4 M1): migrations table — head record per atomic structural
+# transition. plan_json is the full MigrationPlan; status walks through
+# the MigrationStatus enum. snapshot_path points at the tarball produced
+# by stage 4 (Snapshot) — populated when that stage lands. For M1
+# (planner + dry-run only), only `planned` and `failed` terminal states
+# are reachable; the rest fill in as stages ship.
+V8_TABLES = """
+CREATE TABLE IF NOT EXISTS migrations (
+    id              TEXT PRIMARY KEY,
+    drydock_id      TEXT NOT NULL,
+    plan_json       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'planned'
+                     CHECK (status IN ('planned', 'in_progress', 'completed',
+                                       'rolled_back', 'failed')),
+    current_stage   TEXT NULL,
+    snapshot_path   TEXT NULL,
+    created_at      TEXT NOT NULL,
+    completed_at    TEXT NULL,
+    error_json      TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_migrations_drydock
+    ON migrations (drydock_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_migrations_active
+    ON migrations (status) WHERE status = 'in_progress';
+"""
+
+
+def _migrate_to_v8(conn: sqlite3.Connection) -> None:
+    conn.executescript(V8_TABLES)
+
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
     lease_id            TEXT PRIMARY KEY,
@@ -406,6 +439,7 @@ class Registry:
         _migrate_to_v5(self._conn)
         _migrate_to_v6(self._conn)
         _migrate_to_v7(self._conn)
+        _migrate_to_v8(self._conn)
         self._conn.commit()
 
     def close(self):
@@ -839,6 +873,86 @@ class Registry:
             (terminal_status, revoked_at, json.dumps(revoke_results), lease_id),
         )
         self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Migration records (v8) — Phase 2a.4 M1
+    # ------------------------------------------------------------------
+
+    def insert_migration(
+        self,
+        *,
+        migration_id: str,
+        drydock_id: str,
+        plan_json: str,
+        status: str = "planned",
+    ) -> None:
+        """Persist a freshly-planned migration. Status='planned' for
+        --dry-run paths, 'in_progress' once the state machine starts."""
+        self._conn.execute(
+            """INSERT INTO migrations
+               (id, drydock_id, plan_json, status, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (migration_id, drydock_id, plan_json, status,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self._conn.commit()
+
+    def get_migration(self, migration_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM migrations WHERE id = ?", (migration_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_migration(
+        self,
+        migration_id: str,
+        *,
+        status: str | None = None,
+        current_stage: str | None = None,
+        snapshot_path: str | None = None,
+        error_json: str | None = None,
+        completed_at: str | None = None,
+    ) -> None:
+        """Update specific migration fields. Only non-None args land."""
+        sets: list[str] = []
+        values: list = []
+        for col, val in (
+            ("status", status),
+            ("current_stage", current_stage),
+            ("snapshot_path", snapshot_path),
+            ("error_json", error_json),
+            ("completed_at", completed_at),
+        ):
+            if val is not None:
+                sets.append(f"{col} = ?")
+                values.append(val)
+        if not sets:
+            return
+        values.append(migration_id)
+        self._conn.execute(
+            f"UPDATE migrations SET {', '.join(sets)} WHERE id = ?",
+            values,
+        )
+        self._conn.commit()
+
+    def list_active_migrations(self, drydock_id: str | None = None) -> list[dict]:
+        """In-flight migrations, optionally filtered to one drydock.
+
+        Used by the Pre-check stage to refuse a second concurrent
+        migration on the same desk.
+        """
+        if drydock_id is None:
+            cur = self._conn.execute(
+                "SELECT * FROM migrations WHERE status = 'in_progress' "
+                "ORDER BY created_at DESC"
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM migrations WHERE status = 'in_progress' "
+                "AND drydock_id = ? ORDER BY created_at DESC",
+                (drydock_id,),
+            )
+        return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # Deskwatch events (v3)
