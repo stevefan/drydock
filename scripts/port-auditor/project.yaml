@@ -27,6 +27,12 @@
 
 role: auditor
 
+# Role-locked image; baked by base/port-auditor/Dockerfile. Smaller and
+# narrower than drydock-base — no node, no claude-code CLI, no tailscale,
+# no AWS CLI, no s3fs. See validator (_APPROVED_IMAGE_PREFIXES) for the
+# enforced prefix list.
+image: ghcr.io/stevefan/drydock-port-auditor:v0.1.0
+
 repo_path: /root/src/port-auditor
 devcontainer_subpath: .devcontainer/drydock
 tailscale_hostname: port-auditor
