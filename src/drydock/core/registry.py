@@ -236,7 +236,9 @@ def _migrate_v1_vocab_to_drydock(conn: sqlite3.Connection) -> None:
 
     conn.execute("ALTER TABLE workspaces RENAME TO drydocks")
 
-    # Rename FK columns workspace_id → drydock_id wherever present.
+    # Rename FK columns workspace_id|desk_id → drydock_id wherever present.
+    # (V1 used a mix: events/amendments/deskwatch_events used workspace_id,
+    # while tokens/leases used desk_id.)
     fk_tables = ("events", "leases", "tokens", "amendments", "deskwatch_events")
     for tbl in fk_tables:
         if tbl not in tables:
@@ -244,6 +246,8 @@ def _migrate_v1_vocab_to_drydock(conn: sqlite3.Connection) -> None:
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info('{tbl}')")}
         if "workspace_id" in cols and "drydock_id" not in cols:
             conn.execute(f"ALTER TABLE {tbl} RENAME COLUMN workspace_id TO drydock_id")
+        elif "desk_id" in cols and "drydock_id" not in cols:
+            conn.execute(f"ALTER TABLE {tbl} RENAME COLUMN desk_id TO drydock_id")
         if "parent_workspace_id" in cols and "parent_drydock_id" not in cols:
             conn.execute(f"ALTER TABLE {tbl} RENAME COLUMN parent_workspace_id TO parent_drydock_id")
 
@@ -282,6 +286,28 @@ def _migrate_v1_vocab_to_drydock(conn: sqlite3.Connection) -> None:
             "UPDATE events SET event = 'drydock.' || substr(event, 6) "
             "WHERE event LIKE 'desk.%'"
         )
+
+    # Rewrite stale ws_<slug> path fragments inside drydocks.worktree_path
+    # and drydocks.config (JSON-serialized — overlay_path lives in here).
+    # The filesystem-side migrate_v1_artifacts renames the actual paths on
+    # disk; this fixes the registry rows so resume can find them.
+    drydock_rows = conn.execute(
+        "SELECT id, worktree_path, config FROM drydocks"
+    ).fetchall()
+    for row in drydock_rows:
+        new_wt = (row[1] or "").replace("/worktrees/ws_", "/worktrees/dock_")
+        old_cfg = row[2] or "{}"
+        new_cfg = (
+            old_cfg
+            .replace("/overlays/ws_", "/overlays/dock_")
+            .replace("/secrets/ws_", "/secrets/dock_")
+            .replace("/worktrees/ws_", "/worktrees/dock_")
+        )
+        if new_wt != row[1] or new_cfg != old_cfg:
+            conn.execute(
+                "UPDATE drydocks SET worktree_path = ?, config = ? WHERE id = ?",
+                (new_wt, new_cfg, row[0]),
+            )
 
     # Rename indexes that hardcoded 'workspaces' in their name.
     for old_idx, new_idx, ddl in (
