@@ -60,6 +60,19 @@ class OverlayConfig:
     # Translated to docker --cpus / --memory / --pids-limit runArgs by
     # generate_overlay via HardCeilings.from_dict + .to_docker_runargs.
     resources_hard: dict = field(default_factory=dict)
+    # Phase 2a.1 E1 (make-the-harness-live.md): when "enabled", the
+    # overlay sets EGRESS_PROXY_ENABLED=1 in containerEnv (read by
+    # start-egress-proxy.sh on container start) and bind-mounts the
+    # Harbor-side proxy config dir so the daemon-written allowlist is
+    # visible to smokescreen. "disabled" leaves the existing
+    # iptables/ipset path untouched. This field is transitional; when
+    # proxy becomes the only path, the field and the iptables fallback
+    # both get deleted in one commit.
+    egress_proxy: str = "disabled"
+    # Host-side proxy config dir; bind-mounted RO into the container.
+    # Each desk has its own file at <dir>/<drydock_id>.yaml; the
+    # overlay maps that one file to /run/drydock/proxy/allowlist.yaml.
+    proxy_config_host_dir: str | None = None
 
 
 def generate_overlay(ws: Drydock, config: OverlayConfig | None = None) -> dict:
@@ -260,6 +273,12 @@ def regenerate_overlay_from_drydock(
         kwargs["storage_mounts"] = list(cfg["storage_mounts"])
     if cfg.get("resources_hard"):
         kwargs["resources_hard"] = dict(cfg["resources_hard"])
+    # Phase 2a.1 E1: thread egress_proxy field through to overlay so the
+    # container env + bind mounts reflect the desk's choice.
+    if cfg.get("egress_proxy"):
+        kwargs["egress_proxy"] = str(cfg["egress_proxy"]).lower()
+    if cfg.get("proxy_config_host_dir"):
+        kwargs["proxy_config_host_dir"] = cfg["proxy_config_host_dir"]
 
     overlay_config = OverlayConfig(**kwargs)
     # When workspace_subdir is set, the base devcontainer.json lives
@@ -318,6 +337,12 @@ def _build_container_env(ws: Drydock, config: OverlayConfig) -> dict[str, str]:
     if config.firewall_aws_ip_ranges:
         env["FIREWALL_AWS_IP_RANGES"] = " ".join(config.firewall_aws_ip_ranges)
 
+    # Phase 2a.1 E1: signal start-egress-proxy.sh to launch smokescreen.
+    # Set only when explicitly enabled — preserves no-op default for desks
+    # still on the iptables/ipset path.
+    if config.egress_proxy == "enabled":
+        env["EGRESS_PROXY_ENABLED"] = "1"
+
     if config.storage_mounts:
         env["STORAGE_MOUNTS_JSON"] = json.dumps(config.storage_mounts)
 
@@ -369,6 +394,19 @@ def _build_mounts(ws: Drydock, config: OverlayConfig) -> list[str]:
         mounts.append(
             f"source={config.drydock_rpc_host_path},"
             f"target={DEFAULT_DRYDOCK_RPC_CONTAINER_PATH},type=bind,readonly"
+        )
+
+    # Phase 2a.1 E1: bind-mount the per-desk smokescreen allowlist file
+    # readonly. The daemon on the Harbor writes the allowlist; the
+    # container reads it. Path inside container is fixed at
+    # /run/drydock/proxy/allowlist.yaml so start-egress-proxy.sh can
+    # find it without per-desk env wiring. Only mounted when proxy is
+    # enabled — keeps non-proxy desks unaware of the dir.
+    if config.egress_proxy == "enabled" and config.proxy_config_host_dir:
+        proxy_file = Path(config.proxy_config_host_dir) / f"{ws.id}.yaml"
+        mounts.append(
+            f"source={proxy_file},"
+            f"target=/run/drydock/proxy/allowlist.yaml,type=bind,readonly"
         )
 
     claude_vol = (

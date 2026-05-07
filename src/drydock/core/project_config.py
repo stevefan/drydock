@@ -35,6 +35,7 @@ KNOWN_KEYS = {
     "storage_mounts",
     "deskwatch",
     "yard",
+    "egress_proxy",
 }
 
 
@@ -94,6 +95,15 @@ class ProjectConfig:
     # reload doesn't crash on deskwatch typos — errors surface when the user
     # runs `ws deskwatch` and can see them.
     deskwatch: dict = field(default_factory=dict)
+    # Phase 2a.1 (make-the-harness-live.md): when "enabled", smokescreen
+    # launches inside the container and policy-enforces egress against
+    # the desk's `delegatable_network_reach` allowlist. Container-side
+    # iptables locks OUTPUT to 127.0.0.1:4750 (the proxy's listen port).
+    # This field exists only during the E1→E2 transition. When E2 makes
+    # proxy the only path, this field and the entire iptables/ipset code
+    # path get deleted in the same commit — no deprecation, no compat
+    # shim, we are the only users.
+    egress_proxy: str = "disabled"
 
 
 def default_projects_dir() -> Path:
@@ -169,6 +179,7 @@ def load_project_config(
         yard=raw.get("yard") or None,
         storage_mounts=raw.get("storage_mounts", []),
         deskwatch=raw.get("deskwatch") or {},
+        egress_proxy=str(raw.get("egress_proxy") or "disabled").lower(),
     )
     return expand_storage_mounts(cfg)
 

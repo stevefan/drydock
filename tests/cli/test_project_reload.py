@@ -214,3 +214,44 @@ def test_overlay_regenerate_unknown_drydock(tmp_path, monkeypatch):
     assert result.exit_code != 0
     err = json.loads(result.output.strip())
     assert err["error"] == "desk_not_found"
+
+
+# Phase 2a.1 E1: project reload writes the smokescreen allowlist file
+# when the desk has egress_proxy enabled.
+def test_project_reload_writes_smokescreen_allowlist(tmp_path, monkeypatch):
+    import yaml as pyyaml
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _seed(tmp_path, (
+        "repo_path: /srv/code/myproj\n"
+        "egress_proxy: enabled\n"
+        "delegatable_network_reach:\n"
+        "  - api.anthropic.com\n"
+        "  - \"*.github.com\"\n"
+    ))
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "project", "reload", "myws"])
+    assert result.exit_code == 0, result.output
+
+    # File written at ~/.drydock/proxy/<id>.yaml
+    allowlist_path = tmp_path / ".drydock" / "proxy" / "dock_myws.yaml"
+    assert allowlist_path.exists()
+    parsed = pyyaml.safe_load(allowlist_path.read_text())
+    assert parsed["default"]["allowed_hosts"] == ["api.anthropic.com"]
+    assert parsed["default"]["allowed_domains"] == ["github.com"]
+    assert parsed["default"]["action"] == "enforce"
+
+
+def test_project_reload_skips_allowlist_when_proxy_disabled(tmp_path, monkeypatch):
+    """Default 'disabled' — no allowlist file written, even when network_reach is set.
+    The iptables/ipset path handles egress; smokescreen isn't running."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _seed(tmp_path, (
+        "repo_path: /srv/code/myproj\n"
+        "delegatable_network_reach:\n"
+        "  - api.anthropic.com\n"
+    ))
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "project", "reload", "myws"])
+    assert result.exit_code == 0, result.output
+    allowlist_path = tmp_path / ".drydock" / "proxy" / "dock_myws.yaml"
+    assert not allowlist_path.exists()

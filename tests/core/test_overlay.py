@@ -442,3 +442,41 @@ class TestStorageMounts:
         cfg = OverlayConfig(storage_mounts=entries)
         overlay = generate_overlay(ws, cfg)
         assert json.loads(overlay["containerEnv"]["STORAGE_MOUNTS_JSON"]) == entries
+
+
+class TestEgressProxyOverlay:
+    """Phase 2a.1 E1: egress_proxy field threads through to overlay."""
+
+    def test_disabled_default_no_proxy_env(self, ws):
+        # Default 'disabled' — no EGRESS_PROXY_ENABLED env, no bind mount.
+        overlay = generate_overlay(ws, OverlayConfig())
+        env = overlay.get("containerEnv", {})
+        assert "EGRESS_PROXY_ENABLED" not in env
+        # Mounts shouldn't include the proxy allowlist file.
+        for m in overlay.get("mounts", []):
+            assert "/run/drydock/proxy/allowlist.yaml" not in m
+
+    def test_enabled_sets_env_and_mount(self, ws, tmp_path):
+        cfg = OverlayConfig(
+            egress_proxy="enabled",
+            proxy_config_host_dir=str(tmp_path),
+        )
+        overlay = generate_overlay(ws, cfg)
+        assert overlay["containerEnv"]["EGRESS_PROXY_ENABLED"] == "1"
+        # Bind mount should map <tmp_path>/<ws.id>.yaml → container path.
+        proxy_mounts = [
+            m for m in overlay["mounts"]
+            if "/run/drydock/proxy/allowlist.yaml" in m
+        ]
+        assert len(proxy_mounts) == 1
+        assert f"{ws.id}.yaml" in proxy_mounts[0]
+        assert "readonly" in proxy_mounts[0]
+
+    def test_enabled_without_host_dir_skips_mount(self, ws):
+        # If somehow enabled without a host dir, env still set but no
+        # mount produced (caller bug; not our place to invent a path).
+        cfg = OverlayConfig(egress_proxy="enabled", proxy_config_host_dir=None)
+        overlay = generate_overlay(ws, cfg)
+        assert overlay["containerEnv"]["EGRESS_PROXY_ENABLED"] == "1"
+        for m in overlay.get("mounts", []):
+            assert "/run/drydock/proxy/allowlist.yaml" not in m

@@ -52,6 +52,7 @@ _CONFIG_FIELDS_FROM_YAML = (
     "devcontainer_subpath",
     "storage_mounts",
     "deskwatch",
+    "egress_proxy",
 )
 
 
@@ -134,6 +135,21 @@ def project_reload(ctx, name, no_regenerate):
     new_sha = compute_project_yaml_sha(ws.project)
     if new_sha:
         registry.update_drydock(name, pinned_yaml_sha256=new_sha)
+
+    # Phase 2a.1 E1: rewrite the smokescreen allowlist file when this
+    # desk has egress_proxy enabled. Without this, project YAML edits
+    # to network_reach wouldn't propagate even after `project reload` —
+    # they'd just sit in the registry until container recreate, which
+    # is the antipattern the proxy exists to eliminate. SIGHUP signaling
+    # to the running smokescreen lands in the next phase; this is the
+    # write-half of that contract.
+    if proj.egress_proxy == "enabled":
+        from drydock.core.proxy import write_smokescreen_acl, proxy_root_from_home
+        write_smokescreen_acl(
+            ws.id,
+            list(proj.delegatable_network_reach),
+            proxy_root_from_home(),
+        )
 
     overlay_path: Path | None = None
     if not no_regenerate:

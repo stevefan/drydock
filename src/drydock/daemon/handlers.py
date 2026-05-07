@@ -55,6 +55,7 @@ _OVERLAY_PARAM_FIELDS = (
     "extra_env",
     "storage_mounts",
     "resources_hard",
+    "egress_proxy",
 )
 
 
@@ -397,6 +398,15 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         params.get("claude_profile"),
         field_name="claude_profile",
     )
+    # Phase 2a.1 E1: egress_proxy field. Accepts "enabled" or "disabled"
+    # (anything else rejected). Default "disabled" — preserves the
+    # iptables/ipset path until E2 flips the default.
+    egress_proxy = str(params.get("egress_proxy") or "disabled").lower()
+    if egress_proxy not in ("enabled", "disabled"):
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "egress_proxy", "reason": "must be 'enabled' or 'disabled'"},
+        )
     extra_env = _validated_str_map(
         params.get("extra_env"),
         field_name="extra_env",
@@ -462,6 +472,7 @@ def _validated_spec(params: dict | list | None) -> dict[str, object]:
         "firewall_aws_ip_ranges": firewall_aws_ip_ranges,
         "forward_ports": forward_ports,
         "claude_profile": claude_profile,
+        "egress_proxy": egress_proxy,
         "extra_env": extra_env,
         "storage_mounts": storage_mounts,
         "secret_entitlements": secret_entitlements,
@@ -662,6 +673,20 @@ def _overlay_from_spec(spec: dict[str, object]) -> OverlayConfig:
     resources_hard = spec.get("resources_hard")
     if isinstance(resources_hard, dict) and resources_hard:
         kwargs["resources_hard"] = dict(resources_hard)
+
+    # Phase 2a.1 E1: thread egress_proxy + per-Harbor proxy config dir
+    # so the overlay knows whether to bind-mount the smokescreen
+    # allowlist file and set EGRESS_PROXY_ENABLED.
+    egress_proxy = spec.get("egress_proxy")
+    if isinstance(egress_proxy, str):
+        kwargs["egress_proxy"] = egress_proxy.lower()
+    if egress_proxy == "enabled":
+        # Default per-Harbor location matches the secrets/overlays layout.
+        # Daemon writes <dir>/<drydock_id>.yaml; bind mount maps that one
+        # file readonly into the container.
+        kwargs["proxy_config_host_dir"] = str(
+            Path.home() / ".drydock" / "proxy"
+        )
 
     return OverlayConfig(**kwargs)
 
@@ -1038,6 +1063,18 @@ def _perform_create(
 
     if pinned_yaml_sha256:
         ws = registry.update_drydock(ws.name, pinned_yaml_sha256=pinned_yaml_sha256)
+
+    # Phase 2a.1 E1: when this desk has egress_proxy enabled, write its
+    # smokescreen allowlist file to the Harbor's proxy-config dir BEFORE
+    # the container starts (start-egress-proxy.sh refuses to launch with
+    # no allowlist). The container's bind mount points at this exact file.
+    if str(spec.get("egress_proxy") or "disabled").lower() == "enabled":
+        from drydock.core.proxy import write_smokescreen_acl, proxy_root_from_home
+        write_smokescreen_acl(
+            ws.id,
+            list(spec.get("delegatable_network_reach") or []),
+            proxy_root_from_home(),
+        )
 
     # Phase Y0: opt the new Drydock into a Yard if the Project declared one.
     # Yard must already exist (registered via `ws yard create`); otherwise

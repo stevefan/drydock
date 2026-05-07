@@ -83,6 +83,11 @@ def _daemon_overlay_params(proj_cfg: ProjectConfig | None) -> dict[str, object]:
         params["extra_env"] = proj_cfg.extra_env
     if proj_cfg.storage_mounts:
         params["storage_mounts"] = proj_cfg.storage_mounts
+    # Phase 2a.1 E1: only emit egress_proxy when explicitly enabled.
+    # Default "disabled" is implicit on the daemon side; not sending the
+    # field keeps the CreateDesk wire smaller for desks that don't care.
+    if proj_cfg.egress_proxy == "enabled":
+        params["egress_proxy"] = "enabled"
     return params
 
 
