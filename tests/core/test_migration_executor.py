@@ -335,6 +335,83 @@ class TestAuditEvents:
 # ---------------------------------------------------------------------------
 
 
+class TestStartVerifyStages:
+    """Pin the M1-followup START + VERIFY behavior."""
+
+    def test_start_skipped_when_no_worktree_path(self, tmp_path):
+        """Tests in this file create desks without worktree_path; the
+        executor should treat START as a no-op rather than crash. This
+        is the existing-test invariant; documenting it explicitly."""
+        env = _seed(tmp_path)
+        mid = _plan_image_bump(env)
+        with patch(
+            "drydock.core.migration_executor.subprocess.run",
+            return_value=_ok_subprocess(),
+        ):
+            outcome = execute_migration(mid, registry=env["registry"], config=env["config"])
+        start_stage = next(s for s in outcome.stages if s.stage == "start")
+        assert start_stage.detail.get("skipped") is True
+        assert start_stage.detail.get("reason") == "no_worktree_path"
+
+    def test_start_calls_resume_when_worktree_present(self, tmp_path):
+        env = _seed(tmp_path)
+        # Set worktree_path on the desk so START attempts the resume path.
+        env["registry"].update_drydock("test", worktree_path="/tmp/fake-worktree")
+        mid = _plan_image_bump(env, new_image="img:v2")
+
+        # Patch _resume_desk to verify it's called and to return a
+        # synthetic success without actually running devcontainer up.
+        from unittest.mock import patch as _patch
+        resumed_payload = {
+            "drydock_id": "dock_test",
+            "name": "test",
+            "project": "test",
+            "branch": "ws/test",
+            "state": "running",
+            "container_id": "cid_after_resume",
+            "worktree_path": "/tmp/fake-worktree",
+        }
+
+        def _fake_resume(existing, *, registry, dry_run):
+            # Real _resume_desk updates the registry; mirror that here.
+            registry.update_drydock(existing.name, container_id="cid_after_resume", state="running")
+            return resumed_payload
+
+        with _patch("drydock.daemon.handlers._resume_desk", side_effect=_fake_resume), \
+             _patch("drydock.core.migration_executor.subprocess.run",
+                    return_value=_ok_subprocess()):
+            outcome = execute_migration(mid, registry=env["registry"], config=env["config"])
+
+        assert outcome.terminal_status == "completed"
+        start_stage = next(s for s in outcome.stages if s.stage == "start")
+        assert start_stage.detail.get("started") is True
+        assert start_stage.detail.get("container_id") == "cid_after_resume"
+        # VERIFY confirms state=running
+        verify_stage = next(s for s in outcome.stages if s.stage == "verify")
+        assert verify_stage.detail.get("verified") is True
+        assert verify_stage.detail.get("drydock_state") == "running"
+
+    def test_start_failure_triggers_rollback(self, tmp_path):
+        """If _resume_desk raises (e.g., devcontainer up failed), the
+        post-snapshot rollback path runs and restores the original image."""
+        env = _seed(tmp_path)
+        env["registry"].update_drydock("test", worktree_path="/tmp/fake-worktree")
+        mid = _plan_image_bump(env, new_image="img:v2")
+
+        from unittest.mock import patch as _patch
+        with _patch("drydock.daemon.handlers._resume_desk",
+                    side_effect=RuntimeError("devcontainer up died")), \
+             _patch("drydock.core.migration_executor.subprocess.run",
+                    return_value=_ok_subprocess()):
+            outcome = execute_migration(mid, registry=env["registry"], config=env["config"])
+
+        assert outcome.terminal_status == "rolled_back"
+        assert outcome.error["failed_stage"] == "start"
+        # Image reverted by rollback
+        ws_after = env["registry"].get_drydock("test")
+        assert ws_after.image == "img:v1"
+
+
 class TestValidation:
     def test_unknown_migration_id_raises(self, tmp_path):
         env = _seed(tmp_path)

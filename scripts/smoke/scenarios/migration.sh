@@ -36,12 +36,15 @@ c.commit()
 }
 trap cleanup EXIT
 
-# Project YAML + registry row. We don't need a real container — the
-# executor's STOP stage handles a missing container gracefully.
+# Project YAML + registry row. We don't need a real container or
+# worktree-on-disk: the executor's STOP stage handles missing
+# container_id gracefully, and START skips when worktree_path is empty.
+# The full devcontainer-up path is exercised by unit tests with mocked
+# _resume_desk; this smoke validates the state-machine stage sequence
+# against the real registry + filesystem.
 $SSH "cat > /root/.drydock/projects/$NAME.yaml" <<YAML
 repo_path: /tmp/$NAME-repo
 YAML
-$SSH "mkdir -p /tmp/$NAME-repo && cd /tmp/$NAME-repo && git init -q && git -c user.email=t@t.com -c user.name=t commit --allow-empty -m init -q"
 
 # Insert a Drydock row directly via the pipx python — no container.
 $SSH "/root/.local/share/pipx/venvs/drydock/bin/python -c '
@@ -51,7 +54,6 @@ r = Registry()
 r.create_drydock(Drydock(
     name=\"$NAME\", project=\"$NAME\",
     repo_path=\"/tmp/$NAME-repo\",
-    worktree_path=\"/tmp/$NAME-repo\",
     branch=\"main\",
     image=\"img:v1\",
     state=\"defined\", container_id=\"\",

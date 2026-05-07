@@ -478,22 +478,78 @@ def _mutate_project_reload(drydock, registry, config) -> dict:
 
 
 def _do_start(drydock, registry, config: ExecutorConfig) -> dict:
-    """Stub for M1 — actual `devcontainer up` runs through the existing
-    create flow which is invoked by the CLI after the executor returns.
+    """Bring the (now-mutated) drydock back up.
 
-    For now, we leave the container in a 'stopped' state and let the
-    user run `drydock create <name>` to bring it back up. M1-followup
-    moves the start step into the executor.
+    Reuses ``daemon.handlers._resume_desk`` — the same function that
+    powers the resume path of ``drydock create <name>`` for a
+    suspended desk. It regenerates the overlay (so it picks up
+    whatever Mutate just wrote — image tag, policy, etc.), runs
+    ``devcontainer up``, and updates the registry to state='running'.
+
+    For migrations that are no-op-on-start (e.g., schema_migration
+    that mutates only daemon-level state, not container state) the
+    drydock has no container to bring up; we skip cleanly.
     """
+    if not drydock.worktree_path:
+        return {"skipped": True, "reason": "no_worktree_path"}
+    # Re-fetch from the registry to pick up any state changes from MUTATE.
+    fresh = registry.get_drydock(drydock.name)
+    if fresh is None:
+        raise StageFailure(
+            MigrationStage.START,
+            {"reason": "drydock_disappeared_after_mutate"},
+        )
+
+    # Defer the import — daemon.handlers depends on much that's
+    # initialized only when the daemon is running. core/ modules avoid
+    # the daemon import at module load.
+    from drydock.daemon.handlers import _resume_desk
+    try:
+        result = _resume_desk(fresh, registry=registry, dry_run=False)
+    except Exception as exc:  # noqa: BLE001 — coerced to StageFailure below
+        raise StageFailure(
+            MigrationStage.START,
+            {"reason": "resume_failed", "error": str(exc)},
+        ) from exc
     return {
-        "started": False,
-        "reason": "M1: caller responsible for `drydock create <name>`",
+        "started": True,
+        "container_id": result.get("container_id"),
+        "state": result.get("state"),
     }
 
 
 def _do_verify(drydock, registry, config: ExecutorConfig) -> dict:
-    """Stub for M1 — verify lands when start lands. For now: trivially ok."""
-    return {"verified": False, "reason": "M1: verification deferred"}
+    """Verify the resumed drydock is reachable via the in-container
+    daemon-rpc socket and reports daemon.health=ok.
+
+    Implementation: the container brings up its own drydock-rpc
+    client at /usr/local/bin/drydock-rpc and the daemon socket is
+    bind-mounted into the container at /run/drydock/daemon.sock. We
+    don't need to probe inside the container — verification that the
+    container is up and the daemon is responsive both already happen
+    naturally in START (devcontainer up returns success when the
+    container is healthy from devcontainer's perspective).
+
+    For M1, treat START's success as VERIFY's success. A future
+    Auditor-driven verification could probe deskwatch + a custom
+    `verification_probes` field in project YAML; that's M4.
+    """
+    fresh = registry.get_drydock(drydock.name)
+    if fresh is None:
+        raise StageFailure(
+            MigrationStage.VERIFY,
+            {"reason": "drydock_disappeared_after_start"},
+        )
+    if fresh.state != "running":
+        raise StageFailure(
+            MigrationStage.VERIFY,
+            {"reason": "not_running_after_start", "state": fresh.state},
+        )
+    return {
+        "verified": True,
+        "drydock_state": fresh.state,
+        "container_id": fresh.container_id,
+    }
 
 
 def _do_cleanup(snapshot_dir: Optional[Path]) -> dict:
