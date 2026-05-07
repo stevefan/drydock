@@ -107,9 +107,6 @@ def migrate(ctx, name, target_spec, force):
         target_image_present=None,
     )
 
-    # Record the plan. status='planned' for both --dry-run and the
-    # M1 default (since execution isn't wired yet); when M1's executor
-    # ships, non-dry-run flips to 'in_progress' and walks stages.
     registry.insert_migration(
         migration_id=plan.migration_id,
         drydock_id=drydock.id,
@@ -117,11 +114,11 @@ def migrate(ctx, name, target_spec, force):
         status="planned",
     )
 
-    response = {
+    response: dict = {
         "migration_id": plan.migration_id,
         "plan": plan.to_dict(),
         "precheck": precheck.to_dict(),
-        "executed": False,  # M1: planner-only
+        "executed": False,
         "dry_run": dry_run,
     }
 
@@ -133,14 +130,59 @@ def migrate(ctx, name, target_spec, force):
             human_lines.append(f"  ✗ {r}")
         out.success(response, human_lines=human_lines)
         return
-    if precheck.warnings and not force:
+
+    if precheck.warnings:
         human_lines.append("")
-        human_lines.append("Pre-check warnings (use --force to proceed):")
+        if force or dry_run:
+            human_lines.append("Pre-check warnings:")
+        else:
+            human_lines.append("Pre-check warnings (use --force to proceed):")
         for w in precheck.warnings:
             human_lines.append(f"  ⚠ {w}")
 
+    # Block execution if warnings exist without --force.
+    if precheck.warnings and not force and not dry_run:
+        human_lines.append("")
+        human_lines.append("Refusing to execute without --force.")
+        out.success(response, human_lines=human_lines)
+        return
+
+    if dry_run:
+        human_lines.append("")
+        human_lines.append("[--dry-run] plan recorded; no execution.")
+        out.success(response, human_lines=human_lines)
+        return
+
+    # Execute the planned migration.
+    from pathlib import Path
+    from drydock.core.migration_executor import (
+        ExecutorConfig, execute_migration,
+    )
+    config = ExecutorConfig(
+        secrets_root=Path.home() / ".drydock" / "secrets",
+        overlays_root=Path.home() / ".drydock" / "overlays",
+        migrations_root=Path.home() / ".drydock" / "migrations",
+    )
+    outcome = execute_migration(
+        plan.migration_id, registry=registry, config=config,
+    )
+    response["executed"] = True
+    response["outcome"] = outcome.to_dict()
+
     human_lines.append("")
-    human_lines.append("[M1] planner-only build — execution stages not yet wired.")
+    human_lines.append(f"Execution: {outcome.terminal_status}")
+    for s in outcome.stages:
+        marker = {"ok": "✓", "skipped": "·", "failed": "✗"}.get(s.status, "?")
+        human_lines.append(f"  {marker} {s.stage}")
+    if outcome.error:
+        human_lines.append("")
+        human_lines.append(f"Error: {json.dumps(outcome.error)}")
+    if outcome.terminal_status == "completed":
+        human_lines.append("")
+        human_lines.append(
+            "Container is stopped. Run `drydock create "
+            f"{drydock.name}` to bring it back up under the new config."
+        )
 
     out.success(response, human_lines=human_lines)
 

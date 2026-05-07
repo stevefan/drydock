@@ -40,7 +40,7 @@ class TestTargetParsing:
         _seed(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["--json", "migrate", "test", "--target", "image=img:v2"],
+            cli, ["--json", "--dry-run", "migrate", "test", "--target", "image=img:v2"],
         )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
@@ -52,7 +52,7 @@ class TestTargetParsing:
         _seed(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["--json", "migrate", "test", "--target", "reload"],
+            cli, ["--json", "--dry-run", "migrate", "test", "--target", "reload"],
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -63,7 +63,7 @@ class TestTargetParsing:
         _seed(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["--json", "migrate", "test", "--target", "schema=8"],
+            cli, ["--json", "--dry-run", "migrate", "test", "--target", "schema=8"],
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -125,7 +125,7 @@ class TestPersistence:
         _seed(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["--json", "migrate", "test", "--target", "reload"],
+            cli, ["--json", "--dry-run", "migrate", "test", "--target", "reload"],
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -180,21 +180,21 @@ class TestNoOpRefusal:
 
 
 class TestOutputShape:
-    def test_response_includes_plan_precheck_executed_flags(self, tmp_path, monkeypatch):
+    def test_dry_run_response_includes_plan_precheck_executed_flags(
+        self, tmp_path, monkeypatch,
+    ):
         monkeypatch.setenv("HOME", str(tmp_path))
         _seed(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["--json", "migrate", "test", "--target", "reload"],
+            cli, ["--json", "--dry-run", "migrate", "test", "--target", "reload"],
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "migration_id" in data
         assert "plan" in data
         assert "precheck" in data
-        # M1 is planner-only — executed should be False
         assert data["executed"] is False
-        # Plan has the structured shape
         assert data["plan"]["drydock_name"] == "test"
         assert data["plan"]["target_kind"] == "project_reload"
         assert "estimated_downtime_seconds" in data["plan"]

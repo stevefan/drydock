@@ -49,6 +49,12 @@ V2_EVENTS = frozenset({
     "workload.lease_apply_failed",
     "workload.lease_expired",
     "workload.lease_partial_revoked",
+    # Phase 2a.4 M1 — migration primitive.
+    "drydock.migration_started",
+    "drydock.migration_stage",      # one event per stage transition; details.stage names it
+    "drydock.migrated",             # terminal success
+    "drydock.migration_rolled_back", # rollback from snapshot succeeded
+    "drydock.migration_failed",     # rollback also failed; manual intervention
 })
 
 
