@@ -102,7 +102,7 @@ RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudo
   echo "node ALL=(root) NOPASSWD: /usr/bin/tailscale" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/iptables" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/ipset" >> /etc/sudoers.d/node-drydock && \
-  echo 'Defaults env_keep += "FIREWALL_EXTRA_DOMAINS FIREWALL_IPV6_HOSTS FIREWALL_AWS_IP_RANGES FIREWALL_REFRESH_INTERVAL EGRESS_PROXY_ENABLED EGRESS_PROXY_CONFIG EGRESS_PROXY_PORT"' >> /etc/sudoers.d/node-drydock && \
+  echo 'Defaults env_keep += "FIREWALL_EXTRA_DOMAINS FIREWALL_IPV6_HOSTS FIREWALL_AWS_IP_RANGES FIREWALL_REFRESH_INTERVAL EGRESS_PROXY_ENABLED EGRESS_PROXY_CONFIG EGRESS_PROXY_PORT DRYDOCK_WORKSPACE_ID"' >> /etc/sudoers.d/node-drydock && \
   chmod 0440 /etc/sudoers.d/node-drydock
 
 # git safe.directory = * system-wide. Inside a drydock desk, the container
