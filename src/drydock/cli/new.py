@@ -22,7 +22,7 @@ WORKER_DEFAULT_BASE_TAG = "v1.0.7"
 # devcontainer.json by default — most Auditors don't need extension.
 AUDITOR_TEMPLATE_PACKAGE = "drydock.templates.port_auditor"
 AUDITOR_TEMPLATE_FILES = ("devcontainer.json", "Dockerfile.example")
-AUDITOR_DEFAULT_BASE_TAG = "v0.1.2"
+AUDITOR_DEFAULT_BASE_TAG = "v0.1.3"
 
 DRYDOCK_SUBPATH = ".devcontainer/drydock"
 PROJECTS_DIR = Path.home() / ".drydock" / "projects"
