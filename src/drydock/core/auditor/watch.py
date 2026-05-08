@@ -47,6 +47,12 @@ WATCH_LOG_PATH = Path.home() / ".drydock" / "auditor" / "watch_log.jsonl"
 VALID_VERDICTS = ("routine", "anomaly_suspected", "unsure")
 
 
+def _default_signature_state_path() -> Path:
+    """Resolve at call time so tests' HOME monkeypatching reaches the
+    dedup state file (otherwise it was baked at module import)."""
+    return Path.home() / ".drydock" / "auditor" / "last_signature.json"
+
+
 @dataclass
 class WatchVerdict:
     """One watch tick's outcome."""
@@ -191,6 +197,8 @@ def watch_once(
     prompts_dir: Path | None = None,
     log_path: Path | None = None,
     update_heartbeat: bool = True,
+    signature_state_path: Path | None = None,
+    enable_signature_dedup: bool = True,
 ) -> WatchVerdict:
     """Run one watch tick. Returns the verdict.
 
@@ -232,6 +240,30 @@ def watch_once(
         clarifications = []
     user_content = format_snapshot_for_llm(snap, clarifications=clarifications)
 
+    # Phase PA3.9: signature dedup. If the substantive Harbor state
+    # hasn't changed since the last LLM call, skip this one — emit a
+    # "deduplicated" verdict and update heartbeat. Floor at 30min so
+    # sustained anomalies are still re-evaluated periodically.
+    if enable_signature_dedup:
+        from .signature import (
+            compute_signature, load_state, save_state, should_skip_llm,
+        )
+        sig_path = signature_state_path or _default_signature_state_path()
+        new_sig = compute_signature(snap.to_dict(), clarifications)
+        sig_state = load_state(sig_path)
+        if should_skip_llm(sig_state, new_sig):
+            verdict_obj.verdict = "deduplicated"
+            verdict_obj.reason = "signature unchanged since last LLM call"
+            verdict_obj.model = model
+            if update_heartbeat:
+                try:
+                    touch_heartbeat()
+                except OSError as exc:
+                    logger.warning("watch_once: failed to touch heartbeat: %s", exc)
+            if write_to_log:
+                _append_log(verdict_obj, log_path)
+            return verdict_obj
+
     try:
         response = client.call(
             model=model, system=system_prompt, user=user_content,
@@ -264,6 +296,19 @@ def watch_once(
             touch_heartbeat()
         except OSError as exc:
             logger.warning("watch_once: failed to touch heartbeat: %s", exc)
+
+    # Phase PA3.9: persist the new signature + the wall-clock time of
+    # this real LLM call so the next tick can dedup if nothing changes.
+    if enable_signature_dedup:
+        import time as _time
+        from .signature import SignatureState, save_state
+        save_state(
+            signature_state_path or _default_signature_state_path(),
+            SignatureState(
+                last_signature=new_sig,
+                last_real_call_unix=_time.time(),
+            ),
+        )
 
     if write_to_log:
         _append_log(verdict_obj, log_path)

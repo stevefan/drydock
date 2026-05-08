@@ -133,7 +133,7 @@ class TestWatchOnce:
             text='{"verdict": "routine", "reason": "all good", "drydocks_of_concern": []}',
             input_tokens=500, output_tokens=20, model="claude-haiku-4-5",
         )])
-        verdict = watch_once(registry=registry, llm_client=client,
+        verdict = watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                               write_to_log=False, write_snapshot_to_disk=False)
         assert verdict.verdict == "routine"
         assert verdict.reason == "all good"
@@ -145,7 +145,7 @@ class TestWatchOnce:
         client = MockLLMClient(responses=[LLMResponse(
             text='{"verdict": "anomaly_suspected", "reason": "egress 8x", "drydocks_of_concern": ["auction-crawl"]}',
         )])
-        verdict = watch_once(registry=registry, llm_client=client,
+        verdict = watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                               write_to_log=False, write_snapshot_to_disk=False)
         assert verdict.verdict == "anomaly_suspected"
         assert verdict.drydocks_of_concern == ["auction-crawl"]
@@ -154,13 +154,13 @@ class TestWatchOnce:
         client = MockLLMClient(responses=[LLMResponse(
             text='{"verdict": "unsure", "reason": "weird pattern, want second look", "drydocks_of_concern": ["x"]}',
         )])
-        verdict = watch_once(registry=registry, llm_client=client,
+        verdict = watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                               write_to_log=False, write_snapshot_to_disk=False)
         assert verdict.verdict == "unsure"
 
     def test_llm_unavailable_returns_error_no_heartbeat(self, registry, isolated_home):
         client = MockLLMClient(raise_on_call=LLMUnavailableError("no key"))
-        verdict = watch_once(registry=registry, llm_client=client,
+        verdict = watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                               write_to_log=False, write_snapshot_to_disk=False)
         assert verdict.verdict == "error"
         assert "llm_unavailable" in (verdict.error or "")
@@ -174,7 +174,7 @@ class TestWatchOnce:
         client = MockLLMClient(responses=[LLMResponse(
             text="this is not json", input_tokens=100, output_tokens=5,
         )])
-        verdict = watch_once(registry=registry, llm_client=client,
+        verdict = watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                               write_to_log=False, write_snapshot_to_disk=False)
         assert verdict.verdict == "error"
         assert verdict.error is None  # Not a credential error
@@ -186,9 +186,9 @@ class TestWatchOnce:
         client = MockLLMClient(responses=[LLMResponse(
             text='{"verdict": "routine", "reason": "ok", "drydocks_of_concern": []}',
         )])
-        watch_once(registry=registry, llm_client=client,
+        watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                    write_to_log=True, write_snapshot_to_disk=False, log_path=log_path)
-        watch_once(registry=registry, llm_client=client,
+        watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                    write_to_log=True, write_snapshot_to_disk=False, log_path=log_path)
         assert log_path.exists()
         lines = log_path.read_text().splitlines()
@@ -199,7 +199,7 @@ class TestWatchOnce:
 
     def test_uses_default_model(self, registry, isolated_home):
         client = MockLLMClient(responses=[LLMResponse(text='{"verdict": "routine", "reason": "x"}')])
-        watch_once(registry=registry, llm_client=client,
+        watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                    write_to_log=False, write_snapshot_to_disk=False)
         assert client.calls[0]["model"] == DEFAULT_WATCH_MODEL
 
@@ -215,9 +215,9 @@ class TestWatchLog:
             LLMResponse(text='{"verdict": "routine", "reason": "ok"}'),
             LLMResponse(text='{"verdict": "anomaly_suspected", "reason": "spike", "drydocks_of_concern": ["x"]}'),
         ])
-        watch_once(registry=registry, llm_client=client,
+        watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                    write_to_log=True, write_snapshot_to_disk=False, log_path=log)
-        watch_once(registry=registry, llm_client=client,
+        watch_once(registry=registry, llm_client=client, enable_signature_dedup=False,
                    write_to_log=True, write_snapshot_to_disk=False, log_path=log)
 
         verdicts = read_watch_log(log_path=log)
