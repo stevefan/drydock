@@ -210,12 +210,24 @@ def _validate_params(params: object) -> dict:
             data={"field": "evidence", "reason": "must be an object"},
         )
 
+    # throttle_egress carries an optional `action` sub-kind
+    # (freeze | unfreeze, default freeze). Validated here so the live
+    # executor can rely on it.
+    action = params.get("action")
+    if action is not None and (not isinstance(action, str) or
+                                action.lower() not in ("freeze", "unfreeze")):
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "action", "reason": "must be 'freeze' or 'unfreeze'"},
+        )
+
     return {
         "kind": kind,
         "target_drydock_id": target,
         "lease_id": lease_id,
         "reason": reason,
         "evidence": evidence,
+        "action": action.lower() if isinstance(action, str) else None,
     }
 
 
@@ -238,16 +250,18 @@ def _execute_live(
         return _live_stop_dock(spec, registry=registry, secrets_root=secrets_root)
     if kind == "revoke_lease":
         return _live_revoke_lease(spec, registry=registry, secrets_root=secrets_root)
-    if kind in ("throttle_egress", "freeze_storage"):
-        # Primitive not built yet. Refuse loudly rather than no-op silently.
+    if kind == "throttle_egress":
+        return _live_throttle_egress(spec, registry=registry)
+    if kind == "freeze_storage":
+        # freeze_storage primitive still TBD (would mark s3 lease for
+        # immediate revoke + block re-issue). Out of Phase 5 scope.
         raise _RpcError(
-            code=-32021,  # auditor_action_unsupported
+            code=-32021,
             message="auditor_action_unsupported",
             data={
                 "kind": kind,
-                "fix": "The underlying primitive isn't built yet. "
-                       "Stop and revoke_lease work in live mode; "
-                       "throttle and freeze land in PA4+.",
+                "fix": "freeze_storage primitive not built yet — only "
+                       "stop_dock, revoke_lease, throttle_egress are live.",
             },
         )
     raise _RpcError(
@@ -298,3 +312,77 @@ def _live_revoke_lease(spec, *, registry, secrets_root) -> dict:
         secrets_root=secrets_root,
     )
     return {"primitive": "release_capability", "primitive_result": result}
+
+
+def _live_throttle_egress(spec, *, registry) -> dict:
+    """Phase 5: Auditor's throttle_egress action.
+
+    Two sub-actions per spec.action (default 'freeze'):
+      - 'freeze': write empty allowlist to the target's proxy ACL,
+        SIGHUP dockwarden. Target loses egress to everything except
+        the daemon socket (which is Unix-domain, not via proxy).
+        REVERSIBLE — drydock-internal RPCs still flow.
+      - 'unfreeze': restore allowlist from the desk's registry
+        delegatable_network_reach (the source-of-truth policy).
+        Useful when the principal wants to revert an Auditor freeze.
+
+    Both are reversible and bounded — Bucket-2 properties hold:
+    defensive (denying), reversible (unfreeze restores), low blast
+    radius (only the target desk's egress; no other state mutated).
+    """
+    from drydock.core.proxy import write_smokescreen_acl, proxy_root_from_home
+    import json as _json
+    import subprocess as _subprocess
+
+    target_id = spec["target_drydock_id"]
+    action = (spec.get("action") or "freeze").lower()
+    if action not in ("freeze", "unfreeze"):
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "action", "reason": "must be 'freeze' or 'unfreeze'"},
+        )
+
+    target_row = registry._conn.execute(
+        "SELECT name, container_id, delegatable_network_reach "
+        "FROM drydocks WHERE id = ?", (target_id,),
+    ).fetchone()
+    if target_row is None:
+        raise _RpcError(
+            code=-32602, message="invalid_params",
+            data={"field": "target_drydock_id",
+                   "reason": f"no drydock with id {target_id}"},
+        )
+
+    if action == "freeze":
+        # Empty allowlist = nothing reachable through dockwarden.
+        new_domains: list[str] = []
+    else:  # unfreeze
+        raw = target_row["delegatable_network_reach"]
+        new_domains = list(_json.loads(raw)) if raw else []
+
+    written_path = write_smokescreen_acl(
+        target_id, new_domains, proxy_root_from_home(),
+    )
+
+    sighup_sent = False
+    container_id = target_row["container_id"]
+    if container_id:
+        try:
+            r = _subprocess.run(
+                ["docker", "exec", "-u", "root", container_id,
+                 "pkill", "-HUP", "dockwarden"],
+                check=False, capture_output=True, timeout=5,
+            )
+            sighup_sent = (r.returncode == 0)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "primitive": "throttle_egress",
+        "action": action,
+        "target_drydock_id": target_id,
+        "target_drydock_name": target_row["name"],
+        "written_path": str(written_path),
+        "sighup_sent": sighup_sent,
+        "domain_count_after": len(new_domains),
+    }

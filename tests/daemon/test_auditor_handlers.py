@@ -157,20 +157,76 @@ class TestDryRunMode:
 
 
 class TestLiveMode:
-    def test_throttle_egress_unsupported_in_live(self, env):
-        """The primitive isn't built; live mode refuses."""
+    def test_throttle_egress_freeze_writes_empty_allowlist(self, env, tmp_path):
+        """Phase 5: throttle_egress live → write empty ACL + SIGHUP.
+        sighup may fail if there's no container, but the file write
+        is the contract — the proxy reload on next stat-poll picks up
+        the change either way."""
+        result = auditor_action(
+            {"kind": "throttle_egress",
+             "target_drydock_id": env["target_id"],
+             "action": "freeze",
+             "reason": "exfil pattern detected"},
+            "req-1", caller_drydock_id=env["auditor_id"],
+            registry_path=env["db"], secrets_root=env["secrets_root"],
+            dry_run=False,
+        )
+        assert result["executed"] is True
+        assert result["action"] == "freeze"
+        assert result["domain_count_after"] == 0
+        # ACL file at the written path has no allowed_hosts/domains.
+        from pathlib import Path
+        import yaml
+        acl = yaml.safe_load(Path(result["written_path"]).read_text())
+        assert acl["default"]["allowed_hosts"] == []
+        assert acl["default"]["allowed_domains"] == []
+
+    def test_throttle_egress_unfreeze_restores_from_policy(self, env, tmp_path):
+        """unfreeze restores from the desk's
+        delegatable_network_reach (the policy source-of-truth)."""
+        # Set the target's network_reach to something specific
+        from drydock.core.registry import Registry
+        r = Registry(db_path=env["db"])
+        try:
+            r.update_desk_delegations(
+                "target", delegatable_network_reach=["api.github.com"],
+            )
+        finally:
+            r.close()
+
+        result = auditor_action(
+            {"kind": "throttle_egress",
+             "target_drydock_id": env["target_id"],
+             "action": "unfreeze",
+             "reason": "principal cleared concern"},
+            "req-1", caller_drydock_id=env["auditor_id"],
+            registry_path=env["db"], secrets_root=env["secrets_root"],
+            dry_run=False,
+        )
+        assert result["executed"] is True
+        assert result["action"] == "unfreeze"
+        assert result["domain_count_after"] == 1
+        from pathlib import Path
+        import yaml
+        acl = yaml.safe_load(Path(result["written_path"]).read_text())
+        assert acl["default"]["allowed_hosts"] == ["api.github.com"]
+
+    def test_throttle_egress_invalid_action_rejected(self, env):
         with pytest.raises(_RpcError) as exc:
             auditor_action(
-                {"kind": "throttle_egress", "target_drydock_id": env["target_id"],
-                 "reason": "burst"},
+                {"kind": "throttle_egress",
+                 "target_drydock_id": env["target_id"],
+                 "action": "delete",  # not freeze/unfreeze
+                 "reason": "test"},
                 "req-1", caller_drydock_id=env["auditor_id"],
                 registry_path=env["db"], secrets_root=env["secrets_root"],
                 dry_run=False,
             )
-        assert exc.value.code == -32021
-        assert "throttle_egress" in str(exc.value.data)
+        assert exc.value.code == -32602
+        assert exc.value.data["field"] == "action"
 
-    def test_freeze_storage_unsupported_in_live(self, env):
+    def test_freeze_storage_still_unsupported(self, env):
+        """freeze_storage primitive isn't built yet."""
         with pytest.raises(_RpcError) as exc:
             auditor_action(
                 {"kind": "freeze_storage", "target_drydock_id": env["target_id"],
