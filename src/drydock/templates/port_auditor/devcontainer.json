@@ -1,6 +1,7 @@
 {
   "name": "{{ project_name }}",
   "image": "ghcr.io/stevefan/drydock-port-auditor:{{ base_tag }}",
+  "overrideCommand": false,
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW"
@@ -10,6 +11,5 @@
   "workspaceFolder": "/workspace",
   "containerEnv": {
     "FIREWALL_EXTRA_DOMAINS": "${localEnv:FIREWALL_EXTRA_DOMAINS:}"
-  },
-  "waitFor": "postStartCommand"
+  }
 }
