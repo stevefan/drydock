@@ -64,6 +64,9 @@ V2_EVENTS = frozenset({
     # Phase PA3.8 — clarification channel.
     "auditor.clarification_registered",  # worker registered context for the Auditor's judgment
     "auditor.clarification_rejected",    # sanitizer caught a violation (logged but not raised here)
+    # Phase 2 (proxy rollout) — egress allowlist mutation.
+    "egress.allowlist_updated",       # UpdateProxyAllowlist successfully wrote + signaled
+    "egress.allowlist_rejected",      # narrowness gate refused the call
 })
 
 

@@ -388,6 +388,28 @@ _METHODS["RegisterClarification"] = MethodSpec(
 )
 
 
+# Phase 2 (proxy rollout): live-mutate a desk's egress allowlist.
+# Auth gates inside the handler:
+#   dock-scope caller: self only + narrowness check
+#   auditor-scope caller: any desk, no narrowness check
+def _update_proxy_allowlist(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_drydock_id: str | None,
+) -> dict[str, object]:
+    from drydock.daemon.proxy_handlers import update_proxy_allowlist
+    return update_proxy_allowlist(
+        params if isinstance(params, dict) else None,
+        request_id, caller_drydock_id,
+        registry_path=_REGISTRY_PATH,
+    )
+
+
+_METHODS["UpdateProxyAllowlist"] = MethodSpec(
+    handler=_update_proxy_allowlist, requires_auth=True,
+)
+
+
 def _error_response(
     request_id: str | int | None,
     *,

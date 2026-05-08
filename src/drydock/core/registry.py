@@ -762,7 +762,7 @@ class Registry:
     def get_token_info(self, drydock_id: str) -> dict | None:
         row = self._conn.execute(
             """
-            SELECT drydock_id, token_sha256, issued_at, rotated_at
+            SELECT drydock_id, token_sha256, issued_at, rotated_at, scope
             FROM tokens
             WHERE drydock_id = ?
             """,
