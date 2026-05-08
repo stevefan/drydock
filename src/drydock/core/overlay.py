@@ -365,6 +365,20 @@ def _build_container_env(ws: Drydock, config: OverlayConfig) -> dict[str, str]:
     # still on the iptables/ipset path.
     if config.egress_proxy == "enabled":
         env["EGRESS_PROXY_ENABLED"] = "1"
+        # Phase 1 validation (PA4 plan, 2026-05-08): point apps inside
+        # the container at the loopback proxy. Without these env vars,
+        # apps would bypass smokescreen and try direct egress (which
+        # iptables/ipset still gates as defense-in-depth, but the
+        # proxy-as-gate story is incomplete). NO_PROXY excludes
+        # loopback + tailnet so daemon-socket and tailscale traffic
+        # don't bounce through the proxy.
+        proxy_url = "http://127.0.0.1:4750"
+        env["HTTP_PROXY"] = proxy_url
+        env["HTTPS_PROXY"] = proxy_url
+        env["http_proxy"] = proxy_url
+        env["https_proxy"] = proxy_url
+        env["NO_PROXY"] = "localhost,127.0.0.1,100.64.0.0/10"
+        env["no_proxy"] = "localhost,127.0.0.1,100.64.0.0/10"
 
     if config.storage_mounts:
         env["STORAGE_MOUNTS_JSON"] = json.dumps(config.storage_mounts)

@@ -481,6 +481,30 @@ class TestEgressProxyOverlay:
         for m in overlay.get("mounts", []):
             assert "/run/drydock/proxy/allowlist.yaml" not in m
 
+    def test_enabled_sets_proxy_env_for_apps(self, ws):
+        """Phase 1 (proxy rollout): apps inside the container need
+        HTTP_PROXY/HTTPS_PROXY pointed at the loopback proxy or they
+        bypass smokescreen entirely. Both upper and lowercase forms
+        because curl/wget/python all check different ones."""
+        cfg = OverlayConfig(egress_proxy="enabled")
+        env = generate_overlay(ws, cfg)["containerEnv"]
+        assert env["HTTP_PROXY"] == "http://127.0.0.1:4750"
+        assert env["HTTPS_PROXY"] == "http://127.0.0.1:4750"
+        assert env["http_proxy"] == "http://127.0.0.1:4750"
+        assert env["https_proxy"] == "http://127.0.0.1:4750"
+        # NO_PROXY excludes loopback + tailnet (100.64/10) so daemon
+        # socket and tailscale traffic don't bounce through smokescreen.
+        assert "127.0.0.1" in env["NO_PROXY"]
+        assert "100.64.0.0/10" in env["NO_PROXY"]
+
+    def test_disabled_no_proxy_env_for_apps(self, ws):
+        """Disabled mode: HTTP_PROXY env unset so apps don't try to
+        connect to a non-existent proxy."""
+        cfg = OverlayConfig()
+        env = generate_overlay(ws, cfg)["containerEnv"]
+        assert "HTTP_PROXY" not in env
+        assert "HTTPS_PROXY" not in env
+
 
 class TestAuditorRoleBindMounts:
     """Phase PA3.3: when role=auditor, the overlay must add bind-mounts
