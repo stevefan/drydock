@@ -62,6 +62,7 @@ class _RpcError(ValueError):
       -32019  workload_apply_failed           (Phase 2a.3 WL1)
       -32020  auditor_scope_required          (Phase PA3)
       -32021  auditor_action_unsupported      (Phase PA3)
+      -32022  clarification_rejected          (Phase PA3.8)
     """
     code: int
     message: str

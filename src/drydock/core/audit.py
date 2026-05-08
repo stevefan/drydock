@@ -61,6 +61,9 @@ V2_EVENTS = frozenset({
     "auditor.action_dry_run",       # Bucket-2 call audited but not executed (V1 default)
     "auditor.action_executed",      # Bucket-2 call actually invoked the primitive (live mode)
     "auditor.action_refused",       # caller's token wasn't auditor-scoped
+    # Phase PA3.8 — clarification channel.
+    "auditor.clarification_registered",  # worker registered context for the Auditor's judgment
+    "auditor.clarification_rejected",    # sanitizer caught a violation (logged but not raised here)
 })
 
 

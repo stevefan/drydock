@@ -243,6 +243,40 @@ def _migrate_to_v9(conn: sqlite3.Connection) -> None:
             continue
         conn.execute(f"ALTER TABLE tokens ADD COLUMN {col} {defn}")
 
+
+# V10 (Phase PA3.8 — Auditor clarification channel). The single sanctioned
+# upstream channel from worker drydocks to the Auditor's judgment context.
+# Per docs/design/port-auditor.md + memory/project_auditor_isolation_principles:
+# the channel exists for the rare case when a desk's contract genuinely
+# doesn't cover something. The mere act of using it is a high-weight audit
+# event; the Auditor reads recent unexpired entries when assembling
+# its watch-tick prompt.
+#
+# Wire-boundary sanitization (in clarification_handlers.py) enforces:
+#   - structural `kind` enum (no free-form labels)
+#   - summary length ≤ 200 chars, ASCII printable, no prompt-injection
+#     pattern matches
+#   - schema'd evidence dict, depth-bounded
+# The Auditor receives the SANITIZED record; it never sees pre-sanitized
+# input.
+V10_TABLES = """
+CREATE TABLE IF NOT EXISTS clarifications (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    drydock_id      TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    summary         TEXT NOT NULL,
+    evidence_json   TEXT NULL,
+    created_at      TIMESTAMP NOT NULL,
+    expires_at      TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_clarifications_active
+    ON clarifications(expires_at, drydock_id);
+"""
+
+
+def _migrate_to_v10(conn: sqlite3.Connection) -> None:
+    conn.executescript(V10_TABLES)
+
 V2_TABLES = """
 CREATE TABLE IF NOT EXISTS leases (
     lease_id            TEXT PRIMARY KEY,
@@ -514,6 +548,7 @@ class Registry:
         _migrate_to_v7(self._conn)
         _migrate_to_v8(self._conn)
         _migrate_to_v9(self._conn)
+        _migrate_to_v10(self._conn)
         # Idempotent fixup — runs after every numbered migration so any
         # FK table that landed with `desk_id`/`workspace_id` instead of
         # `drydock_id` gets renamed. Self-healing for the recurring
@@ -740,6 +775,48 @@ class Registry:
     def delete_token(self, drydock_id: str) -> None:
         self._conn.execute("DELETE FROM tokens WHERE drydock_id = ?", (drydock_id,))
         self._conn.commit()
+
+    # ---- V10: Auditor clarification channel ----
+    def insert_clarification(
+        self,
+        *,
+        drydock_id: str,
+        kind: str,
+        summary: str,
+        evidence_json: str | None,
+        created_at: str,
+        expires_at: str,
+    ) -> int:
+        """Persist a sanitized clarification record. Returns row id.
+        Caller must have already validated via clarifier.sanitize."""
+        cur = self._conn.execute(
+            "INSERT INTO clarifications (drydock_id, kind, summary, "
+            "evidence_json, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (drydock_id, kind, summary, evidence_json, created_at, expires_at),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def list_active_clarifications(self, *, now_iso: str, limit: int = 50) -> list[dict]:
+        """Return non-expired clarifications, newest first. Used by the
+        Auditor's watch tick to fold into prompt context."""
+        rows = self._conn.execute(
+            "SELECT id, drydock_id, kind, summary, evidence_json, "
+            "created_at, expires_at FROM clarifications "
+            "WHERE expires_at > ? "
+            "ORDER BY id DESC LIMIT ?",
+            (now_iso, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def expire_clarifications(self, *, now_iso: str) -> int:
+        """Delete expired rows. Returns count removed."""
+        cur = self._conn.execute(
+            "DELETE FROM clarifications WHERE expires_at <= ?", (now_iso,),
+        )
+        self._conn.commit()
+        return cur.rowcount or 0
 
     def load_desk_policy(self, drydock_id: str) -> dict | None:
         row = self._conn.execute(

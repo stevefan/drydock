@@ -133,10 +133,21 @@ def parse_verdict(llm_text: str) -> tuple[str, str, list[str]]:
     return (verdict, reason, docs)
 
 
-def format_snapshot_for_llm(snap: HarborSnapshot) -> str:
+def format_snapshot_for_llm(
+    snap: HarborSnapshot,
+    *,
+    clarifications: list[dict] | None = None,
+) -> str:
     """Render a snapshot as JSON the LLM can read.
 
     Prunes verbose/irrelevant fields to keep tokens down.
+
+    Phase PA3.8: clarifications (if any) are folded in as a separate
+    top-level array. They're already wire-sanitized by clarifier.sanitize
+    before persistence, so what we read here is safe to inline. The
+    Auditor's prompt instructs it to weight clarifications when judging
+    anomalies — "this metric looks weird BUT the worker said X" should
+    pull verdicts toward routine.
     """
     docs_compact = []
     for d in snap.drydocks:
@@ -150,11 +161,24 @@ def format_snapshot_for_llm(snap: HarborSnapshot) -> str:
             "yaml_drift": d.get("yaml_drift"),
         }
         docs_compact.append(compact)
-    return json.dumps({
+    payload: dict = {
         "snapshot_at": snap.snapshot_at,
         "harbor": snap.harbor_hostname,
         "drydocks": docs_compact,
-    }, indent=2)
+    }
+    if clarifications:
+        # Strip storage columns (id, created_at, expires_at), keep
+        # the substantive fields the Auditor actually weighs.
+        payload["clarifications"] = [
+            {
+                "drydock_id": c["drydock_id"],
+                "kind": c["kind"],
+                "summary": c["summary"],
+                "evidence": json.loads(c["evidence_json"]) if c.get("evidence_json") else {},
+            }
+            for c in clarifications
+        ]
+    return json.dumps(payload, indent=2)
 
 
 def watch_once(
@@ -195,7 +219,18 @@ def watch_once(
 
     client = llm_client or AnthropicHttpClient()
     system_prompt = load_watch_prompt(prompts_dir)
-    user_content = format_snapshot_for_llm(snap)
+    # Phase PA3.8: pull active clarifications from the registry to fold
+    # into prompt context. Workers register intent/explanation here when
+    # the contract doesn't speak to it; the Auditor weights them when
+    # judging would-be anomalies. List-active is read-only on the
+    # registry; safe even with the bind-mounted RO view.
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        clarifications = registry.list_active_clarifications(now_iso=now_iso)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("watch_once: failed to load clarifications: %s", exc)
+        clarifications = []
+    user_content = format_snapshot_for_llm(snap, clarifications=clarifications)
 
     try:
         response = client.call(

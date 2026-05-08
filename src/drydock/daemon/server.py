@@ -367,6 +367,27 @@ def _auditor_action(
 _METHODS["AuditorAction"] = MethodSpec(handler=_auditor_action, requires_auth=True)
 
 
+# Phase PA3.8: clarification channel — workers register context for
+# the Auditor's judgment. Sanitization is at the wire boundary; the
+# Auditor reads only sanitized records via the registry table.
+def _register_clarification(
+    params: dict | list | None,
+    request_id: str | int | None,
+    caller_drydock_id: str | None,
+) -> dict[str, object]:
+    from drydock.daemon.clarification_handlers import register_clarification
+    return register_clarification(
+        params if isinstance(params, dict) else None,
+        request_id, caller_drydock_id,
+        registry_path=_REGISTRY_PATH,
+    )
+
+
+_METHODS["RegisterClarification"] = MethodSpec(
+    handler=_register_clarification, requires_auth=True,
+)
+
+
 def _error_response(
     request_id: str | int | None,
     *,
