@@ -242,8 +242,31 @@ def test_project_reload_writes_smokescreen_allowlist(tmp_path, monkeypatch):
 
 
 def test_project_reload_skips_allowlist_when_proxy_disabled(tmp_path, monkeypatch):
-    """Default 'disabled' — no allowlist file written, even when network_reach is set.
-    The iptables/ipset path handles egress; smokescreen isn't running."""
+    """When YAML EXPLICITLY sets egress_proxy: disabled, no allowlist
+    file is written even when network_reach is set. iptables/ipset
+    handles egress; dockwarden isn't running.
+
+    Phase 3 (2026-05-08): default flipped to 'enabled', so this test
+    must declare disabled explicitly. Tests that omit the field now
+    get the new default."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _seed(tmp_path, (
+        "repo_path: /srv/code/myproj\n"
+        "egress_proxy: disabled\n"
+        "delegatable_network_reach:\n"
+        "  - api.anthropic.com\n"
+    ))
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "project", "reload", "myws"])
+    assert result.exit_code == 0, result.output
+    allowlist_path = tmp_path / ".drydock" / "proxy" / "dock_myws.yaml"
+    assert not allowlist_path.exists()
+
+
+def test_project_reload_default_on_writes_allowlist(tmp_path, monkeypatch):
+    """Phase 3: YAML omits egress_proxy → defaults to 'enabled' →
+    allowlist file IS written. Confirms the new default actually
+    flips behavior."""
     monkeypatch.setenv("HOME", str(tmp_path))
     _seed(tmp_path, (
         "repo_path: /srv/code/myproj\n"
@@ -254,4 +277,4 @@ def test_project_reload_skips_allowlist_when_proxy_disabled(tmp_path, monkeypatc
     result = runner.invoke(cli, ["--json", "project", "reload", "myws"])
     assert result.exit_code == 0, result.output
     allowlist_path = tmp_path / ".drydock" / "proxy" / "dock_myws.yaml"
-    assert not allowlist_path.exists()
+    assert allowlist_path.exists()

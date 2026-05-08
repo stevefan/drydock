@@ -114,7 +114,13 @@ class ProjectConfig:
     # proxy the only path, this field and the entire iptables/ipset code
     # path get deleted in the same commit — no deprecation, no compat
     # shim, we are the only users.
-    egress_proxy: str = "disabled"
+    # Phase 3 (proxy rollout, 2026-05-08): default flipped from
+    # "disabled" to "enabled". New desks ship with smokescreen-class
+    # egress gating (dockwarden + ACL) by default. Existing desks
+    # are unaffected — they only adopt on next `drydock create`.
+    # iptables/ipset still active as defense-in-depth until Phase 4
+    # deletes the fallback path entirely.
+    egress_proxy: str = "enabled"
     # Phase PA3.1 (port-auditor.md): role-locked drydock declaration.
     # `worker` (default) is an ordinary drydock. `auditor` is the Port
     # Auditor's drydock — `drydock auditor designate` runs the validator
@@ -196,7 +202,7 @@ def load_project_config(
         yard=raw.get("yard") or None,
         storage_mounts=raw.get("storage_mounts", []),
         deskwatch=raw.get("deskwatch") or {},
-        egress_proxy=str(raw.get("egress_proxy") or "disabled").lower(),
+        egress_proxy=str(raw.get("egress_proxy") or "enabled").lower(),
         role=str(raw.get("role") or ROLE_WORKER).lower(),
     )
     if cfg.role not in KNOWN_ROLES:
