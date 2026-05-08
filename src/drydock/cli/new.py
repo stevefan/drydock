@@ -61,9 +61,9 @@ def _auditor_project_yaml(repo_path: Path, base_tag: str) -> str:
         f"  - api.telegram.org\n"
         f"\n"
         f"resources_hard:\n"
-        f"  cpus: 1.0\n"
-        f"  memory: 1g\n"
-        f"  pids: 256\n"
+        f"  cpu_max: 1.0\n"
+        f"  memory_max: 1g\n"
+        f"  pids_max: 256\n"
     )
 
 

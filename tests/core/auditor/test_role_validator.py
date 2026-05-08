@@ -30,7 +30,7 @@ def _minimal_passing_cfg() -> ProjectConfig:
     return ProjectConfig(
         role=ROLE_AUDITOR,
         firewall_extra_domains=["api.anthropic.com", "api.telegram.org"],
-        resources_hard={"cpus": 1.0, "memory": "1g"},
+        resources_hard={"cpu_max": 1.0, "memory_max": "1g"},
     )
 
 
@@ -170,13 +170,13 @@ class TestResourceCeilingViolations:
 
     def test_cpu_above_max_rejected(self):
         cfg = _minimal_passing_cfg()
-        cfg.resources_hard = {"cpus": 4.0, "memory": "1g"}
+        cfg.resources_hard = {"cpu_max": 4.0, "memory_max": "1g"}
         result = validate_auditor_role(cfg)
         assert "cpu-ceiling-exceeded" in {v.code for v in result.violations}
 
     def test_memory_above_max_rejected(self):
         cfg = _minimal_passing_cfg()
-        cfg.resources_hard = {"cpus": 1.0, "memory": "16g"}
+        cfg.resources_hard = {"cpu_max": 1.0, "memory_max": "16g"}
         result = validate_auditor_role(cfg)
         assert "memory-ceiling-exceeded" in {
             v.code for v in result.violations
@@ -184,7 +184,7 @@ class TestResourceCeilingViolations:
 
     def test_memory_malformed_rejected(self):
         cfg = _minimal_passing_cfg()
-        cfg.resources_hard = {"cpus": 1.0, "memory": "lots"}
+        cfg.resources_hard = {"cpu_max": 1.0, "memory_max": "lots"}
         result = validate_auditor_role(cfg)
         assert "memory-ceiling-malformed" in {
             v.code for v in result.violations

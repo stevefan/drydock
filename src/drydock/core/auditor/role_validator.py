@@ -160,41 +160,43 @@ def validate_auditor_role(cfg: ProjectConfig) -> ValidationResult:
             message="Auditor must not declare delegatable_firewall_domains.",
         ))
 
-    # 4. Resource caps
-    cpus = cfg.resources_hard.get("cpus")
-    memory = cfg.resources_hard.get("memory")
-    if cpus is None or memory is None:
+    # 4. Resource caps. Schema keys per HardCeilings.from_dict are
+    # cpu_max / memory_max / pids_max. (Initial PA3.1 used cpus/memory/
+    # pids — wrong, caught at first real-create attempt on hetzner.)
+    cpu_max = cfg.resources_hard.get("cpu_max")
+    memory_max = cfg.resources_hard.get("memory_max")
+    if cpu_max is None or memory_max is None:
         violations.append(Violation(
             code="resource-ceiling-required",
-            message=("Auditor must declare resources_hard.cpus and "
-                     "resources_hard.memory; the Auditor is small and "
-                     "should not run unbounded."),
+            message=("Auditor must declare resources_hard.cpu_max and "
+                     "resources_hard.memory_max; the Auditor is small "
+                     "and should not run unbounded."),
         ))
     else:
         try:
-            if float(cpus) > _MAX_CPUS:
+            if float(cpu_max) > _MAX_CPUS:
                 violations.append(Violation(
                     code="cpu-ceiling-exceeded",
-                    message=(f"Auditor resources_hard.cpus={cpus} exceeds "
-                             f"max {_MAX_CPUS}."),
+                    message=(f"Auditor resources_hard.cpu_max={cpu_max} "
+                             f"exceeds max {_MAX_CPUS}."),
                 ))
         except (TypeError, ValueError):
             violations.append(Violation(
                 code="cpu-ceiling-malformed",
-                message=f"Auditor resources_hard.cpus must be numeric; got {cpus!r}.",
+                message=f"Auditor resources_hard.cpu_max must be numeric; got {cpu_max!r}.",
             ))
-        memory_bytes = _parse_memory_to_bytes(memory)
+        memory_bytes = _parse_memory_to_bytes(memory_max)
         if memory_bytes is None:
             violations.append(Violation(
                 code="memory-ceiling-malformed",
-                message=(f"Auditor resources_hard.memory must be a docker "
-                         f"size string (e.g. '2g', '512m'); got {memory!r}."),
+                message=(f"Auditor resources_hard.memory_max must be a docker "
+                         f"size string (e.g. '2g', '512m'); got {memory_max!r}."),
             ))
         elif memory_bytes > _MAX_MEMORY_BYTES:
             violations.append(Violation(
                 code="memory-ceiling-exceeded",
-                message=(f"Auditor resources_hard.memory={memory} exceeds "
-                         f"max {_MAX_MEMORY_BYTES} bytes (4g)."),
+                message=(f"Auditor resources_hard.memory_max={memory_max} "
+                         f"exceeds max {_MAX_MEMORY_BYTES} bytes (4g)."),
             ))
 
     # 5. Image from approved list
