@@ -1,6 +1,7 @@
 """SQLite drydock registry."""
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -475,12 +476,23 @@ def _migrate_v1_vocab_to_drydock(conn: sqlite3.Connection) -> None:
 
 
 class Registry:
-    def __init__(self, db_path: Path | None = None):
+    def __init__(self, db_path: Path | str | None = None):
         if db_path is None:
-            home = Path.home() / ".drydock"
-            home.mkdir(parents=True, exist_ok=True)
-            db_path = home / "registry.db"
-        self.db_path = db_path
+            # DRYDOCK_DAEMON_REGISTRY override — set by the overlay
+            # generator inside containers with role=auditor (points at
+            # the bind-mounted host registry RO). Without this, Registry()
+            # silently created a fresh empty DB at ~/.drydock/registry.db
+            # inside the container; the watch loop's snapshot_harbor
+            # reported "empty harbor" while the real Harbor had drydocks.
+            env_override = os.environ.get("DRYDOCK_DAEMON_REGISTRY")
+            if env_override:
+                db_path = Path(env_override)
+            else:
+                home = Path.home() / ".drydock"
+                home.mkdir(parents=True, exist_ok=True)
+                db_path = home / "registry.db"
+        # Accept str for callers that pass env-var values directly.
+        self.db_path = Path(db_path) if not isinstance(db_path, Path) else db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row

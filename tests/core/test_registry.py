@@ -66,3 +66,45 @@ def test_delete_drydock(registry):
 
 def test_get_nonexistent_returns_none(registry):
     assert registry.get_drydock("nope") is None
+
+
+def test_registry_honors_env_override(tmp_path, monkeypatch):
+    """Phase PA3.7: DRYDOCK_DAEMON_REGISTRY env points Registry() at the
+    bind-mounted host registry inside containers (auditor role). Without
+    this, the watch loop opened a fresh empty DB at ~/.drydock/registry.db
+    inside the container and reported "empty harbor" while the real
+    Harbor had drydocks. Caught at first end-to-end auditor run."""
+    from drydock.core.registry import Registry
+    from drydock.core.runtime import Drydock
+
+    # Pre-seed a "host" DB at a non-default path
+    host_db = tmp_path / "host" / "registry.db"
+    host_db.parent.mkdir(parents=True)
+    seed = Registry(db_path=host_db)
+    try:
+        seed.create_drydock(Drydock(name="visible", project="x", repo_path="/r"))
+    finally:
+        seed.close()
+
+    # Point env override at the same DB; default-construct
+    monkeypatch.setenv("DRYDOCK_DAEMON_REGISTRY", str(host_db))
+    monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
+    r = Registry()
+    try:
+        assert r.db_path == host_db
+        assert r.get_drydock("visible") is not None
+    finally:
+        r.close()
+
+
+def test_registry_accepts_string_db_path(tmp_path):
+    """Defensive: callers that pass DRYDOCK_DAEMON_REGISTRY env directly
+    (raw string, not Path) shouldn't trip the .parent attribute access
+    that previously errored with `'str' object has no attribute 'parent'`."""
+    from drydock.core.registry import Registry
+    db_str = str(tmp_path / "reg.db")
+    r = Registry(db_path=db_str)
+    try:
+        assert r.db_path == tmp_path / "reg.db"
+    finally:
+        r.close()
