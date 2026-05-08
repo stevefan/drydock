@@ -20,7 +20,16 @@ if [ "${EGRESS_PROXY_ENABLED:-0}" != "1" ]; then
     exit 0
 fi
 
-CONFIG="${EGRESS_PROXY_CONFIG:-/run/drydock/proxy/allowlist.yaml}"
+# Phase 2: per-desk file inside the bind-mounted dir. The directory is
+# now the bind-mount target (so atomic renames in the daemon don't
+# invalidate the file inode); the filename within is per-desk.
+# Backwards-compat: if the legacy file-bind path exists, use it.
+if [ -n "${DRYDOCK_WORKSPACE_ID:-}" ] && [ -f "/run/drydock/proxy/${DRYDOCK_WORKSPACE_ID}.yaml" ]; then
+    DEFAULT_CONFIG="/run/drydock/proxy/${DRYDOCK_WORKSPACE_ID}.yaml"
+else
+    DEFAULT_CONFIG="/run/drydock/proxy/allowlist.yaml"
+fi
+CONFIG="${EGRESS_PROXY_CONFIG:-$DEFAULT_CONFIG}"
 PORT="${EGRESS_PROXY_PORT:-4750}"
 LOG_DIR=/var/log/drydock
 LOG="${LOG_DIR}/egress-proxy.log"

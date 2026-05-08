@@ -449,10 +449,19 @@ def _build_mounts(ws: Drydock, config: OverlayConfig) -> list[str]:
     # find it without per-desk env wiring. Only mounted when proxy is
     # enabled — keeps non-proxy desks unaware of the dir.
     if config.egress_proxy == "enabled" and config.proxy_config_host_dir:
-        proxy_file = Path(config.proxy_config_host_dir) / f"{ws.id}.yaml"
+        # Bind-mount the WHOLE proxy dir, not the per-desk file.
+        # Atomic write_smokescreen_acl uses tempfile + rename, which
+        # replaces the file inode — a file bind-mount captures the
+        # original inode at container-start and never sees the
+        # rename'd one. A directory bind-mount tracks the directory
+        # itself; lookups inside resolve to current inodes. Phase 2
+        # caught this when UpdateProxyAllowlist wrote new content
+        # but dockwarden inside the container still saw the old.
+        # dockwarden's --acl points at the per-desk filename within
+        # the bind-mounted dir.
         mounts.append(
-            f"source={proxy_file},"
-            f"target=/run/drydock/proxy/allowlist.yaml,type=bind,readonly"
+            f"source={config.proxy_config_host_dir},"
+            f"target=/run/drydock/proxy,type=bind,readonly"
         )
 
     # Phase PA3.3: auditor-role bind-mounts. The Auditor reads the

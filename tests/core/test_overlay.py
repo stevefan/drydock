@@ -456,21 +456,28 @@ class TestEgressProxyOverlay:
         for m in overlay.get("mounts", []):
             assert "/run/drydock/proxy/allowlist.yaml" not in m
 
-    def test_enabled_sets_env_and_mount(self, ws, tmp_path):
+    def test_enabled_sets_env_and_dir_mount(self, ws, tmp_path):
+        """Phase 2: bind-mount the WHOLE proxy dir, not the per-desk
+        file. Atomic rename in write_smokescreen_acl invalidates a
+        file bind-mount but leaves a dir bind-mount intact."""
         cfg = OverlayConfig(
             egress_proxy="enabled",
             proxy_config_host_dir=str(tmp_path),
         )
         overlay = generate_overlay(ws, cfg)
         assert overlay["containerEnv"]["EGRESS_PROXY_ENABLED"] == "1"
-        # Bind mount should map <tmp_path>/<ws.id>.yaml → container path.
         proxy_mounts = [
             m for m in overlay["mounts"]
-            if "/run/drydock/proxy/allowlist.yaml" in m
+            if "/run/drydock/proxy" in m
         ]
         assert len(proxy_mounts) == 1
-        assert f"{ws.id}.yaml" in proxy_mounts[0]
+        # Source is the directory; target is /run/drydock/proxy
+        assert f"source={tmp_path}" in proxy_mounts[0]
+        assert "target=/run/drydock/proxy," in proxy_mounts[0]
         assert "readonly" in proxy_mounts[0]
+        # Per-desk filename is NOT in the mount string (resolved at
+        # container side via DRYDOCK_WORKSPACE_ID + filename within dir)
+        assert f"{ws.id}.yaml" not in proxy_mounts[0]
 
     def test_enabled_without_host_dir_skips_mount(self, ws):
         # If somehow enabled without a host dir, env still set but no
@@ -479,7 +486,7 @@ class TestEgressProxyOverlay:
         overlay = generate_overlay(ws, cfg)
         assert overlay["containerEnv"]["EGRESS_PROXY_ENABLED"] == "1"
         for m in overlay.get("mounts", []):
-            assert "/run/drydock/proxy/allowlist.yaml" not in m
+            assert "target=/run/drydock/proxy" not in m
 
     def test_enabled_sets_proxy_env_for_apps(self, ws):
         """Phase 1 (proxy rollout): apps inside the container need

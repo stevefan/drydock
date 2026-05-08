@@ -150,12 +150,21 @@ def update_proxy_allowlist(
     sighup_sent = False
     if container_id:
         try:
-            subprocess.run(
-                ["docker", "exec", container_id,
+            # `-u root`: dockwarden runs as root inside the container
+            # (started via sudo from postStartCommand); the container's
+            # default user `node` can't signal it. Daemon runs as root
+            # on host and can `docker exec -u root`.
+            r = subprocess.run(
+                ["docker", "exec", "-u", "root", container_id,
                  "pkill", "-HUP", "dockwarden"],
                 check=False, capture_output=True, timeout=5,
             )
-            sighup_sent = True
+            sighup_sent = (r.returncode == 0)
+            if not sighup_sent:
+                logger.warning(
+                    "update_proxy_allowlist: SIGHUP rc=%d stderr=%s",
+                    r.returncode, r.stderr.decode("utf-8", errors="replace"),
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("update_proxy_allowlist: SIGHUP failed for %s: %s",
                             container_id, exc)
