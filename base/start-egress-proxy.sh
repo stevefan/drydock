@@ -38,18 +38,31 @@ fi
 
 echo "$(date -u +%FT%TZ) start-egress-proxy: launching smokescreen on :${PORT} with allowlist ${CONFIG}" | tee -a "${LOG}"
 
+# Already running? Idempotent — postStartCommand may fire on container
+# restart even when proxy already up; don't double-launch.
+if [ -f "${PID_FILE}" ] && kill -0 "$(cat "${PID_FILE}")" 2>/dev/null; then
+    echo "$(date -u +%FT%TZ) start-egress-proxy: already running pid=$(cat ${PID_FILE})" | tee -a "${LOG}"
+    exit 0
+fi
+
 # smokescreen flags:
 # --listen-ip 127.0.0.1: only accept connections from inside the container.
 # --listen-port: HTTP CONNECT proxy port.
 # --egress-acl-file: YAML allowlist driven by the daemon.
-# --deny-address: explicit SSRF protections (RFC1918, link-local). Smokescreen
-#   has built-in defaults; we keep them.
-exec smokescreen \
+# --allow-missing-role: use default rule for non-mTLS clients (which
+#   is everyone — we don't issue per-process client certs).
+#
+# setsid + nohup detach from the postStartCommand's session so sudo's
+# exit doesn't propagate SIGHUP to smokescreen. Without this, the
+# background process is killed within milliseconds of start. </dev/null
+# closes stdin so the daemon doesn't block on read.
+setsid nohup smokescreen \
     --listen-ip 127.0.0.1 \
     --listen-port "${PORT}" \
     --egress-acl-file "${CONFIG}" \
-    --allow-missing-role \
-    >>"${LOG}" 2>&1 &
-echo $! > "${PID_FILE}"
+    </dev/null >>"${LOG}" 2>&1 &
+SMOKE_PID=$!
+echo "${SMOKE_PID}" > "${PID_FILE}"
+disown -h "${SMOKE_PID}" 2>/dev/null || true
 
-echo "$(date -u +%FT%TZ) start-egress-proxy: pid=$(cat ${PID_FILE})" | tee -a "${LOG}"
+echo "$(date -u +%FT%TZ) start-egress-proxy: pid=${SMOKE_PID}" | tee -a "${LOG}"

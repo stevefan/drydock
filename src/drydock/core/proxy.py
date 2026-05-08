@@ -92,18 +92,18 @@ def generate_smokescreen_acl(
     smokescreen's built-in deny rules; we don't need to specify them.
     """
     hosts, domains = split_globs(network_reach)
-    # `allow_missing_role: true` lets the proxy use the default rule
-    # for non-mTLS clients (which is everyone in our deployment —
-    # we don't issue client certs for individual processes inside a
-    # drydock). Without this, smokescreen returns 407 with
+    # `allow_missing_role: true` (per-rule, not global) lets the proxy
+    # use this rule for non-mTLS clients (which is everyone in our
+    # deployment — we don't issue client certs for individual processes
+    # inside a drydock). Without it, smokescreen returns 407 with
     # "defaultRoleFromRequest requires TLS" for every CONNECT.
     return {
         "version": "v1",
         "services": [],
-        "allow_missing_role": True,
         "default": {
             "project": _project_tag(drydock_id),
             "action": "enforce",
+            "allow_missing_role": True,
             "allowed_hosts": hosts,
             "allowed_domains": domains,
         },
