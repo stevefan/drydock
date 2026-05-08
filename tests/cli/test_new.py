@@ -110,7 +110,8 @@ class TestNewAuditor:
         # Auditor template references the baked image directly, no build
         dc_data = json.loads(dc.read_text())
         assert "image" in dc_data
-        assert "drydock-port-auditor:v0.1.0" in dc_data["image"]
+        from drydock.cli.new import AUDITOR_DEFAULT_BASE_TAG
+        assert f"drydock-port-auditor:{AUDITOR_DEFAULT_BASE_TAG}" in dc_data["image"]
         assert dc_data["name"] == "port-auditor"
         # Dockerfile.example is just an opt-in extension stub
         assert "FROM ghcr.io/stevefan/drydock-port-auditor" in df.read_text()
