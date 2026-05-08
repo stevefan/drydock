@@ -19,8 +19,8 @@ firewall_extra_domains:
   - api.anthropic.com
   - api.telegram.org
 resources_hard:
-  cpus: 1.0
-  memory: 1g
+  cpu_max: 1.0
+  memory_max: 1g
 """
 
 
@@ -156,8 +156,8 @@ firewall_extra_domains:
 firewall_aws_ip_ranges:
   - us-west-2:AMAZON
 resources_hard:
-  cpus: 8.0
-  memory: 16g
+  cpu_max: 8.0
+  memory_max: 16g
 """
         _seed(tmp_path, auditor_yaml=bad_yaml)
         runner = CliRunner()
