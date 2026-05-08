@@ -48,6 +48,7 @@ exec smokescreen \
     --listen-ip 127.0.0.1 \
     --listen-port "${PORT}" \
     --egress-acl-file "${CONFIG}" \
+    --allow-missing-role \
     >>"${LOG}" 2>&1 &
 echo $! > "${PID_FILE}"
 

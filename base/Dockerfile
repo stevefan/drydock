@@ -1,5 +1,13 @@
 # drydock-base: infrastructure layer for drydock workspace containers.
 # Projects use: FROM ghcr.io/stevefan/drydock-base:v1
+
+# Stage 1: build smokescreen from source. Stripe doesn't publish release
+# tarballs (no GitHub Releases for this repo), so we build from the
+# pinned commit. Multi-stage avoids pulling Go into the final image.
+FROM golang:1.22 AS smokescreen-builder
+ARG SMOKESCREEN_REF=master
+RUN GOBIN=/out go install github.com/stripe/smokescreen@${SMOKESCREEN_REF}
+
 FROM node:20
 
 ARG CLAUDE_CODE_VERSION=latest
@@ -72,19 +80,11 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # Smokescreen — Stripe's SNI-aware forward proxy. Phase 2a.1 of
 # make-the-harness-live.md replaces the iptables/ipset domain
 # enforcement with a layer-7 proxy whose allowlist the daemon owns.
-# Built and shipped now (E0); start-egress-proxy.sh launches it only
-# when EGRESS_PROXY_ENABLED=1 (E1). Existing desks unchanged.
-ARG SMOKESCREEN_VERSION=0.0.5
-RUN case "${TARGETARCH:-amd64}" in \
-      amd64) SMOKESCREEN_ARCH=amd64 ;; \
-      arm64) SMOKESCREEN_ARCH=arm64 ;; \
-      *) echo "unsupported arch: ${TARGETARCH}" && exit 1 ;; \
-    esac && \
-    curl -fsSL "https://github.com/stripe/smokescreen/releases/download/v${SMOKESCREEN_VERSION}/smokescreen-v${SMOKESCREEN_VERSION}-linux-${SMOKESCREEN_ARCH}.tar.gz" -o /tmp/smokescreen.tar.gz && \
-    tar xzf /tmp/smokescreen.tar.gz -C /tmp && \
-    install -m 0755 /tmp/smokescreen-*/smokescreen /usr/local/bin/smokescreen && \
-    rm -rf /tmp/smokescreen.tar.gz /tmp/smokescreen-* && \
-    smokescreen --help >/dev/null && echo "smokescreen v${SMOKESCREEN_VERSION} installed"
+# Copy binary from the multi-stage builder above (Stripe doesn't
+# publish release tarballs, so we build from source).
+COPY --from=smokescreen-builder /out/smokescreen /usr/local/bin/smokescreen
+RUN chmod +x /usr/local/bin/smokescreen && \
+    smokescreen --help >/dev/null && echo "smokescreen installed"
 
 # System-wide tmux config so SSH'd-in interactive sessions get
 # host-clipboard-friendly copy/paste out of the box. Used as the
@@ -94,11 +94,12 @@ RUN case "${TARGETARCH:-amd64}" in \
 COPY tmux.conf /etc/tmux.conf
 
 RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-drydock && \
+  echo "node ALL=(root) NOPASSWD: /usr/local/bin/start-egress-proxy.sh" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/tailscaled" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/bin/tailscale" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/iptables" >> /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/sbin/ipset" >> /etc/sudoers.d/node-drydock && \
-  echo 'Defaults env_keep += "FIREWALL_EXTRA_DOMAINS FIREWALL_IPV6_HOSTS FIREWALL_AWS_IP_RANGES FIREWALL_REFRESH_INTERVAL"' >> /etc/sudoers.d/node-drydock && \
+  echo 'Defaults env_keep += "FIREWALL_EXTRA_DOMAINS FIREWALL_IPV6_HOSTS FIREWALL_AWS_IP_RANGES FIREWALL_REFRESH_INTERVAL EGRESS_PROXY_ENABLED EGRESS_PROXY_CONFIG EGRESS_PROXY_PORT"' >> /etc/sudoers.d/node-drydock && \
   chmod 0440 /etc/sudoers.d/node-drydock
 
 # git safe.directory = * system-wide. Inside a drydock desk, the container
