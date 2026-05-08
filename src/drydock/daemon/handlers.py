@@ -850,12 +850,29 @@ def _destroy_one(
     except Exception as exc:
         logger.warning("daemon: failed to remove token file for %s: %s", drydock.id, exc)
         failures.append(_failure(drydock.id, "token_file_remove", exc))
-    shutil.rmtree(secret_dir, ignore_errors=True)
-    if secret_dir.exists():
-        logger.warning("daemon: failed to remove secret dir for %s: %s", drydock.id, secret_dir)
-        failures.append(_failure(drydock.id, "secret_dir_remove", "directory still exists"))
-    else:
-        logger.info("daemon: secret dir removed drydock_id=%s path=%s", drydock.id, secret_dir)
+
+    # Phase PA3.7: preserve user-set secrets across destroy. Earlier
+    # behavior was shutil.rmtree(secret_dir) — a footgun that wiped
+    # principal-set keys (e.g. anthropic_api_key) on every destroy,
+    # forcing re-paste on every recreate. The daemon owns drydock-token
+    # (removed above) + lease-issued credentials (removed earlier via
+    # _remove_storage_credentials). Anything left in the dir is
+    # principal-managed. Only rmdir if the dir is now empty.
+    try:
+        if secret_dir.exists():
+            remaining = list(secret_dir.iterdir())
+            if not remaining:
+                secret_dir.rmdir()
+                logger.info("daemon: empty secret dir removed drydock_id=%s", drydock.id)
+            else:
+                logger.info(
+                    "daemon: preserving secret dir drydock_id=%s with %d "
+                    "principal-managed file(s) — drydock secret rm to clean",
+                    drydock.id, len(remaining),
+                )
+    except Exception as exc:
+        logger.warning("daemon: failed to handle secret dir for %s: %s", drydock.id, exc)
+        failures.append(_failure(drydock.id, "secret_dir_handle", exc))
 
     logger.info("daemon: remove worktree drydock_id=%s path=%s", drydock.id, drydock.worktree_path)
     worktree_path = Path(drydock.worktree_path) if drydock.worktree_path else None

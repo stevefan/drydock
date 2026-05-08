@@ -452,8 +452,23 @@ def auditor_designate(ctx, drydock_name, revoke):
             ))
             return
 
+    # Per-drydock secrets dir — same place the daemon writes drydock-token.
+    # Designation also mirrors the token to /run/secrets/auditor-token (via
+    # a copy in the host secrets dir; bind-mount makes both visible to the
+    # container) so deep.py + start-auditor.sh's filename-heuristic match
+    # the registry-level scope. Revocation removes the auditor-token copy.
+    secret_dir = Path.home() / ".drydock" / "secrets" / ws.id
+    drydock_token_path = secret_dir / "drydock-token"
+    auditor_token_path = secret_dir / "auditor-token"
+
     if revoke:
         changed = registry.revoke_auditor_scope(ws.id)
+        # Remove the auditor-token mirror so filenames match the new scope.
+        # (Best-effort — if it's already gone, fine.)
+        try:
+            auditor_token_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         out.success(
             {
                 "drydock_id": ws.id,
@@ -474,6 +489,20 @@ def auditor_designate(ctx, drydock_name, revoke):
         from drydock.core import WsError
         out.error(WsError(str(exc), fix=""))
         return
+
+    # Mirror token plaintext to auditor-token. Same bearer string, same
+    # scope (the registry row's scope is what's authoritative); the
+    # second filename just makes the container-side filename heuristic
+    # honest. Fails non-fatally if drydock-token is missing — the
+    # designate call already updated registry scope; the file copy is
+    # cosmetic.
+    if drydock_token_path.is_file():
+        try:
+            import shutil
+            shutil.copy2(drydock_token_path, auditor_token_path)
+            auditor_token_path.chmod(0o400)
+        except OSError:
+            pass
 
     out.success(
         {

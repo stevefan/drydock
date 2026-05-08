@@ -234,6 +234,62 @@ def test_destroy_desk_revokes_token_and_removes_secret_file(tmp_path, monkeypatc
     assert not token_path.exists()
 
 
+def test_destroy_desk_preserves_principal_secrets(tmp_path, monkeypatch):
+    """Phase PA3.7 footgun fix: destroy must not wipe principal-set
+    secrets (e.g. anthropic_api_key). The daemon owns drydock-token
+    and lease-issued credentials; everything else in the dir is the
+    principal's. Lost on first hetzner end-to-end run when destroy +
+    create cycle wiped a freshly-pasted Anthropic key."""
+    registry_path, secrets_root = _setup_env(tmp_path, monkeypatch)
+    result, _ = _create_desk(
+        tmp_path, registry_path, secrets_root,
+        name="desk-with-secrets", request_id="create-secrets",
+    )
+    secret_dir = secrets_root / result["drydock_id"]
+    # Principal sets a secret post-create
+    user_secret = secret_dir / "anthropic_api_key"
+    user_secret.write_bytes(b"sk-ant-fake-test-key\n")
+    user_secret.chmod(0o400)
+
+    _call_destroy(
+        "destroy-with-secrets",
+        params={"name": "desk-with-secrets"},
+        registry_path=registry_path,
+        secrets_root=secrets_root,
+        monkeypatch=monkeypatch,
+    )
+
+    # Daemon-issued drydock-token is gone
+    assert not (secret_dir / "drydock-token").exists()
+    # Principal-set secret survives — that's the contract
+    assert user_secret.exists()
+    assert user_secret.read_bytes() == b"sk-ant-fake-test-key\n"
+
+
+def test_destroy_desk_removes_empty_secret_dir(tmp_path, monkeypatch):
+    """Counterpoint to test_destroy_desk_preserves_principal_secrets:
+    when the dir has only the daemon-managed token (no principal
+    secrets), destroy still cleans up — no orphan empty dirs."""
+    registry_path, secrets_root = _setup_env(tmp_path, monkeypatch)
+    result, _ = _create_desk(
+        tmp_path, registry_path, secrets_root,
+        name="desk-clean", request_id="create-clean",
+    )
+    secret_dir = secrets_root / result["drydock_id"]
+    assert secret_dir.exists()  # daemon created it for the token
+
+    _call_destroy(
+        "destroy-clean",
+        params={"name": "desk-clean"},
+        registry_path=registry_path,
+        secrets_root=secrets_root,
+        monkeypatch=monkeypatch,
+    )
+
+    # No principal secrets, so directory itself is removed
+    assert not secret_dir.exists()
+
+
 def test_destroy_desk_replayed_request_after_target_gone(tmp_path, monkeypatch):
     registry_path, secrets_root = _setup_env(tmp_path, monkeypatch)
     first, _ = _create_desk(tmp_path, registry_path, secrets_root, name="desk-recreate", request_id="create-recreate-1")
