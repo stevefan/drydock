@@ -1,12 +1,17 @@
 # drydock-base: infrastructure layer for drydock workspace containers.
 # Projects use: FROM ghcr.io/stevefan/drydock-base:v1
 
-# Stage 1: build smokescreen from source. Stripe doesn't publish release
-# tarballs (no GitHub Releases for this repo), so we build from the
-# pinned commit. Multi-stage avoids pulling Go into the final image.
-FROM golang:1.22 AS smokescreen-builder
-ARG SMOKESCREEN_REF=master
-RUN GOBIN=/out go install github.com/stripe/smokescreen@${SMOKESCREEN_REF}
+# Stage 1: build dockwarden — drydock's own egress proxy. Replaces
+# smokescreen because (a) Stripe doesn't ship release tarballs, (b)
+# smokescreen's role-auth model is overkill + footgunny for our
+# no-mTLS deployment, and (c) dockwarden's ACL format is what the
+# drydock daemon writes — single source of truth.
+FROM golang:1.22 AS dockwarden-builder
+WORKDIR /src
+COPY base/dockwarden/go.mod base/dockwarden/go.sum ./
+RUN go mod download
+COPY base/dockwarden/main.go ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/dockwarden .
 
 FROM node:20
 
@@ -55,7 +60,7 @@ RUN case "${TARGETARCH:-amd64}" in \
     rm -rf /tmp/awscliv2.zip /tmp/aws && \
     aws --version
 
-COPY init-firewall.sh start-tailscale.sh start-remote-control.sh sync-claude-auth.sh sync-aws-auth.sh refresh-firewall-allowlist.sh add-allowed-domain.sh setup-storage-mounts.sh refresh-storage-mounts.sh start-egress-proxy.sh start-litestream.sh /usr/local/bin/
+COPY base/init-firewall.sh base/start-tailscale.sh base/start-remote-control.sh base/sync-claude-auth.sh base/sync-aws-auth.sh base/refresh-firewall-allowlist.sh base/add-allowed-domain.sh base/setup-storage-mounts.sh base/refresh-storage-mounts.sh base/start-egress-proxy.sh base/start-litestream.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh \
               /usr/local/bin/start-tailscale.sh \
               /usr/local/bin/start-remote-control.sh \
@@ -77,21 +82,19 @@ RUN ARCH=$(dpkg --print-architecture) && \
   | tar xzf - -C /usr/local/bin/ && \
   chmod +x /usr/local/bin/litestream
 
-# Smokescreen — Stripe's SNI-aware forward proxy. Phase 2a.1 of
-# make-the-harness-live.md replaces the iptables/ipset domain
-# enforcement with a layer-7 proxy whose allowlist the daemon owns.
-# Copy binary from the multi-stage builder above (Stripe doesn't
-# publish release tarballs, so we build from source).
-COPY --from=smokescreen-builder /out/smokescreen /usr/local/bin/smokescreen
-RUN chmod +x /usr/local/bin/smokescreen && \
-    smokescreen --help >/dev/null && echo "smokescreen installed"
+# Dockwarden — drydock's egress proxy. Multi-stage built above.
+# Listens on 127.0.0.1:4750; reads ACL from /run/drydock/proxy/allowlist.yaml
+# (bind-mounted by the overlay); reloads on SIGHUP or file mtime change.
+COPY --from=dockwarden-builder /out/dockwarden /usr/local/bin/dockwarden
+RUN chmod +x /usr/local/bin/dockwarden && \
+    /usr/local/bin/dockwarden -h 2>&1 | head -1 || echo "dockwarden installed"
 
 # System-wide tmux config so SSH'd-in interactive sessions get
 # host-clipboard-friendly copy/paste out of the box. Used as the
 # backup path for `claude /login` and other interactive paste flows
 # that the in-memory OAuth refresh can't replace. Users can extend
 # via ~/.tmux.conf (sourced after this).
-COPY tmux.conf /etc/tmux.conf
+COPY base/tmux.conf /etc/tmux.conf
 
 RUN echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/node-drydock && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/start-egress-proxy.sh" >> /etc/sudoers.d/node-drydock && \

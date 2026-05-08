@@ -56,13 +56,16 @@ fi
 # exit doesn't propagate SIGHUP to smokescreen. Without this, the
 # background process is killed within milliseconds of start. </dev/null
 # closes stdin so the daemon doesn't block on read.
-setsid nohup smokescreen \
-    --listen-ip 127.0.0.1 \
-    --listen-port "${PORT}" \
-    --egress-acl-file "${CONFIG}" \
+# dockwarden — drydock's egress proxy (replaces smokescreen). Reads
+# the same ACL file path; same listen port; SIGHUP reloads.
+PROJECT_TAG="${DRYDOCK_WORKSPACE_ID:-drydock}"
+setsid nohup dockwarden \
+    -listen "127.0.0.1:${PORT}" \
+    -acl "${CONFIG}" \
+    -project "${PROJECT_TAG}" \
     </dev/null >>"${LOG}" 2>&1 &
-SMOKE_PID=$!
-echo "${SMOKE_PID}" > "${PID_FILE}"
-disown -h "${SMOKE_PID}" 2>/dev/null || true
+PROXY_PID=$!
+echo "${PROXY_PID}" > "${PID_FILE}"
+disown -h "${PROXY_PID}" 2>/dev/null || true
 
-echo "$(date -u +%FT%TZ) start-egress-proxy: pid=${SMOKE_PID}" | tee -a "${LOG}"
+echo "$(date -u +%FT%TZ) start-egress-proxy: pid=${PROXY_PID}" | tee -a "${LOG}"

@@ -21,14 +21,20 @@ fi
 # Derive major pointer: v1.0.1 -> v1
 MAJOR=$(echo "$VERSION" | sed -E 's/^(v[0-9]+).*/\1/')
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
 echo "Building drydock-base $VERSION (major: $MAJOR) for linux/amd64 + linux/arm64..."
 
+# Context is repo root so the dockwarden build stage can COPY
+# base/dockwarden/{go.mod,go.sum,main.go}. Dockerfile path is explicit.
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   --push \
+  -f base/Dockerfile \
   -t "ghcr.io/stevefan/drydock-base:$VERSION" \
   -t "ghcr.io/stevefan/drydock-base:$MAJOR" \
   -t "ghcr.io/stevefan/drydock-base:latest" \
-  base/
+  .
 
 echo "Pushed: $VERSION, $MAJOR, latest"
